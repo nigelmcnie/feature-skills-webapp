@@ -4,12 +4,12 @@
 
 | Feature | Owner | Notes |
 |---|---|---|
+| [webapp-skeleton](docs/features/webapp-skeleton/context.md) | Nigel | Starlette app, SQLite schema, systemd unit — the foundation everything else builds on. |
 
 ## Available
 
 | Feature | Notes |
 |---|---|
-| [webapp-skeleton](docs/features/webapp-skeleton/context.md) | Starlette app, SQLite schema, systemd unit — the foundation everything else builds on. |
 
 ## Suggested order
 
