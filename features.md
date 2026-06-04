@@ -9,6 +9,7 @@
 
 | Feature | Notes |
 |---|---|
+| [read-state](docs/features/read-state/context.md) | Stamp `last_read_at` per document on view; drives the inbox's "new since last visit". Next in the build order (deps shipped). |
 
 ## Suggested order
 
