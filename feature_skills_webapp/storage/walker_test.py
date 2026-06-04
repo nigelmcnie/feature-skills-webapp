@@ -12,6 +12,7 @@ from feature_skills_webapp.storage.walker import (
     ParsedDoc,
     identity_for,
     parse_doc,
+    parse_tracker,
     walk,
 )
 
@@ -296,3 +297,221 @@ def test_no_op_walk_emits_no_events(tmp_path: Path):
     walk(conn, docs_root, reconcile=False)
     after = conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
     assert before == after
+
+
+# --- Phase 3: features.html / tracker ---
+
+FEATURES_HTML = """\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="feature-doc-type" content="features">
+<title>proj1 — Features</title>
+</head>
+<body>
+<section id="in-progress">
+  <table class="features">
+    <tbody>
+      <tr>
+        <td class="feature-name">feat-active</td>
+        <td class="feature-owner">Alice</td>
+        <td class="feature-notes">doing it now</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+<section id="available">
+  <table class="features">
+    <tbody>
+      <tr>
+        <td class="feature-name">feat-queued</td>
+        <td class="feature-notes">ready to start</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+<section id="done">
+  <table class="features">
+    <tbody>
+      <tr>
+        <td class="feature-name">feat-done</td>
+        <td class="feature-outcome">Shipped.</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+</body>
+</html>
+"""
+
+FEATURES_HTML_EMPTY_SECTION = """\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="feature-doc-type" content="features">
+<title>proj1 — Features</title>
+</head>
+<body>
+<section id="in-progress">
+  <table class="features">
+    <tbody>
+      <tr class="empty">
+        <td colspan="3">Nothing in progress.</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+<section id="available">
+  <table class="features">
+    <tbody>
+      <tr>
+        <td class="feature-name">feat-a</td>
+        <td class="feature-notes">queued</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+<section id="done">
+  <table class="features">
+    <tbody>
+      <tr class="empty">
+        <td colspan="2">Nothing done yet.</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+</body>
+</html>
+"""
+
+
+# --- parse_tracker unit tests ---
+
+
+def test_parse_tracker_extracts_rows():
+    rows = parse_tracker(FEATURES_HTML)
+    assert len(rows) == 3
+    slugs = {r.slug for r in rows}
+    assert slugs == {"feat-active", "feat-queued", "feat-done"}
+
+
+def test_parse_tracker_statuses():
+    rows = parse_tracker(FEATURES_HTML)
+    by_slug = {r.slug: r for r in rows}
+    assert by_slug["feat-active"].status == "in_progress"
+    assert by_slug["feat-queued"].status == "available"
+    assert by_slug["feat-done"].status == "done"
+
+
+def test_parse_tracker_owner_and_notes():
+    rows = parse_tracker(FEATURES_HTML)
+    by_slug = {r.slug: r for r in rows}
+    assert by_slug["feat-active"].owner == "Alice"
+    assert by_slug["feat-active"].notes == "doing it now"
+    assert by_slug["feat-queued"].owner is None
+    assert by_slug["feat-queued"].notes == "ready to start"
+    assert by_slug["feat-done"].notes == "Shipped."
+
+
+def test_parse_tracker_skips_empty_rows():
+    rows = parse_tracker(FEATURES_HTML_EMPTY_SECTION)
+    assert len(rows) == 1
+    assert rows[0].slug == "feat-a"
+    assert rows[0].status == "available"
+
+
+def test_parse_tracker_returns_empty_on_mangled_html():
+    assert parse_tracker("<not valid html at all <<<>>>") == []
+
+
+def test_parse_tracker_returns_empty_on_no_sections():
+    assert parse_tracker("<html><body><p>nothing here</p></body></html>") == []
+
+
+# --- walk Phase 3 integration tests ---
+
+
+def test_features_html_indexes_as_project_level_doc(tmp_path: Path):
+    docs_root = tmp_path / "docs"
+    (docs_root / "proj1").mkdir(parents=True)
+    (docs_root / "proj1" / "features.html").write_text(FEATURES_HTML)
+
+    conn = temp_conn(tmp_path)
+    summary = walk(conn, docs_root, reconcile=False)
+    assert summary.created == 1
+
+    doc = conn.execute("SELECT project_id, feature_id, type FROM documents").fetchone()
+    assert doc["feature_id"] is None
+    assert doc["type"] == "features"
+
+    proj = conn.execute("SELECT name FROM projects WHERE id=?", (doc["project_id"],)).fetchone()
+    assert proj["name"] == "proj1"
+
+
+def test_tracker_populates_feature_status_owner_notes(tmp_path: Path):
+    docs_root = tmp_path / "docs"
+    (docs_root / "proj1").mkdir(parents=True)
+    (docs_root / "proj1" / "features.html").write_text(FEATURES_HTML)
+
+    conn = temp_conn(tmp_path)
+    walk(conn, docs_root, reconcile=False)
+
+    features = conn.execute(
+        "SELECT slug, status, owner, notes FROM features ORDER BY slug"
+    ).fetchall()
+    by_slug = {r["slug"]: r for r in features}
+
+    assert by_slug["feat-active"]["status"] == "in_progress"
+    assert by_slug["feat-active"]["owner"] == "Alice"
+    assert by_slug["feat-active"]["notes"] == "doing it now"
+    assert by_slug["feat-queued"]["status"] == "available"
+    assert by_slug["feat-done"]["status"] == "done"
+    assert by_slug["feat-done"]["notes"] == "Shipped."
+
+
+def test_tracker_backfills_existing_bare_feature(tmp_path: Path):
+    """A feature doc already in the DB (via a per-feature walk) gets status back-filled, not duplicated."""
+    docs_root = tmp_path / "docs"
+    (docs_root / "proj1" / "feat-active").mkdir(parents=True)
+    (docs_root / "proj1" / "feat-active" / "context.html").write_text(
+        make_html("context", "feat-active ctx")
+    )
+    (docs_root / "proj1" / "features.html").write_text(FEATURES_HTML)
+
+    conn = temp_conn(tmp_path)
+    walk(conn, docs_root, reconcile=False)
+
+    # Only one features row for feat-active (not duplicated)
+    count = conn.execute("SELECT COUNT(*) AS n FROM features WHERE slug='feat-active'").fetchone()[
+        "n"
+    ]
+    assert count == 1
+
+    feat = conn.execute("SELECT status, owner FROM features WHERE slug='feat-active'").fetchone()
+    assert feat["status"] == "in_progress"
+    assert feat["owner"] == "Alice"
+
+
+def test_mangled_tracker_degrades_gracefully(tmp_path: Path):
+    """A mangled features.html still indexes the document, just produces no tracker rows."""
+    mangled = """\
+<!DOCTYPE html>
+<html><head>
+<meta name="feature-doc-type" content="features">
+<title>Mangled</title>
+</head><body><p>no tables at all</p></body></html>
+"""
+    docs_root = tmp_path / "docs"
+    (docs_root / "proj1").mkdir(parents=True)
+    (docs_root / "proj1" / "features.html").write_text(mangled)
+
+    conn = temp_conn(tmp_path)
+    summary = walk(conn, docs_root, reconcile=False)
+
+    # Document is still indexed
+    assert summary.created == 1
+    assert summary.errors == 0
+    # No feature rows from tracker (document has no tables)
+    assert conn.execute("SELECT COUNT(*) AS n FROM features").fetchone()["n"] == 0
