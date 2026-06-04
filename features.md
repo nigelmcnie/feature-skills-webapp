@@ -4,7 +4,6 @@
 
 | Feature | Owner | Notes |
 |---|---|---|
-| [doc-discovery](docs/features/doc-discovery/context.md) | Nigel | Filesystem walker over the dev-store + SQLite index — populates the empty §4 schema the skeleton laid. Identifies docs by their `feature-doc-type` meta tag; emits `events` rows the inbox derives from. |
 
 ## Available
 
@@ -31,4 +30,5 @@ Completed or obsoleted; kept here for context.
 
 | Feature | Outcome |
 |---|---|
+| [doc-discovery](docs/features/doc-discovery/context.md) | **Shipped.** Filesystem walker indexing the dev-store into the §4 SQLite schema: migration 0002 (DROP+recreate `documents` with `project_id`, nullable `feature_id`, a `status` column — active/archived/missing — and a partial unique index on `source_path`); a synchronous mtime+size-gated `walk()` with status transitions and an `events` row (carrying a `payload_json`) per change; a single serialised async walk worker fed by startup reconcile, an on-demand `POST /admin/discover`, and a `watchfiles` watch; plus `features.html` tracker parsing into `features.status`/`owner`/`notes`. Three phase PRs + one post-merge review-fix round; 85 tests, ruff/ty clean, CI added. |
 | [webapp-skeleton](docs/features/webapp-skeleton/context.md) | **Shipped.** Supervised Starlette server on `127.0.0.1:8800` with a Jinja placeholder page and a DB-backed `/healthz` readiness check; migrated SQLite carrying the full §4 schema (per-request connections, WAL, `events` SET-NULL audit semantics, FK indexes); systemd user unit with a working crash-loop cap; kea-style test harness (xdist + pytest-socket, per-worker DB). Three phase PRs + one review-fix round; 27 tests, ruff/ty clean. |
