@@ -36,10 +36,10 @@ def test_connect_foreign_keys(tmp_path: Path) -> None:
     conn.close()
 
 
-def test_migrate_fresh_returns_version_1(tmp_path: Path) -> None:
+def test_migrate_fresh_returns_version_2(tmp_path: Path) -> None:
     conn = connect(tmp_path / "test.db")
     version = migrate(conn)
-    assert version == 1
+    assert version == 2
     conn.close()
 
 
@@ -51,7 +51,7 @@ def test_migrate_idempotent(tmp_path: Path) -> None:
 
     conn = connect(db)
     version = migrate(conn)
-    assert version == 1
+    assert version == 2
     conn.close()
 
 
@@ -59,16 +59,77 @@ def test_schema_version_after_migrate(tmp_path: Path) -> None:
     conn = connect(tmp_path / "test.db")
     migrate(conn)
     v = current_version(conn)
-    assert v == 1
+    assert v == 2
+    conn.close()
+
+
+def test_migration_0002_new_columns_and_indexes(tmp_path: Path) -> None:
+    conn = connect(tmp_path / "test.db")
+    migrate(conn)
+    # project_id NOT NULL present (would error on insert without it)
+    ts = "2026-01-01T00:00:00"
+    with transaction(conn):
+        conn.execute("INSERT INTO projects (name, created_at) VALUES ('p1', ?)", (ts,))
+        proj_id = conn.execute("SELECT id FROM projects WHERE name='p1'").fetchone()["id"]
+        conn.execute(
+            "INSERT INTO documents (project_id, type, created_at, updated_at) "
+            "VALUES (?, 'context', ?, ?)",
+            (proj_id, ts, ts),
+        )
+    doc = conn.execute("SELECT * FROM documents").fetchone()
+    assert doc["project_id"] == proj_id
+    assert doc["feature_id"] is None
+    assert doc["status"] == "active"
+    conn.close()
+
+
+def test_migration_0002_indexes_exist(tmp_path: Path) -> None:
+    conn = connect(tmp_path / "test.db")
+    migrate(conn)
+    rows = conn.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall()
+    names = {r["name"] for r in rows}
+    assert "idx_documents_project" in names
+    assert "idx_documents_source_path" in names
+    conn.close()
+
+
+def test_migration_0002_source_path_unique(tmp_path: Path) -> None:
+    import sqlite3
+
+    conn = connect(tmp_path / "test.db")
+    migrate(conn)
+    ts = "2026-01-01T00:00:00"
+    with transaction(conn):
+        conn.execute("INSERT INTO projects (name, created_at) VALUES ('p1', ?)", (ts,))
+        proj_id = conn.execute("SELECT id FROM projects WHERE name='p1'").fetchone()["id"]
+        conn.execute(
+            "INSERT INTO documents (project_id, type, source_path, created_at, updated_at) "
+            "VALUES (?, 'context', '/path/to/doc.html', ?, ?)",
+            (proj_id, ts, ts),
+        )
+    with pytest.raises(sqlite3.IntegrityError), transaction(conn):
+        conn.execute(
+            "INSERT INTO documents (project_id, type, source_path, created_at, updated_at) "
+            "VALUES (?, 'plan', '/path/to/doc.html', ?, ?)",
+            (proj_id, ts, ts),
+        )
+    conn.close()
+
+
+def test_migration_0002_documents_empty(tmp_path: Path) -> None:
+    conn = connect(tmp_path / "test.db")
+    migrate(conn)
+    count = conn.execute("SELECT COUNT(*) AS n FROM documents").fetchone()["n"]
+    assert count == 0
     conn.close()
 
 
 def test_mismatch_raises(tmp_path: Path) -> None:
     conn = connect(tmp_path / "test.db")
     migrate(conn)
-    # Stamp a version higher than any available migration.
+    # Insert a version higher than any available migration (schema_version has PK on version).
     with transaction(conn):
-        conn.execute("UPDATE schema_version SET version = 9999")
+        conn.execute("INSERT INTO schema_version (version) VALUES (9999)")
     with pytest.raises(SchemaVersionMismatchError):
         migrate(conn)
     conn.close()
@@ -125,9 +186,9 @@ def test_events_survive_document_delete_with_null_fk(tmp_path: Path) -> None:
         )
         feat_id = conn.execute("SELECT id FROM features WHERE slug='f1'").fetchone()["id"]
         conn.execute(
-            "INSERT INTO documents (feature_id, type, created_at, updated_at) "
-            "VALUES (?, 'context', ?, ?)",
-            (feat_id, ts, ts),
+            "INSERT INTO documents (project_id, feature_id, type, created_at, updated_at) "
+            "VALUES (?, ?, 'context', ?, ?)",
+            (proj_id, feat_id, ts, ts),
         )
         doc_id = conn.execute("SELECT id FROM documents").fetchone()["id"]
         conn.execute(
@@ -147,7 +208,12 @@ def test_fk_indexes_present(tmp_path: Path) -> None:
     migrate(conn)
     rows = conn.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall()
     names = {r["name"] for r in rows}
-    assert {"idx_features_project", "idx_documents_feature", "idx_events_document"} <= names
+    assert {
+        "idx_features_project",
+        "idx_documents_feature",
+        "idx_documents_project",
+        "idx_events_document",
+    } <= names
     conn.close()
 
 

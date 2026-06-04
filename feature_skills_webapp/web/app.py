@@ -1,4 +1,6 @@
+import asyncio
 import contextlib
+import logging
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -7,14 +9,16 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 from starlette.templating import Jinja2Templates
 
-from feature_skills_webapp.web.routes import healthz, index
+from feature_skills_webapp.web.routes import admin_discover, healthz, index
 
 _HERE = Path(__file__).parent
 TEMPLATES_DIR = _HERE / "templates"
 STATIC_DIR = _HERE / "static"
 
+log = logging.getLogger(__name__)
 
-def create_app(db_path: Path | None) -> Starlette:
+
+def create_app(db_path: Path | None, docs_root: Path | None = None) -> Starlette:
     jinja_env = Environment(
         loader=FileSystemLoader(TEMPLATES_DIR),
         autoescape=select_autoescape(["html"]),
@@ -30,16 +34,32 @@ def create_app(db_path: Path | None) -> Starlette:
             conn = connect(db_path)
             migrate(conn)
             conn.close()
-        yield
+
+        worker = None
+        if db_path is not None and docs_root is not None:
+            from feature_skills_webapp.web.discovery import _worker, request_walk
+
+            app.state.walk_queue = asyncio.Queue()
+            worker = asyncio.create_task(_worker(app))
+            await request_walk(app, reconcile=True, await_result=False)
+
+        try:
+            yield
+        finally:
+            if worker:
+                worker.cancel()
+                await asyncio.gather(worker, return_exceptions=True)
 
     app = Starlette(
         routes=[
             Route("/", index),
             Route("/healthz", healthz),
+            Route("/admin/discover", admin_discover, methods=["POST"]),
             Mount("/static", StaticFiles(directory=STATIC_DIR)),
         ],
         lifespan=lifespan,
     )
     app.state.templates = templates
     app.state.db_path = db_path
+    app.state.docs_root = docs_root
     return app
