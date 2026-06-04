@@ -9,6 +9,7 @@
 
 | Feature | Notes |
 |---|---|
+| [doc-discovery](docs/features/doc-discovery/context.md) | Filesystem walker over the dev-store + SQLite index — populates the empty §4 schema the skeleton laid. Identifies docs by their `feature-doc-type` meta tag; emits `events` rows the inbox derives from. |
 
 ## Suggested order
 
