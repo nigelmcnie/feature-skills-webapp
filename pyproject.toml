@@ -30,7 +30,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["feature_skills_webapp"]
-exclude = ["*_test.py", "test_*.py"]
+exclude = ["*_test.py", "test_*.py", "**/docs/**"]
 
 [tool.pytest.ini_options]
 testpaths = ["feature_skills_webapp", "conftest.py"]

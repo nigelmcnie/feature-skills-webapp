@@ -161,7 +161,13 @@ class _TrackerParser(HTMLParser):
 
 
 def parse_tracker(html: str) -> list[TrackerRow]:
-    """Parse a features.html tracker into TrackerRow list. Returns [] on unrecognised shape."""
+    """Parse a features.html tracker into TrackerRow list. Returns [] on unrecognised shape.
+
+    Tolerance is structural: a tracker whose markup we don't recognise simply yields
+    no rows (the section-id / td-class keying matches nothing). The try/except is a
+    defensive backstop — HTMLParser.feed doesn't raise on malformed markup in the
+    default non-strict mode, so it rarely fires.
+    """
     parser = _TrackerParser()
     try:
         parser.feed(html)
@@ -171,23 +177,26 @@ def parse_tracker(html: str) -> list[TrackerRow]:
     return parser.rows
 
 
+def parse_doc_html(html: str) -> ParsedDoc | None:
+    """Parse the feature-doc-type meta tag and title from HTML text. None if no meta tag."""
+    parser = _MetaParser()
+    parser.feed(html)
+    if not parser.doc_type:
+        return None
+    return ParsedDoc(doc_type=parser.doc_type, title=parser.title)
+
+
 def parse_doc(path: Path) -> ParsedDoc | None:
-    """Parse a doc's feature-doc-type meta tag and title. Returns None if no meta tag."""
+    """Read a doc file and parse its feature-doc-type meta tag and title.
+
+    Returns None if the file is unreadable or carries no feature-doc-type meta tag.
+    """
     try:
         html = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         log.warning("Could not read %s", path)
         return None
-    parser = _MetaParser()
-    try:
-        parser.feed(html)
-    except Exception:
-        log.warning("Parse error in %s", path)
-        return None
-    if not parser.doc_type:
-        log.debug("Skipping %s: no feature-doc-type meta tag", path)
-        return None
-    return ParsedDoc(doc_type=parser.doc_type, title=parser.title)
+    return parse_doc_html(html)
 
 
 def _apply_tracker_rows(
@@ -255,8 +264,18 @@ def _process_file(
     ):
         return
 
-    parsed = parse_doc(abs_path)
+    # Read the file once here and reuse the text for both the meta parse and (for
+    # features.html) the tracker parse, rather than reading it twice.
+    try:
+        html_content = abs_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        log.warning("Could not read %s", abs_path)
+        summary.errors += 1
+        return
+
+    parsed = parse_doc_html(html_content)
     if parsed is None:
+        log.debug("Skipping %s: no feature-doc-type meta tag", abs_path)
         summary.errors += 1
         return
 
@@ -267,6 +286,9 @@ def _process_file(
 
     meta = json.dumps({"title": parsed.title, "size": st.st_size})
     desired = "archived" if identity.archived else "active"
+    payload = json.dumps(
+        {"path": source_path, "type": parsed.doc_type, "feature": identity.feature}
+    )
 
     if row is None:
         conn.execute(
@@ -279,8 +301,9 @@ def _process_file(
             "SELECT id FROM documents WHERE source_path=?", (source_path,)
         ).fetchone()["id"]
         conn.execute(
-            "INSERT INTO events (document_id, event_type, created_at) VALUES (?, 'created', ?)",
-            (doc_id, now),
+            "INSERT INTO events (document_id, event_type, payload_json, created_at) "
+            "VALUES (?, 'created', ?, ?)",
+            (doc_id, payload, now),
         )
         summary.created += 1
     else:
@@ -290,6 +313,9 @@ def _process_file(
             "metadata_json=?, source_mtime=?, updated_at=? WHERE id=?",
             (project_id, feature_id, parsed.doc_type, desired, meta, mtime, now, doc_id),
         )
+        # Precedence note: a doc returning from 'missing' is reported as 'reactivated'
+        # even if it reappears under .feedback-archive/ — reactivation wins over
+        # archival. Its status is still set to 'archived' (via `desired`) above.
         old_status = row["status"]
         if old_status == "missing":
             event_type = "reactivated"
@@ -301,16 +327,16 @@ def _process_file(
             event_type = "updated"
             summary.updated += 1
         conn.execute(
-            "INSERT INTO events (document_id, event_type, created_at) VALUES (?, ?, ?)",
-            (doc_id, event_type, now),
+            "INSERT INTO events (document_id, event_type, payload_json, created_at) "
+            "VALUES (?, ?, ?, ?)",
+            (doc_id, event_type, payload, now),
         )
 
-    # For project-level features.html docs, parse tracker and upsert feature metadata
+    # For project-level features.html docs, parse the tracker (reusing html_content)
+    # and upsert feature metadata. Guarded so a tracker mishap can't abort the walk.
     if identity.feature is None and parsed.doc_type == "features":
         try:
-            html_content = abs_path.read_text(encoding="utf-8", errors="replace")
-            tracker_rows = parse_tracker(html_content)
-            _apply_tracker_rows(conn, project_id, tracker_rows, now)
+            _apply_tracker_rows(conn, project_id, parse_tracker(html_content), now)
         except Exception:
             log.warning("Failed to apply tracker rows from %s", abs_path)
 
@@ -345,9 +371,10 @@ def walk(conn: sqlite3.Connection, docs_root: Path, *, reconcile: bool) -> WalkS
         if reconcile:
             placeholders = ",".join("?" * len(seen_paths)) if seen_paths else "NULL"
             unseen = conn.execute(
-                f"SELECT id, source_path FROM documents "  # noqa: S608
-                f"WHERE status IN ('active', 'archived') "
-                f"AND source_path NOT IN ({placeholders})",
+                f"SELECT d.id, d.source_path, d.type, f.slug AS feature FROM documents d "  # noqa: S608
+                f"LEFT JOIN features f ON d.feature_id = f.id "
+                f"WHERE d.status IN ('active', 'archived') "
+                f"AND d.source_path NOT IN ({placeholders})",
                 list(seen_paths),
             ).fetchall()
             for row in unseen:
@@ -355,9 +382,13 @@ def walk(conn: sqlite3.Connection, docs_root: Path, *, reconcile: bool) -> WalkS
                     "UPDATE documents SET status='missing', updated_at=? WHERE id=?",
                     (now, row["id"]),
                 )
+                payload = json.dumps(
+                    {"path": row["source_path"], "type": row["type"], "feature": row["feature"]}
+                )
                 conn.execute(
-                    "INSERT INTO events (document_id, event_type, created_at) VALUES (?, 'missing', ?)",
-                    (row["id"], now),
+                    "INSERT INTO events (document_id, event_type, payload_json, created_at) "
+                    "VALUES (?, 'missing', ?, ?)",
+                    (row["id"], payload, now),
                 )
                 summary.missing += 1
 

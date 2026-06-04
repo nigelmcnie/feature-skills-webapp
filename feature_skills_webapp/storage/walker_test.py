@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import time
 from pathlib import Path
@@ -150,6 +151,29 @@ def test_fresh_walk_emits_events(tmp_path: Path):
     events = conn.execute("SELECT event_type FROM events").fetchall()
     assert all(r["event_type"] == "created" for r in events)
     assert len(events) == 3
+
+
+def test_events_carry_payload_json(tmp_path: Path):
+    """Each event records a payload_json with the doc's path, type, and feature."""
+    docs_root = tmp_path / "docs"
+    _make_tree(docs_root)
+    conn = temp_conn(tmp_path)
+    walk(conn, docs_root, reconcile=False)
+
+    rows = conn.execute("SELECT payload_json FROM events").fetchall()
+    assert rows, "expected events"
+    for r in rows:
+        assert r["payload_json"] is not None
+        payload = json.loads(r["payload_json"])
+        assert set(payload) == {"path", "type", "feature"}
+        assert payload["path"].endswith(".html")
+
+    # A feature-scoped doc carries its feature slug in the payload.
+    ctx = conn.execute(
+        "SELECT e.payload_json FROM events e JOIN documents d ON e.document_id = d.id "
+        "WHERE d.type = 'context'"
+    ).fetchone()
+    assert json.loads(ctx["payload_json"])["feature"] == "feat-a"
 
 
 def test_second_walk_is_noop(tmp_path: Path):

@@ -1,3 +1,5 @@
+import dataclasses
+
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse
 from starlette.templating import Jinja2Templates
@@ -30,7 +32,5 @@ async def admin_discover(request: Request) -> JSONResponse:
     summary = await request_walk(request.app, reconcile=True, await_result=True)
     if summary is None:
         return JSONResponse({"error": "no summary returned"}, status_code=500)
-
-    import dataclasses
 
     return JSONResponse(dataclasses.asdict(summary))

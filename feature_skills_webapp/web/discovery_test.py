@@ -167,6 +167,45 @@ async def test_cancelled_worker_resolves_outstanding_futures(tmp_path: Path) -> 
     assert fut.done()
 
 
+async def test_cancelled_worker_resolves_queued_unbatched_futures(tmp_path: Path) -> None:
+    """On cancellation, the worker also drains and resolves requests still queued
+    but not yet pulled into the current batch — they must not hang."""
+    app = make_app(tmp_path / "db.sqlite", tmp_path)
+
+    start_event = asyncio.Event()
+    block_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+
+    def blocking_run_walk(db_path: Path, docs_root: Path, reconcile: bool) -> WalkSummary:
+        import time
+
+        loop.call_soon_threadsafe(start_event.set)
+        while not block_event.is_set():
+            time.sleep(0.005)
+        return WalkSummary()
+
+    with patch("feature_skills_webapp.web.discovery._run_walk", side_effect=blocking_run_walk):
+        worker_task = asyncio.create_task(_worker(app))
+
+        # First request is pulled into the batch and starts the (blocking) walk.
+        batched = loop.create_future()
+        await app.state.walk_queue.put(WalkRequest(reconcile=False, future=batched))
+        await asyncio.wait_for(start_event.wait(), timeout=5)
+
+        # Second request arrives while the walk is in flight — it sits in the queue,
+        # not yet batched.
+        queued = loop.create_future()
+        await app.state.walk_queue.put(WalkRequest(reconcile=False, future=queued))
+
+        worker_task.cancel()
+        block_event.set()
+        await asyncio.wait_for(asyncio.gather(worker_task, return_exceptions=True), timeout=5)
+
+    assert batched.done(), "in-batch future must be resolved on cancel"
+    assert queued.done(), "queued-but-unbatched future must be resolved on cancel"
+    assert queued.result().errors == 1
+
+
 # --- should_index ---
 
 

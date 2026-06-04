@@ -17,7 +17,7 @@ log = logging.getLogger(__name__)
 @dataclass
 class WalkRequest:
     reconcile: bool
-    future: asyncio.Future | None  # resolved by the worker with WalkSummary
+    future: asyncio.Future[WalkSummary] | None  # resolved by the worker with WalkSummary
 
 
 def _run_walk(db_path: Path, docs_root: Path, reconcile: bool) -> WalkSummary:
@@ -53,7 +53,15 @@ async def _worker(app: Any) -> None:
                     r.future.set_result(summary)
             batch = []
     except asyncio.CancelledError:
-        for r in batch:
+        # Resolve every outstanding future so no awaiting caller hangs on shutdown —
+        # both the current batch and any requests still queued but not yet batched.
+        pending = list(batch)
+        while not q.empty():
+            try:
+                pending.append(q.get_nowait())
+            except asyncio.QueueEmpty:
+                break
+        for r in pending:
             if r.future and not r.future.done():
                 r.future.set_result(WalkSummary(errors=1))
         raise

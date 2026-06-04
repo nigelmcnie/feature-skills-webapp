@@ -180,3 +180,13 @@ Plan-level detail worth carrying forward; the planner firms these up.
 - **Coarse walk signal accepted (round 2).** The queue carries "walk requested", not what changed, so every event re-walks the whole (gated) tree. Cheap at current scale; a per-path queue is deliberately not built now.
 - **No drop-all rebuild in Stage 1 (planning).** The on-demand endpoint is a reconcile, not a nuclear rebuild; a full drop-all-and-re-walk is deferred (reconcile, or deleting the regenerable DB file, suffices). Add a rebuild endpoint later only if a need emerges.
 - **documents gains `project_id` (planning).** With `feature_id` nullable, a project-level doc can't reach its project via `features`, so migration 0002 also adds a `project_id` (NOT NULL) to `documents`; every doc carries its project directly.
+
+## Review decisions
+
+### Round 1 (post-merge review, all phases on main)
+
+- **events.payload_json now populated.** The walker was leaving `payload_json` NULL despite the plan; every event (created / updated / archived / reactivated / missing) now records `{path, type, feature}`, so the downstream activity feed has its data at the source.
+- **Stale in-package docs removed + guarded.** Deleted `feature_skills_webapp/docs/.../requirements.md` (shipped in the wheel) and added `"**/docs/**"` to the wheel `exclude` so docs can't ship again.
+- **v1→v2 migration upgrade-path test added.** The plan called for it; tests previously only built fresh DBs. New test applies only `0001`, then `migrate()`, asserting the in-place upgrade to v2.
+- **Shutdown lost-wakeup closed.** On `CancelledError` the walk worker now drains the queue and resolves *queued-but-unbatched* futures too (not just the in-flight batch), so a shutdown-racing request can't hang on the 30s timeout. Covered by a new test.
+- **Polish.** `features.html` read once (not twice) per changed walk; module-level `dataclasses` import in routes; comment on the dead-but-defensive tracker `try/except`; documented the reactivated-over-archived event precedence; `WalkRequest.future` parameterised as `asyncio.Future[WalkSummary]`.

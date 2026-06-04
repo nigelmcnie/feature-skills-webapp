@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from feature_skills_webapp.storage.db import (
+    MIGRATIONS_DIR,
     SchemaVersionMismatchError,
     connect,
     current_version,
@@ -214,6 +215,29 @@ def test_fk_indexes_present(tmp_path: Path) -> None:
         "idx_documents_project",
         "idx_events_document",
     } <= names
+    conn.close()
+
+
+def test_migrate_v1_to_v2_upgrade_path(tmp_path: Path) -> None:
+    """Applying only 0001 yields the old documents shape at version 1; the full
+    migrate() then upgrades in place to version 2 with the new shape (project_id,
+    status). Exercises the real upgrade path, not just a fresh 0001+0002 build."""
+    only_v1 = tmp_path / "migrations_v1"
+    only_v1.mkdir()
+    (only_v1 / "0001_init.sql").write_text((MIGRATIONS_DIR / "0001_init.sql").read_text())
+
+    conn = connect(tmp_path / "test.db")
+    assert migrate(conn, migrations_dir=only_v1) == 1
+    cols_v1 = {r["name"] for r in conn.execute("PRAGMA table_info(documents)").fetchall()}
+    assert "status" not in cols_v1
+    assert "project_id" not in cols_v1
+
+    # Run the real migration set: upgrades 1 -> 2 in place.
+    assert migrate(conn) == 2
+    assert current_version(conn) == 2
+    cols_v2 = {r["name"] for r in conn.execute("PRAGMA table_info(documents)").fetchall()}
+    assert "status" in cols_v2
+    assert "project_id" in cols_v2
     conn.close()
 
 
