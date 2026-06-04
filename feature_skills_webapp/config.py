@@ -16,6 +16,16 @@ def db_path() -> Path:
     return xdg / "feature-skills-webapp" / "db.sqlite"
 
 
+def docs_root() -> Path:
+    override = os.environ.get("FEATURE_SKILLS_WEBAPP_DOCS_ROOT")
+    if override:
+        p = Path(override).expanduser()
+        if not p.is_dir():
+            raise ConfigError(f"FEATURE_SKILLS_WEBAPP_DOCS_ROOT is not a directory: {p}")
+        return p
+    return Path.home() / ".claude" / "feature-docs"
+
+
 def port() -> int:
     raw = os.environ.get("FEATURE_SKILLS_WEBAPP_PORT")
     if not raw:

@@ -19,3 +19,18 @@ async def healthz(request: Request) -> JSONResponse:
     except Exception:
         return JSONResponse({"status": "unavailable"}, status_code=503)
     return JSONResponse({"status": "ok"})
+
+
+async def admin_discover(request: Request) -> JSONResponse:
+    if not hasattr(request.app.state, "walk_queue"):
+        return JSONResponse({"error": "discovery not configured"}, status_code=503)
+
+    from feature_skills_webapp.web.discovery import request_walk
+
+    summary = await request_walk(request.app, reconcile=True, await_result=True)
+    if summary is None:
+        return JSONResponse({"error": "no summary returned"}, status_code=500)
+
+    import dataclasses
+
+    return JSONResponse(dataclasses.asdict(summary))
