@@ -35,20 +35,22 @@ def create_app(db_path: Path | None, docs_root: Path | None = None) -> Starlette
             migrate(conn)
             conn.close()
 
-        worker = None
+        worker = watch = None
         if db_path is not None and docs_root is not None:
-            from feature_skills_webapp.web.discovery import _worker, request_walk
+            from feature_skills_webapp.web.discovery import _watch, _worker, request_walk
 
             app.state.walk_queue = asyncio.Queue()
             worker = asyncio.create_task(_worker(app))
+            watch = asyncio.create_task(_watch(app))
             await request_walk(app, reconcile=True, await_result=False)
 
         try:
             yield
         finally:
-            if worker:
-                worker.cancel()
-                await asyncio.gather(worker, return_exceptions=True)
+            for task in (watch, worker):
+                if task:
+                    task.cancel()
+            await asyncio.gather(*[t for t in (watch, worker) if t], return_exceptions=True)
 
     app = Starlette(
         routes=[
