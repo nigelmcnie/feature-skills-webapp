@@ -164,3 +164,12 @@ Plan-level detail worth carrying forward to `/feature-plan`. Most of it is "do w
 - **Supervision = `Restart=always`** (round 1). Upgraded from `on-failure` so a clean-but-unexpected exit still restarts; paired with a start-limit so a genuine crash loop stops.
 - **Test discipline** (round 1, Nigel). pytest + `pytest-socket` (no network) + `pytest-xdist` with a per-worker DB, plus the connection busy-timeout — the kea pattern, set up in the skeleton so every later feature inherits it.
 - **Config bad-value handling** (round 1). Invalid port/DB env values fail loud at startup rather than silently falling back — a misconfigured unit should surface, not drift.
+
+## Review decisions
+
+### Round 1 (post-merge review)
+
+- **User:** systemd start-limit was a confirmed bug, not a false positive. `StartLimitIntervalSec`/`StartLimitBurst` were in `[Service]`, where systemd ignores them — proven via `systemctl --user show` reporting `StartLimitIntervalUSec=10s` (the manager default), not the configured 60s. The implementer's live test looked correct only because systemd's *default* burst is also 5. Moved both keys to `[Unit]` in the unit and the plan; re-verified `show` now reports `1min`.
+- Added a test that deleting a document leaves its `events` row with `document_id IS NULL` (guards the SET-NULL audit semantics against a future regression to CASCADE).
+- Added defensive tests: the three FK indexes exist, and `transaction()` rolls back on an exception.
+- Reworded the README so the DB path reads as "XDG default; the unit sets only the port" rather than implying the unit sets both env vars.

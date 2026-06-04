@@ -128,6 +128,10 @@ Stand up the `feature-skills-webapp` repo as a supervised Starlette server on `1
   [Unit]
   Description=feature-skills webapp
   After=default.target
+  # StartLimit* are [Unit]-only keys — in [Service] systemd ignores them
+  # and falls back to the manager defaults (10s/5).
+  StartLimitIntervalSec=60
+  StartLimitBurst=5
 
   [Service]
   Type=simple
@@ -135,8 +139,6 @@ Stand up the `feature-skills-webapp` repo as a supervised Starlette server on `1
   ExecStart=%h/.local/bin/feature-skills-webapp
   Restart=always
   RestartSec=2
-  StartLimitIntervalSec=60
-  StartLimitBurst=5
 
   [Install]
   WantedBy=default.target

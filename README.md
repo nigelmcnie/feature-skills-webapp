@@ -17,7 +17,10 @@ uv tool install git+https://github.com/nigelmcnie/feature-skills-webapp
 feature-skills-webapp
 ```
 
-Optionally override the port or DB path via environment variables:
+By default the server listens on `127.0.0.1:8800` and stores its SQLite
+database at `~/.local/share/feature-skills-webapp/db.sqlite` (XDG data dir).
+The systemd unit sets only the port; the DB path falls back to this default.
+Override either via environment variables:
 
 ```
 FEATURE_SKILLS_WEBAPP_PORT=8800

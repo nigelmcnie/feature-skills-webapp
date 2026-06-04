@@ -108,3 +108,57 @@ def test_fk_cascade_deletes_children(tmp_path: Path) -> None:
     count = conn.execute("SELECT COUNT(*) AS n FROM features").fetchone()["n"]
     assert count == 0
     conn.close()
+
+
+def test_events_survive_document_delete_with_null_fk(tmp_path: Path) -> None:
+    """events.document_id is ON DELETE SET NULL: deleting a document must leave
+    the audit-log row intact with a NULL document_id, not cascade it away."""
+    conn = connect(tmp_path / "test.db")
+    migrate(conn)
+    ts = "2026-01-01T00:00:00"
+    with transaction(conn):
+        conn.execute("INSERT INTO projects (name, created_at) VALUES ('p1', ?)", (ts,))
+        proj_id = conn.execute("SELECT id FROM projects WHERE name='p1'").fetchone()["id"]
+        conn.execute(
+            "INSERT INTO features (project_id, slug, created_at, updated_at) VALUES (?, 'f1', ?, ?)",
+            (proj_id, ts, ts),
+        )
+        feat_id = conn.execute("SELECT id FROM features WHERE slug='f1'").fetchone()["id"]
+        conn.execute(
+            "INSERT INTO documents (feature_id, type, created_at, updated_at) "
+            "VALUES (?, 'context', ?, ?)",
+            (feat_id, ts, ts),
+        )
+        doc_id = conn.execute("SELECT id FROM documents").fetchone()["id"]
+        conn.execute(
+            "INSERT INTO events (document_id, event_type, created_at) VALUES (?, 'discovered', ?)",
+            (doc_id, ts),
+        )
+    with transaction(conn):
+        conn.execute("DELETE FROM documents WHERE id=?", (doc_id,))
+    rows = conn.execute("SELECT document_id FROM events").fetchall()
+    assert len(rows) == 1, "event row must survive document deletion"
+    assert rows[0]["document_id"] is None, "document_id must be set NULL, not cascaded"
+    conn.close()
+
+
+def test_fk_indexes_present(tmp_path: Path) -> None:
+    conn = connect(tmp_path / "test.db")
+    migrate(conn)
+    rows = conn.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall()
+    names = {r["name"] for r in rows}
+    assert {"idx_features_project", "idx_documents_feature", "idx_events_document"} <= names
+    conn.close()
+
+
+def test_transaction_rolls_back_on_exception(tmp_path: Path) -> None:
+    conn = connect(tmp_path / "test.db")
+    migrate(conn)
+    with pytest.raises(RuntimeError), transaction(conn):
+        conn.execute(
+            "INSERT INTO projects (name, created_at) VALUES ('rollback-me', '2026-01-01T00:00:00')"
+        )
+        raise RuntimeError("boom")
+    n = conn.execute("SELECT COUNT(*) AS n FROM projects WHERE name='rollback-me'").fetchone()["n"]
+    assert n == 0, "the failed transaction must have rolled back"
+    conn.close()
