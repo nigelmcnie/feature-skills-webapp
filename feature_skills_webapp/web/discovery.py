@@ -65,3 +65,18 @@ async def request_walk(app: Any, *, reconcile: bool, await_result: bool) -> Walk
     if fut:
         return await asyncio.wait_for(fut, timeout=30)
     return None
+
+
+def should_index(path: Path) -> bool:
+    """True for .html files that should be indexed; false for dotfiles/editor-temp/non-HTML."""
+    if path.suffix != ".html":
+        return False
+    return not any(part.startswith(".") and part != ".feedback-archive" for part in path.parts)
+
+
+async def _watch(app: Any) -> None:
+    from watchfiles import awatch
+
+    async for changes in awatch(app.state.docs_root):
+        if any(should_index(Path(p)) for _change, p in changes):
+            await request_walk(app, reconcile=False, await_result=False)

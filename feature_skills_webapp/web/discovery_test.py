@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from feature_skills_webapp.storage.walker import WalkSummary
-from feature_skills_webapp.web.discovery import WalkRequest, _worker, request_walk
+from feature_skills_webapp.web.discovery import WalkRequest, _worker, request_walk, should_index
 
 
 def make_app(db_path: Path, docs_root: Path) -> SimpleNamespace:
@@ -165,3 +165,34 @@ async def test_cancelled_worker_resolves_outstanding_futures(tmp_path: Path) -> 
 
     # The future should be resolved (with errors=1 fallback), not left pending
     assert fut.done()
+
+
+# --- should_index ---
+
+
+def test_should_index_html_is_true():
+    assert should_index(Path("proj/feat/context.html")) is True
+
+
+def test_should_index_feedback_archive_html_is_true():
+    assert should_index(Path("proj/feat/.feedback-archive/old.html")) is True
+
+
+def test_should_index_swp_is_false():
+    assert should_index(Path("proj/feat/context.html.swp")) is False
+
+
+def test_should_index_tilde_backup_is_false():
+    assert should_index(Path("proj/feat/context.html~")) is False
+
+
+def test_should_index_non_html_is_false():
+    assert should_index(Path("proj/feat/readme.md")) is False
+
+
+def test_should_index_dotfile_dir_is_false():
+    assert should_index(Path("proj/feat/.hidden/secret.html")) is False
+
+
+def test_should_index_dotfile_at_root_is_false():
+    assert should_index(Path(".gitignore")) is False
