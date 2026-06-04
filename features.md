@@ -4,7 +4,6 @@
 
 | Feature | Owner | Notes |
 |---|---|---|
-| [webapp-skeleton](docs/features/webapp-skeleton/context.md) | Nigel | Starlette app, SQLite schema, systemd unit — the foundation everything else builds on. |
 
 ## Available
 
@@ -31,3 +30,4 @@ Completed or obsoleted; kept here for context.
 
 | Feature | Outcome |
 |---|---|
+| [webapp-skeleton](docs/features/webapp-skeleton/context.md) | **Shipped.** Supervised Starlette server on `127.0.0.1:8800` with a Jinja placeholder page and a DB-backed `/healthz` readiness check; migrated SQLite carrying the full §4 schema (per-request connections, WAL, `events` SET-NULL audit semantics, FK indexes); systemd user unit with a working crash-loop cap; kea-style test harness (xdist + pytest-socket, per-worker DB). Three phase PRs + one review-fix round; 27 tests, ruff/ty clean. |
