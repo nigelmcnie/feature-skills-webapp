@@ -1,0 +1,15 @@
+[Unit]
+Description=feature-skills webapp
+After=default.target
+
+[Service]
+Type=simple
+Environment=FEATURE_SKILLS_WEBAPP_PORT=8800
+ExecStart=%h/.local/bin/feature-skills-webapp
+Restart=always
+RestartSec=2
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Install]
+WantedBy=default.target
