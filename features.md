@@ -4,6 +4,7 @@
 
 | Feature | Owner | Notes |
 |---|---|---|
+| [inbox-view](docs/features/inbox-view/context.md) | Nigel | The headline UX — Home inbox grouping doc cards by category (awaiting input / new since last visit / in progress / recently shipped), cross-project by default. |
 
 ## Available
 
