@@ -162,6 +162,38 @@ def test_project_filter_returns_only_target(tmp_path: Path) -> None:
     assert ids["doc_b"] in unread_all
 
 
+def test_equal_timestamp_tie_reads_as_read(tmp_path: Path) -> None:
+    """An event whose created_at exactly equals last_read_at reads as already-read.
+
+    The unread comparison is strict (>), a deliberate bias: don't re-flag a doc
+    the instant after it was read. This pins that contract so a future change to
+    the comparison operator can't silently regress it.
+    """
+    conn = temp_conn(tmp_path)
+    with conn:
+        ids = _seed(conn)
+    TIE = "2050-01-01T00:00:00+00:00"
+    # Stamp doc_a read at exactly TIE, then add an event at the same instant.
+    conn.execute(
+        "INSERT INTO read_state (document_id, last_read_at) VALUES (?, ?)",
+        (ids["doc_a"], TIE),
+    )
+    conn.execute(
+        "INSERT INTO events (document_id, event_type, payload_json, created_at) "
+        "VALUES (?, 'updated', '{}', ?)",
+        (ids["doc_a"], TIE),
+    )
+    # Equal timestamp must NOT count as unread.
+    assert ids["doc_a"] not in unread_document_ids(conn)
+    # Sanity: one microsecond later DOES re-flag it.
+    conn.execute(
+        "INSERT INTO events (document_id, event_type, payload_json, created_at) "
+        "VALUES (?, 'updated', '{}', '2050-01-01T00:00:00.000001+00:00')",
+        (ids["doc_a"],),
+    )
+    assert ids["doc_a"] in unread_document_ids(conn)
+
+
 # --- mark_all_read tests ---
 
 

@@ -156,3 +156,11 @@ Plan-level detail worth carrying forward (not requirements constraints):
 - **Bulk endpoint is name-keyed (round 1).** `POST /admin/projects/<project>/mark-read`; project by name to match the design's name-keyed routes; summary reports the count of active docs stamped (rather than only those that were previously unread) for simplicity.
 - **Accepted integration gap (round 1).** The single-doc mark-read op isn't exercised end-to-end by a real user action until `doc-view` lands; it's covered by direct storage-layer unit tests in the meantime. Accepted because inventing a throwaway single-doc endpoint now would be obsoleted by `doc-view` immediately.
 - **Reused-`source_path` reactivation is safe (round 1).** An inherited `read_state` row is harmless because reactivation always emits a fresh, newer event — worked through in the data model.
+
+## Review decisions
+
+### Round 1 (post-merge review, both phases on main)
+
+- **Added an equal-timestamp tie regression test.** The "ties resolve as read" contract (strict `>`) was correct in the SQL but had no direct test. Added `test_equal_timestamp_tie_reads_as_read`: an event at exactly `last_read_at` stays read; one microsecond later re-flags. Locks the behaviour against a future operator change.
+- **Fixed a stale module docstring.** `storage/read_state.py`'s docstring listed only `mark_read`/`unread_document_ids`; added `mark_all_read` (phase 2). Trivial.
+- **No other changes.** The reviewer cleared the in-handler lazy imports (house style), the post-commit `len(rows)` count, the active-docs `stamped` count semantics, injection safety (parameterised lookup), and the unauthenticated admin surface (existing project posture) — no action needed.

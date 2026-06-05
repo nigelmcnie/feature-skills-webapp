@@ -1,4 +1,4 @@
-"""Read-state storage operations: mark_read, unread_document_ids."""
+"""Read-state storage operations: mark_read, mark_all_read, unread_document_ids."""
 
 from __future__ import annotations
 
