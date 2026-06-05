@@ -23,6 +23,21 @@ async def healthz(request: Request) -> JSONResponse:
     return JSONResponse({"status": "ok"})
 
 
+async def admin_mark_read(request: Request) -> JSONResponse:
+    if request.app.state.db_path is None:
+        return JSONResponse({"error": "db not configured"}, status_code=503)
+    project = request.path_params["project"]
+    from feature_skills_webapp.storage.read_state import mark_all_read
+    from feature_skills_webapp.web.db_dep import request_conn
+
+    with request_conn(request.app) as conn:
+        row = conn.execute("SELECT id FROM projects WHERE name = ?", (project,)).fetchone()
+        if row is None:
+            return JSONResponse({"error": "unknown project"}, status_code=404)
+        stamped = mark_all_read(conn, row["id"])
+    return JSONResponse({"project": project, "stamped": stamped})
+
+
 async def admin_discover(request: Request) -> JSONResponse:
     if not hasattr(request.app.state, "walk_queue"):
         return JSONResponse({"error": "discovery not configured"}, status_code=503)
