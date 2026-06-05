@@ -5,9 +5,19 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
+
+
+def now_iso() -> str:
+    """UTC ISO-8601 timestamp: the single source of truth for stored timestamps.
+
+    read_state.last_read_at and events.created_at are compared
+    lexicographically, so they MUST be produced by this one function.
+    """
+    return datetime.now(tz=UTC).isoformat()
 
 
 class SchemaVersionMismatchError(Exception):

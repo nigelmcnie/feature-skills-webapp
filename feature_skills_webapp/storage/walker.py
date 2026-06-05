@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from html.parser import HTMLParser
 from pathlib import Path
 
-from feature_skills_webapp.storage.db import transaction
+from feature_skills_webapp.storage.db import now_iso, transaction
 
 log = logging.getLogger(__name__)
 
@@ -355,7 +355,7 @@ def walk(conn: sqlite3.Connection, docs_root: Path, *, reconcile: bool) -> WalkS
         summary.duration_ms = int((time.monotonic() - start) * 1000)
         return summary
 
-    now = datetime.now(tz=UTC).isoformat()
+    now = now_iso()
     seen_paths: set[str] = set()
 
     with transaction(conn):
