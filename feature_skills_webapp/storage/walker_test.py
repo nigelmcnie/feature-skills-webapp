@@ -539,3 +539,181 @@ def test_mangled_tracker_degrades_gracefully(tmp_path: Path):
     assert summary.errors == 0
     # No feature rows from tracker (document has no tables)
     assert conn.execute("SELECT COUNT(*) AS n FROM features").fetchone()["n"] == 0
+
+
+# --- Phase 4: shipped event ---
+
+FEATURES_HTML_AVAILABLE = """\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="feature-doc-type" content="features">
+<title>proj1 — Features</title>
+</head>
+<body>
+<section id="available">
+  <table class="features">
+    <tbody>
+      <tr>
+        <td class="feature-name">feat-x</td>
+        <td class="feature-notes">ready to start</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+<section id="done">
+  <table class="features">
+    <tbody>
+      <tr class="empty">
+        <td colspan="2">Nothing done yet.</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+</body>
+</html>
+"""
+
+FEATURES_HTML_DONE = """\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="feature-doc-type" content="features">
+<title>proj1 — Features</title>
+</head>
+<body>
+<section id="available">
+  <table class="features">
+    <tbody>
+      <tr class="empty">
+        <td colspan="2">Nothing available.</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+<section id="done">
+  <table class="features">
+    <tbody>
+      <tr>
+        <td class="feature-name">feat-x</td>
+        <td class="feature-outcome">Shipped.</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+</body>
+</html>
+"""
+
+
+def test_ship_event_emitted_on_done_transition(tmp_path: Path):
+    """Walking a tracker that transitions a feature to done inserts one shipped event."""
+    docs_root = tmp_path / "docs"
+    (docs_root / "proj1").mkdir(parents=True)
+    features_file = docs_root / "proj1" / "features.html"
+
+    conn = temp_conn(tmp_path)
+    features_file.write_text(FEATURES_HTML_AVAILABLE)
+    walk(conn, docs_root, reconcile=False)
+
+    # No shipped events yet
+    assert (
+        conn.execute("SELECT COUNT(*) AS n FROM events WHERE event_type='shipped'").fetchone()["n"]
+        == 0
+    )
+
+    # Transition feat-x to done
+    import time
+
+    time.sleep(0.01)  # ensure mtime changes
+    features_file.write_text(FEATURES_HTML_DONE)
+    walk(conn, docs_root, reconcile=False)
+
+    shipped = conn.execute("SELECT * FROM events WHERE event_type='shipped'").fetchall()
+    assert len(shipped) == 1
+    assert shipped[0]["document_id"] is None
+    payload = json.loads(shipped[0]["payload_json"])
+    assert payload == {"project": "proj1", "slug": "feat-x"}
+
+
+def test_ship_event_no_duplicate_on_rewalk(tmp_path: Path):
+    """Re-walking a tracker with an already-done feature does not produce a second shipped event."""
+    docs_root = tmp_path / "docs"
+    (docs_root / "proj1").mkdir(parents=True)
+    features_file = docs_root / "proj1" / "features.html"
+
+    conn = temp_conn(tmp_path)
+    features_file.write_text(FEATURES_HTML_AVAILABLE)
+    walk(conn, docs_root, reconcile=False)
+
+    import time
+
+    time.sleep(0.01)
+    features_file.write_text(FEATURES_HTML_DONE)
+    walk(conn, docs_root, reconcile=False)
+
+    # Walk again without changing the file
+    walk(conn, docs_root, reconcile=False)
+
+    shipped_count = conn.execute(
+        "SELECT COUNT(*) AS n FROM events WHERE event_type='shipped'"
+    ).fetchone()["n"]
+    assert shipped_count == 1
+
+
+FEATURES_HTML_IN_PROGRESS = """\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="feature-doc-type" content="features">
+<title>proj1 — Features</title>
+</head>
+<body>
+<section id="in-progress">
+  <table class="features">
+    <tbody>
+      <tr>
+        <td class="feature-name">feat-x</td>
+        <td class="feature-notes">working on it</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+<section id="done">
+  <table class="features">
+    <tbody>
+      <tr class="empty">
+        <td colspan="2">Nothing done yet.</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+</body>
+</html>
+"""
+
+
+def test_ship_event_not_emitted_for_non_done_status(tmp_path: Path):
+    """Transitioning to in_progress or available does not emit a shipped event."""
+    docs_root = tmp_path / "docs"
+    (docs_root / "proj1").mkdir(parents=True)
+    features_file = docs_root / "proj1" / "features.html"
+
+    conn = temp_conn(tmp_path)
+    # Start with available, re-walk with in_progress (no done features in either)
+    features_file.write_text(FEATURES_HTML_AVAILABLE)
+    walk(conn, docs_root, reconcile=False)
+
+    import time
+
+    time.sleep(0.01)
+    features_file.write_text(FEATURES_HTML_IN_PROGRESS)
+    walk(conn, docs_root, reconcile=False)
+
+    assert (
+        conn.execute("SELECT COUNT(*) AS n FROM events WHERE event_type='shipped'").fetchone()["n"]
+        == 0
+    )

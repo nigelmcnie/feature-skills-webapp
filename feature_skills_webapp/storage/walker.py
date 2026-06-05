@@ -200,9 +200,14 @@ def parse_doc(path: Path) -> ParsedDoc | None:
 
 
 def _apply_tracker_rows(
-    conn: sqlite3.Connection, project_id: int, rows: list[TrackerRow], now: str
+    conn: sqlite3.Connection, project_id: int, project_name: str, rows: list[TrackerRow], now: str
 ) -> None:
     for row in rows:
+        prev = conn.execute(
+            "SELECT status FROM features WHERE project_id=? AND slug=?",
+            (project_id, row.slug),
+        ).fetchone()
+        old_status = prev["status"] if prev else None
         conn.execute(
             "INSERT INTO features (project_id, slug, status, owner, notes, created_at, updated_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?) "
@@ -210,6 +215,12 @@ def _apply_tracker_rows(
             "status=excluded.status, owner=excluded.owner, notes=excluded.notes, updated_at=excluded.updated_at",
             (project_id, row.slug, row.status, row.owner, row.notes, now, now),
         )
+        if row.status == "done" and old_status != "done":
+            conn.execute(
+                "INSERT INTO events (document_id, event_type, payload_json, created_at) "
+                "VALUES (NULL, 'shipped', ?, ?)",
+                (json.dumps({"project": project_name, "slug": row.slug}), now),
+            )
 
 
 def _upsert_project(conn: sqlite3.Connection, name: str, now: str) -> int:
@@ -336,7 +347,9 @@ def _process_file(
     # and upsert feature metadata. Guarded so a tracker mishap can't abort the walk.
     if identity.feature is None and parsed.doc_type == "features":
         try:
-            _apply_tracker_rows(conn, project_id, parse_tracker(html_content), now)
+            _apply_tracker_rows(
+                conn, project_id, identity.project, parse_tracker(html_content), now
+            )
         except Exception:
             log.warning("Failed to apply tracker rows from %s", abs_path)
 
