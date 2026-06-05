@@ -90,6 +90,7 @@ def test_healthz_still_ok_with_docs_root(temp_db: Path, tmp_path: Path) -> None:
 def test_admin_mark_read_returns_summary(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_docs_root(tmp_path)
     with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")  # wait for initial walk so proj1 is indexed
         response = client.post("/admin/projects/proj1/mark-read")
     assert response.status_code == 200
     data = response.json()
@@ -101,6 +102,7 @@ def test_admin_mark_read_returns_summary(temp_db: Path, tmp_path: Path) -> None:
 def test_admin_mark_read_clears_unread(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_docs_root(tmp_path)
     with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")  # wait for initial walk so proj1 is indexed
         client.post("/admin/projects/proj1/mark-read")
 
     from feature_skills_webapp.storage.db import connect
