@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 from feature_skills_webapp.storage.db import connect, migrate, now_iso
-from feature_skills_webapp.storage.read_state import mark_read, unread_document_ids
+from feature_skills_webapp.storage.read_state import mark_all_read, mark_read, unread_document_ids
 
 
 def temp_conn(tmp_path: Path) -> sqlite3.Connection:
@@ -160,3 +160,39 @@ def test_project_filter_returns_only_target(tmp_path: Path) -> None:
 
     assert ids["doc_a"] in unread_all
     assert ids["doc_b"] in unread_all
+
+
+# --- mark_all_read tests ---
+
+
+def test_mark_all_read_stamps_active_docs_and_returns_count(tmp_path: Path) -> None:
+    conn = temp_conn(tmp_path)
+    with conn:
+        ids = _seed(conn)
+    count = mark_all_read(conn, ids["proj_a"])
+    assert count == 1  # only doc_a is active in proj_a
+    assert ids["doc_a"] not in unread_document_ids(conn)
+
+
+def test_mark_all_read_ignores_other_projects(tmp_path: Path) -> None:
+    conn = temp_conn(tmp_path)
+    with conn:
+        ids = _seed(conn)
+    mark_all_read(conn, ids["proj_a"])
+    assert ids["doc_b"] in unread_document_ids(conn)
+
+
+def test_mark_all_read_ignores_archived_and_missing(tmp_path: Path) -> None:
+    conn = temp_conn(tmp_path)
+    with conn:
+        ids = _seed(conn)
+    mark_all_read(conn, ids["proj_a"])
+    # archived and missing docs should not have read_state rows written
+    archived_row = conn.execute(
+        "SELECT last_read_at FROM read_state WHERE document_id=?", (ids["doc_archived"],)
+    ).fetchone()
+    missing_row = conn.execute(
+        "SELECT last_read_at FROM read_state WHERE document_id=?", (ids["doc_missing"],)
+    ).fetchone()
+    assert archived_row is None
+    assert missing_row is None

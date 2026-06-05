@@ -16,6 +16,22 @@ def mark_read(conn: sqlite3.Connection, document_id: int) -> None:
         )
 
 
+def mark_all_read(conn: sqlite3.Connection, project_id: int) -> int:
+    now = now_iso()
+    with transaction(conn):
+        rows = conn.execute(
+            "SELECT id FROM documents WHERE project_id = ? AND status = 'active'",
+            (project_id,),
+        ).fetchall()
+        for r in rows:
+            conn.execute(
+                "INSERT INTO read_state (document_id, last_read_at) VALUES (?, ?) "
+                "ON CONFLICT(document_id) DO UPDATE SET last_read_at = excluded.last_read_at",
+                (r["id"], now),
+            )
+    return len(rows)
+
+
 def unread_document_ids(conn: sqlite3.Connection, project_id: int | None = None) -> list[int]:
     sql = (
         "SELECT d.id FROM documents d "
