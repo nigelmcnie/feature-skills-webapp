@@ -6,7 +6,7 @@ from pathlib import Path
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 
-from feature_skills_webapp.storage.inbox import humanise_type
+from feature_skills_webapp.storage.inbox import DOC_TYPE_ORDER, humanise_type
 from feature_skills_webapp.storage.read_state import mark_read
 from feature_skills_webapp.web.db_dep import request_conn
 
@@ -33,6 +33,27 @@ def breadcrumbs(row: sqlite3.Row) -> list[tuple[str, str | None]]:
     return crumbs
 
 
+def _rank(t: str) -> int:
+    return DOC_TYPE_ORDER.index(t) if t in DOC_TYPE_ORDER else len(DOC_TYPE_ORDER)
+
+
+def siblings(
+    conn: sqlite3.Connection, feature_id: int, current_id: int
+) -> tuple[sqlite3.Row | None, sqlite3.Row | None]:
+    rows = conn.execute(
+        "SELECT id, type FROM documents WHERE feature_id = ? AND status = 'active'",
+        (feature_id,),
+    ).fetchall()
+    ordered = sorted(rows, key=lambda r: (_rank(r["type"]), r["id"]))
+    ids = [r["id"] for r in ordered]
+    if current_id not in ids:
+        return None, None
+    i = ids.index(current_id)
+    prev = ordered[i - 1] if i > 0 else None
+    nxt = ordered[i + 1] if i < len(ids) - 1 else None
+    return prev, nxt
+
+
 async def doc_shell(request: Request) -> Response:
     app = request.app
     if app.state.db_path is None:
@@ -44,7 +65,17 @@ async def doc_shell(request: Request) -> Response:
             return PlainTextResponse("Not found", status_code=404)
         crumbs = breadcrumbs(row)
         available = row["status"] in ("active", "archived")
+        nav: tuple[sqlite3.Row | None, sqlite3.Row | None] = (None, None)
+        if row["feature"] is not None and row["status"] == "active":
+            feature_id = conn.execute(
+                "SELECT id FROM features WHERE project_id = ("
+                "  SELECT id FROM projects WHERE name = ?"
+                ") AND slug = ?",
+                (row["project"], row["feature"]),
+            ).fetchone()["id"]
+            nav = siblings(conn, feature_id, doc_id)
         mark_read(conn, doc_id)  # own transaction; after the read
+    prev, nxt = nav
     return app.state.templates.TemplateResponse(
         request,
         "doc.html",
@@ -53,7 +84,8 @@ async def doc_shell(request: Request) -> Response:
             "crumbs": crumbs,
             "available": available,
             "raw_url": f"/doc/{doc_id}/raw",
-            "siblings": None,
+            "prev": {"id": prev["id"], "label": humanise_type(prev["type"])} if prev else None,
+            "next": {"id": nxt["id"], "label": humanise_type(nxt["type"])} if nxt else None,
         },
     )
 

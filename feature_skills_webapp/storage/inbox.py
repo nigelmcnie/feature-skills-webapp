@@ -9,6 +9,8 @@ from datetime import UTC, datetime, timedelta
 SHIPPED_RECENT_DAYS = 30
 SHIPPED_LIMIT = 5
 
+DOC_TYPE_ORDER = ["context", "requirements", "plan", "review"]
+
 _TYPE_LABELS = {
     "context": "Context",
     "requirements": "Requirements",
