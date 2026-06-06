@@ -48,6 +48,10 @@ async def _worker(app: Any) -> None:
             except Exception:
                 log.exception("walk failed")
                 summary = WalkSummary(errors=1)
+            if summary.changed:
+                broadcaster = getattr(app.state, "broadcaster", None)
+                if broadcaster is not None:
+                    broadcaster.broadcast()
             for r in batch:
                 if r.future and not r.future.done():
                     r.future.set_result(summary)
