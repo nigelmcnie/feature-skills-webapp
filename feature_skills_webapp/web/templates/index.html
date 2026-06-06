@@ -3,28 +3,226 @@
 <head>
 <meta charset="UTF-8">
 <meta name="color-scheme" content="dark">
-<title>feature-skills-webapp</title>
+<title>Inbox — feature-skills-webapp</title>
 <style>
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    background: #1c1917;
-    color: #fafaf9;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    min-height: 100vh;
-    margin: 0;
-    font-size: 18px;
+  :root {
+    --bg: #1c1917;
+    --surface: #292524;
+    --surface-muted: #1f1d1c;
+    --border: #44403c;
+    --accent: #f59e0b;
+    --accent-soft: #92400e;
+    --text: #fafaf9;
+    --text-muted: #d6d3d1;
+    --text-faint: #a8a29e;
   }
-  .container { text-align: center; }
-  h1 { font-size: 2rem; margin: 0 0 0.5rem; }
-  p { color: #a8a29e; margin: 0; }
+  * { box-sizing: border-box; }
+  html { font-size: 18px; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    margin: 0;
+    padding: 0;
+    line-height: 1.6;
+  }
+
+  .page { max-width: 860px; margin: 0 auto; padding: 32px 24px 80px; }
+
+  header.page-header {
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 16px;
+    margin-bottom: 28px;
+  }
+  header.page-header h1 {
+    margin: 0 0 4px;
+    font-size: 1.5rem;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+  header.page-header p {
+    margin: 0;
+    color: var(--text-faint);
+    font-size: 0.9rem;
+  }
+
+  /* Chips */
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 28px;
+  }
+  .chip {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text-muted);
+    text-decoration: none;
+    font-size: 0.85rem;
+    transition: border-color 0.1s, color 0.1s;
+  }
+  .chip:hover { border-color: var(--accent); color: var(--text); text-decoration: none; }
+  .chip.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+
+  /* Category sections */
+  .category { margin-bottom: 36px; }
+  .category h2 {
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--text-faint);
+    margin: 0 0 12px;
+  }
+
+  /* Cards */
+  .card-list { list-style: none; margin: 0; padding: 0; }
+  .card {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding: 10px 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin-bottom: 6px;
+  }
+  .card-project {
+    font-size: 0.78rem;
+    color: var(--text-faint);
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .card-feature {
+    font-weight: 500;
+    color: var(--text);
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .card-label {
+    font-size: 0.8rem;
+    color: var(--accent);
+    background: var(--accent-soft);
+    padding: 2px 8px;
+    border-radius: 4px;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .card-time {
+    font-size: 0.78rem;
+    color: var(--text-faint);
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  /* Empty / not-configured states */
+  .state-panel {
+    text-align: center;
+    padding: 48px 24px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  .state-panel p {
+    margin: 0 0 8px;
+    color: var(--text-muted);
+  }
+  .state-panel p:last-child { margin-bottom: 0; }
+  .state-panel .hint { color: var(--text-faint); font-size: 0.9rem; }
 </style>
 </head>
 <body>
-<div class="container">
-  <h1>feature-skills-webapp</h1>
-  <p data-marker="{{ marker }}">Placeholder — coming soon.</p>
+<div class="page">
+
+  <header class="page-header">
+    <h1>Inbox</h1>
+    <p>Cross-project feature activity</p>
+  </header>
+
+{% if not configured %}
+  <div class="state-panel" data-state="not-configured">
+    <p>No data yet.</p>
+    <p class="hint">Configure a docs root and run discovery to populate the inbox.</p>
+  </div>
+
+{% elif projects %}
+  <nav class="chips" aria-label="Project filter">
+    <a href="/" class="chip{% if not active_project %} active{% endif %}">All</a>
+    {% for proj in projects %}
+    <a href="/?project={{ proj }}" class="chip{% if active_project == proj %} active{% endif %}">{{ proj }}</a>
+    {% endfor %}
+  </nav>
+
+  {% if inbox.new_since or inbox.in_progress or inbox.recently_shipped %}
+
+    {% if inbox.new_since %}
+    <section class="category">
+      <h2>New since last visit</h2>
+      <ul class="card-list">
+        {% for card in inbox.new_since %}
+        <li class="card">
+          <span class="card-project">{{ card.project }}</span>
+          <span class="card-feature">{{ card.feature }}</span>
+          <span class="card-label">{{ card.label }}</span>
+          {% if card.last_activity %}<span class="card-time">{{ card.last_activity[:10] }}</span>{% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% endif %}
+
+    {% if inbox.in_progress %}
+    <section class="category">
+      <h2>In progress</h2>
+      <ul class="card-list">
+        {% for card in inbox.in_progress %}
+        <li class="card">
+          <span class="card-project">{{ card.project }}</span>
+          <span class="card-feature">{{ card.feature }}</span>
+          <span class="card-label">{{ card.label }}</span>
+          {% if card.last_activity %}<span class="card-time">{{ card.last_activity[:10] }}</span>{% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% endif %}
+
+    {% if inbox.recently_shipped %}
+    <section class="category">
+      <h2>Recently shipped</h2>
+      <ul class="card-list">
+        {% for card in inbox.recently_shipped %}
+        <li class="card">
+          <span class="card-project">{{ card.project }}</span>
+          <span class="card-feature">{{ card.feature }}</span>
+          <span class="card-label">{{ card.label }}</span>
+          {% if card.last_activity %}<span class="card-time">{{ card.last_activity[:10] }}</span>{% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% endif %}
+
+  {% else %}
+  <div class="state-panel" data-state="empty">
+    <p>Nothing's waiting for you.</p>
+    <p class="hint">All caught up — no unread docs, nothing in progress, nothing recently shipped.</p>
+  </div>
+  {% endif %}
+
+{% else %}
+  <div class="state-panel" data-state="empty">
+    <p>Nothing's waiting for you.</p>
+    <p class="hint">All caught up — no unread docs, nothing in progress, nothing recently shipped.</p>
+  </div>
+{% endif %}
+
 </div>
 </body>
 </html>

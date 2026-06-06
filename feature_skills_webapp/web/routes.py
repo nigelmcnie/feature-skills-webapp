@@ -4,12 +4,31 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse
 from starlette.templating import Jinja2Templates
 
-MARKER = "feature-skills-webapp-placeholder"
-
 
 async def index(request: Request) -> HTMLResponse:
-    templates: Jinja2Templates = request.app.state.templates
-    return templates.TemplateResponse(request, "index.html", {"marker": MARKER})
+    app = request.app
+    templates: Jinja2Templates = app.state.templates
+    if app.state.db_path is None:
+        return templates.TemplateResponse(request, "index.html", {"configured": False})
+    from feature_skills_webapp.storage.inbox import build_inbox
+    from feature_skills_webapp.web.db_dep import request_conn
+
+    project = request.query_params.get("project")
+    with request_conn(app) as conn:
+        inbox = build_inbox(conn, project=project)
+        projects = [
+            r["name"] for r in conn.execute("SELECT name FROM projects ORDER BY name").fetchall()
+        ]
+    return templates.TemplateResponse(
+        request,
+        "index.html",
+        {
+            "configured": True,
+            "inbox": inbox,
+            "projects": projects,
+            "active_project": project,
+        },
+    )
 
 
 async def healthz(request: Request) -> JSONResponse:
