@@ -80,6 +80,18 @@
 
   /* Cards */
   .card-list { list-style: none; margin: 0; padding: 0; }
+  a.card-link {
+    display: block;
+    text-decoration: none;
+    color: inherit;
+    border-radius: 6px;
+    margin-bottom: 6px;
+    outline-offset: 2px;
+  }
+  a.card-link:focus-visible {
+    outline: 2px solid var(--accent);
+  }
+  a.card-link .card { margin-bottom: 0; }
   .card {
     display: flex;
     align-items: baseline;
@@ -173,12 +185,24 @@
       <h2>New since last visit</h2>
       <ul class="card-list">
         {% for card in inbox.new_since %}
+        {% if card.document_id %}
+        <li><a class="card-link" href="/doc/{{ card.document_id }}"
+               aria-label="{{ card.project }} {{ card.feature }} {{ card.label }}">
+          <div class="card">
+            <span class="card-project">{{ card.project }}</span>
+            <span class="card-feature">{{ card.feature }}</span>
+            <span class="card-label">{{ card.label }}</span>
+            {% if card.last_activity %}<span class="card-time">{{ card.last_activity[:10] }}</span>{% endif %}
+          </div>
+        </a></li>
+        {% else %}
         <li class="card">
           <span class="card-project">{{ card.project }}</span>
           <span class="card-feature">{{ card.feature }}</span>
           <span class="card-label">{{ card.label }}</span>
           {% if card.last_activity %}<span class="card-time">{{ card.last_activity[:10] }}</span>{% endif %}
         </li>
+        {% endif %}
         {% endfor %}
       </ul>
     </section>

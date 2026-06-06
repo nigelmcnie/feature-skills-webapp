@@ -9,6 +9,7 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 from starlette.templating import Jinja2Templates
 
+from feature_skills_webapp.web.doc_view import doc_raw, doc_shell
 from feature_skills_webapp.web.routes import admin_discover, admin_mark_read, healthz, index
 
 _HERE = Path(__file__).parent
@@ -58,6 +59,8 @@ def create_app(db_path: Path | None, docs_root: Path | None = None) -> Starlette
             Route("/healthz", healthz),
             Route("/admin/discover", admin_discover, methods=["POST"]),
             Route("/admin/projects/{project}/mark-read", admin_mark_read, methods=["POST"]),
+            Route("/doc/{document_id:int}", doc_shell),
+            Route("/doc/{document_id:int}/raw", doc_raw),
             Mount("/static", StaticFiles(directory=STATIC_DIR)),
         ],
         lifespan=lifespan,
