@@ -20,6 +20,10 @@ class Broadcaster:
         self._clients.discard(q)
 
     def broadcast(self, message: str = "changed") -> None:
+        # maxsize=0 (unbounded) so put_nowait never raises. Messages are
+        # contentless; a normally-disconnecting client is removed via the
+        # endpoint's finally. Repaints are coalesced client-side by the
+        # debounce, not in the queue — a lagging client just holds N copies.
         for q in self._clients:
             q.put_nowait(message)
 

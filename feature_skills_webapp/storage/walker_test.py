@@ -732,8 +732,6 @@ def test_done_transition_increments_shipped(tmp_path: Path):
     features_file.write_text(FEATURES_HTML_AVAILABLE)
     walk(conn, docs_root, reconcile=False)
 
-    import time
-
     time.sleep(0.01)
     features_file.write_text(FEATURES_HTML_DONE)
     summary = walk(conn, docs_root, reconcile=False)
