@@ -314,3 +314,106 @@ def test_index_in_progress_card_not_wrapped_in_anchor(temp_db: Path, tmp_path: P
     # The page may have /doc/ links from other sections so just check
     # the in_progress section area doesn't have a card-link
     assert 'class="card-link"' not in response.text
+
+
+# ---- sibling navigation (Phase 2) ----
+
+
+def make_three_doc_root(tmp_path: Path) -> Path:
+    docs_root = tmp_path / "docs"
+    (docs_root / "proj1" / "feat-a").mkdir(parents=True)
+    for doc_type in ("context", "requirements", "plan"):
+        (docs_root / "proj1" / "feat-a" / f"{doc_type}.html").write_text(
+            HTML_TEMPLATE.format(doc_type=doc_type, title=f"feat-a {doc_type}")
+        )
+    return docs_root
+
+
+def _doc_ids_by_type(temp_db: Path) -> dict[str, int]:
+    from feature_skills_webapp.storage.db import connect
+
+    conn = connect(temp_db)
+    rows = conn.execute("SELECT id, type FROM documents").fetchall()
+    conn.close()
+    return {r["type"]: r["id"] for r in rows}
+
+
+def test_sibling_nav_prev_and_next(temp_db: Path, tmp_path: Path) -> None:
+    docs_root = make_three_doc_root(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        ids = _doc_ids_by_type(temp_db)
+        response = client.get(f"/doc/{ids['requirements']}")
+    assert response.status_code == 200
+    assert f'href="/doc/{ids["context"]}"' in response.text
+    assert f'href="/doc/{ids["plan"]}"' in response.text
+
+
+def test_sibling_nav_first_has_no_prev(temp_db: Path, tmp_path: Path) -> None:
+    docs_root = make_three_doc_root(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        ids = _doc_ids_by_type(temp_db)
+        response = client.get(f"/doc/{ids['context']}")
+    assert response.status_code == 200
+    assert f'href="/doc/{ids["requirements"]}"' in response.text
+    # no prev link pointing anywhere before context
+    assert "← Context" not in response.text
+
+
+def test_sibling_nav_last_has_no_next(temp_db: Path, tmp_path: Path) -> None:
+    docs_root = make_three_doc_root(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        ids = _doc_ids_by_type(temp_db)
+        response = client.get(f"/doc/{ids['plan']}")
+    assert response.status_code == 200
+    assert f'href="/doc/{ids["requirements"]}"' in response.text
+    assert "Plan →" not in response.text
+
+
+def test_sibling_nav_order_independent_of_insertion(temp_db: Path, tmp_path: Path) -> None:
+    # Index plan first, then context — order must still be context → plan.
+    docs_root = tmp_path / "docs"
+    (docs_root / "proj1" / "feat-a").mkdir(parents=True)
+    for doc_type in ("plan", "context"):  # reverse of canonical order
+        (docs_root / "proj1" / "feat-a" / f"{doc_type}.html").write_text(
+            HTML_TEMPLATE.format(doc_type=doc_type, title=f"feat-a {doc_type}")
+        )
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        ids = _doc_ids_by_type(temp_db)
+        response = client.get(f"/doc/{ids['plan']}")
+    assert response.status_code == 200
+    # context is before plan in canonical order, so plan has a prev link to context
+    assert f'href="/doc/{ids["context"]}"' in response.text
+    # plan is last, so no next link
+    assert "Plan →" not in response.text
+
+
+def test_tracker_doc_has_no_sibling_nav(temp_db: Path, tmp_path: Path) -> None:
+    docs_root = make_docs_root_with_tracker(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        from feature_skills_webapp.storage.db import connect
+
+        conn = connect(temp_db)
+        row = conn.execute("SELECT id FROM documents WHERE type='features' LIMIT 1").fetchone()
+        conn.close()
+        response = client.get(f"/doc/{row['id']}")
+    assert response.status_code == 200
+    assert '<nav class="sibling-nav"' not in response.text
+
+
+def test_archived_feature_doc_has_no_sibling_nav(temp_db: Path, tmp_path: Path) -> None:
+    docs_root = make_docs_root_with_archived(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        from feature_skills_webapp.storage.db import connect
+
+        conn = connect(temp_db)
+        row = conn.execute("SELECT id FROM documents WHERE status='archived' LIMIT 1").fetchone()
+        conn.close()
+        response = client.get(f"/doc/{row['id']}")
+    assert response.status_code == 200
+    assert '<nav class="sibling-nav"' not in response.text
