@@ -717,3 +717,49 @@ def test_ship_event_not_emitted_for_non_done_status(tmp_path: Path):
         conn.execute("SELECT COUNT(*) AS n FROM events WHERE event_type='shipped'").fetchone()["n"]
         == 0
     )
+
+
+# --- WalkSummary.shipped and .changed ---
+
+
+def test_done_transition_increments_shipped(tmp_path: Path):
+    """Walking a tracker with a new done-transition increments summary.shipped."""
+    docs_root = tmp_path / "docs"
+    (docs_root / "proj1").mkdir(parents=True)
+    features_file = docs_root / "proj1" / "features.html"
+
+    conn = temp_conn(tmp_path)
+    features_file.write_text(FEATURES_HTML_AVAILABLE)
+    walk(conn, docs_root, reconcile=False)
+
+    import time
+
+    time.sleep(0.01)
+    features_file.write_text(FEATURES_HTML_DONE)
+    summary = walk(conn, docs_root, reconcile=False)
+
+    assert summary.shipped == 1
+
+
+def test_changed_true_for_created():
+    from feature_skills_webapp.storage.walker import WalkSummary
+
+    assert WalkSummary(created=1).changed is True
+
+
+def test_changed_true_for_shipped():
+    from feature_skills_webapp.storage.walker import WalkSummary
+
+    assert WalkSummary(shipped=1).changed is True
+
+
+def test_changed_false_for_empty_summary():
+    from feature_skills_webapp.storage.walker import WalkSummary
+
+    assert WalkSummary().changed is False
+
+
+def test_changed_false_for_errors_only():
+    from feature_skills_webapp.storage.walker import WalkSummary
+
+    assert WalkSummary(errors=5).changed is False

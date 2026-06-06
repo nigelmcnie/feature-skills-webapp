@@ -36,8 +36,20 @@ class WalkSummary:
     archived: int = 0
     missing: int = 0
     reactivated: int = 0
+    shipped: int = 0
     errors: int = 0
     duration_ms: int = 0
+
+    @property
+    def changed(self) -> bool:
+        return bool(
+            self.created
+            or self.updated
+            or self.archived
+            or self.missing
+            or self.reactivated
+            or self.shipped
+        )
 
 
 def identity_for(rel_path: Path) -> DocIdentity | None:
@@ -200,7 +212,12 @@ def parse_doc(path: Path) -> ParsedDoc | None:
 
 
 def _apply_tracker_rows(
-    conn: sqlite3.Connection, project_id: int, project_name: str, rows: list[TrackerRow], now: str
+    conn: sqlite3.Connection,
+    project_id: int,
+    project_name: str,
+    rows: list[TrackerRow],
+    now: str,
+    summary: WalkSummary,
 ) -> None:
     for row in rows:
         prev = conn.execute(
@@ -221,6 +238,7 @@ def _apply_tracker_rows(
                 "VALUES (NULL, 'shipped', ?, ?)",
                 (json.dumps({"project": project_name, "slug": row.slug}), now),
             )
+            summary.shipped += 1
 
 
 def _upsert_project(conn: sqlite3.Connection, name: str, now: str) -> int:
@@ -348,7 +366,7 @@ def _process_file(
     if identity.feature is None and parsed.doc_type == "features":
         try:
             _apply_tracker_rows(
-                conn, project_id, identity.project, parse_tracker(html_content), now
+                conn, project_id, identity.project, parse_tracker(html_content), now, summary
             )
         except Exception:
             log.warning("Failed to apply tracker rows from %s", abs_path)

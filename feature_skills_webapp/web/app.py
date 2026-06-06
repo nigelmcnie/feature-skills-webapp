@@ -9,7 +9,9 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 from starlette.templating import Jinja2Templates
 
+from feature_skills_webapp.web.broadcaster import Broadcaster
 from feature_skills_webapp.web.doc_view import doc_raw, doc_shell
+from feature_skills_webapp.web.events import events
 from feature_skills_webapp.web.routes import admin_discover, admin_mark_read, healthz, index
 
 _HERE = Path(__file__).parent
@@ -28,6 +30,8 @@ def create_app(db_path: Path | None, docs_root: Path | None = None) -> Starlette
 
     @contextlib.asynccontextmanager
     async def lifespan(app):  # type: ignore[no-untyped-def]
+        app.state.broadcaster = Broadcaster()
+
         if db_path is not None:
             from feature_skills_webapp.storage.db import connect, migrate
 
@@ -56,6 +60,7 @@ def create_app(db_path: Path | None, docs_root: Path | None = None) -> Starlette
     app = Starlette(
         routes=[
             Route("/", index),
+            Route("/events", events),
             Route("/healthz", healthz),
             Route("/admin/discover", admin_discover, methods=["POST"]),
             Route("/admin/projects/{project}/mark-read", admin_mark_read, methods=["POST"]),

@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from feature_skills_webapp.storage.walker import WalkSummary
+from feature_skills_webapp.web.broadcaster import Broadcaster
 from feature_skills_webapp.web.discovery import WalkRequest, _worker, request_walk, should_index
 
 
@@ -204,6 +205,55 @@ async def test_cancelled_worker_resolves_queued_unbatched_futures(tmp_path: Path
     assert batched.done(), "in-batch future must be resolved on cancel"
     assert queued.done(), "queued-but-unbatched future must be resolved on cancel"
     assert queued.result().errors == 1
+
+
+# --- broadcast behaviour ---
+
+
+async def test_worker_broadcasts_on_change(tmp_path: Path) -> None:
+    app = make_app(tmp_path / "db.sqlite", tmp_path)
+    app.state.broadcaster = Broadcaster()
+    q = app.state.broadcaster.register()
+
+    with patch(
+        "feature_skills_webapp.web.discovery._run_walk", return_value=WalkSummary(created=1)
+    ):
+        worker_task = asyncio.create_task(_worker(app))
+        await request_walk(app, reconcile=False, await_result=True)
+        worker_task.cancel()
+        await asyncio.gather(worker_task, return_exceptions=True)
+
+    assert not q.empty(), "expected a broadcast message in the queue"
+
+
+async def test_worker_broadcasts_on_shipped_only(tmp_path: Path) -> None:
+    app = make_app(tmp_path / "db.sqlite", tmp_path)
+    app.state.broadcaster = Broadcaster()
+    q = app.state.broadcaster.register()
+
+    with patch(
+        "feature_skills_webapp.web.discovery._run_walk", return_value=WalkSummary(shipped=1)
+    ):
+        worker_task = asyncio.create_task(_worker(app))
+        await request_walk(app, reconcile=False, await_result=True)
+        worker_task.cancel()
+        await asyncio.gather(worker_task, return_exceptions=True)
+
+    assert not q.empty(), "expected a broadcast message when shipped > 0"
+
+
+async def test_worker_no_broadcast_on_noop(tmp_path: Path) -> None:
+    app = make_app(tmp_path / "db.sqlite", tmp_path)
+    app.state.broadcaster = Broadcaster()
+    q = app.state.broadcaster.register()
+
+    with patch("feature_skills_webapp.web.discovery._run_walk", return_value=WalkSummary()):
+        worker_task = asyncio.create_task(_worker(app))
+        await request_walk(app, reconcile=False, await_result=True)
+        worker_task.cancel()
+        await asyncio.gather(worker_task, return_exceptions=True)
+
+    assert q.empty(), "no broadcast expected for an all-zero summary"
 
 
 # --- should_index ---
