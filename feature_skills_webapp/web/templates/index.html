@@ -151,15 +151,22 @@
     <p class="hint">Configure a docs root and run discovery to populate the inbox.</p>
   </div>
 
-{% elif projects %}
+{% else %}
+  {% if projects %}
   <nav class="chips" aria-label="Project filter">
     <a href="/" class="chip{% if not active_project %} active{% endif %}">All</a>
     {% for proj in projects %}
     <a href="/?project={{ proj }}" class="chip{% if active_project == proj %} active{% endif %}">{{ proj }}</a>
     {% endfor %}
   </nav>
+  {% endif %}
 
-  {% if inbox.new_since or inbox.in_progress or inbox.recently_shipped %}
+  {% if inbox.is_empty %}
+  <div class="state-panel" data-state="empty">
+    <p>Nothing's waiting for you.</p>
+    <p class="hint">All caught up — no unread docs, nothing in progress, nothing recently shipped.</p>
+  </div>
+  {% else %}
 
     {% if inbox.new_since %}
     <section class="category">
@@ -209,18 +216,7 @@
     </section>
     {% endif %}
 
-  {% else %}
-  <div class="state-panel" data-state="empty">
-    <p>Nothing's waiting for you.</p>
-    <p class="hint">All caught up — no unread docs, nothing in progress, nothing recently shipped.</p>
-  </div>
   {% endif %}
-
-{% else %}
-  <div class="state-panel" data-state="empty">
-    <p>Nothing's waiting for you.</p>
-    <p class="hint">All caught up — no unread docs, nothing in progress, nothing recently shipped.</p>
-  </div>
 {% endif %}
 
 </div>

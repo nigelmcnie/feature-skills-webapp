@@ -195,6 +195,29 @@ def test_index_empty_db_shows_empty_state(temp_db: Path) -> None:
     assert "Recently shipped" not in response.text
 
 
+def test_index_has_projects_but_empty_inbox_shows_empty_state(
+    temp_db: Path, tmp_path: Path
+) -> None:
+    """Configured DB with a project but every category empty → the empty state, chips still shown.
+
+    Distinct from test_index_empty_db_shows_empty_state (which has no projects at all): this
+    exercises the configured + has-projects + all-categories-empty path.
+    """
+    docs_root = make_docs_root(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        client.post("/admin/projects/proj1/mark-read")  # clears the only unread doc
+        response = client.get("/")
+    assert response.status_code == 200
+    assert 'data-state="empty"' in response.text
+    # chips still render because the project exists
+    assert 'href="/?project=proj1"' in response.text
+    # no category headings
+    assert "New since last visit" not in response.text
+    assert "In progress" not in response.text
+    assert "Recently shipped" not in response.text
+
+
 def test_index_shows_unread_doc_card(temp_db: Path, tmp_path: Path) -> None:
     """An unread active feature doc appears under 'New since last visit'."""
     docs_root = make_docs_root(tmp_path)

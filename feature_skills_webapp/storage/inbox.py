@@ -39,6 +39,11 @@ class Inbox:
     in_progress: list[InboxCard]
     recently_shipped: list[InboxCard]
 
+    @property
+    def is_empty(self) -> bool:
+        """True when no category has any cards — drives the inbox's all-empty state."""
+        return not (self.new_since or self.in_progress or self.recently_shipped)
+
 
 def _doc_card(r: sqlite3.Row) -> InboxCard:
     return InboxCard(
@@ -87,7 +92,8 @@ def new_since_last_visit(
     if project_id is not None:
         sql += " AND d.project_id = ?"  # noqa: S608
         params.append(project_id)
-    sql += " ORDER BY last_activity DESC"
+    # document_id is a stable secondary key so ties on last_activity have a deterministic order.
+    sql += " ORDER BY last_activity DESC, document_id DESC"
     return [_doc_card(r) for r in conn.execute(sql, params).fetchall()]
 
 
@@ -104,7 +110,8 @@ def in_progress(conn: sqlite3.Connection, project_id: int | None = None) -> list
     if project_id is not None:
         sql += " AND f.project_id = ?"  # noqa: S608
         params.append(project_id)
-    sql += " ORDER BY COALESCE(last_activity,'') DESC"
+    # f.slug is a stable secondary key so ties on last_activity have a deterministic order.
+    sql += " ORDER BY COALESCE(last_activity,'') DESC, f.slug"
     return [_feature_card(r, label="In progress") for r in conn.execute(sql, params).fetchall()]
 
 

@@ -6,7 +6,7 @@ import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from feature_skills_webapp.storage.db import connect, migrate
+from feature_skills_webapp.storage.db import connect, migrate, transaction
 from feature_skills_webapp.storage.inbox import (
     Inbox,
     build_inbox,
@@ -179,7 +179,7 @@ def test_humanise_type_unknown_capitalises_and_spaces() -> None:
 
 def test_new_since_returns_unread_active_feature_docs(tmp_path: Path) -> None:
     conn = temp_conn(tmp_path)
-    with conn:
+    with transaction(conn):
         _seed(conn)
     cards = new_since_last_visit(conn)
     features = {c.feature for c in cards}
@@ -190,7 +190,7 @@ def test_new_since_returns_unread_active_feature_docs(tmp_path: Path) -> None:
 
 def test_new_since_excludes_archived_missing_read(tmp_path: Path) -> None:
     conn = temp_conn(tmp_path)
-    with conn:
+    with transaction(conn):
         ids = _seed(conn)
     cards = new_since_last_visit(conn)
     doc_ids = {c.document_id for c in cards}
@@ -202,7 +202,7 @@ def test_new_since_excludes_archived_missing_read(tmp_path: Path) -> None:
 
 def test_new_since_excludes_null_feature_tracker_doc(tmp_path: Path) -> None:
     conn = temp_conn(tmp_path)
-    with conn:
+    with transaction(conn):
         ids = _seed(conn)
     cards = new_since_last_visit(conn)
     doc_ids = {c.document_id for c in cards}
@@ -211,7 +211,7 @@ def test_new_since_excludes_null_feature_tracker_doc(tmp_path: Path) -> None:
 
 def test_new_since_ordered_newest_first(tmp_path: Path) -> None:
     conn = temp_conn(tmp_path)
-    with conn:
+    with transaction(conn):
         _seed(conn)
     cards = new_since_last_visit(conn)
     # doc_active_a1 has NEWER event; doc_active_a2 has RECENT event — a1 must come first
@@ -221,7 +221,7 @@ def test_new_since_ordered_newest_first(tmp_path: Path) -> None:
 
 def test_new_since_project_filter(tmp_path: Path) -> None:
     conn = temp_conn(tmp_path)
-    with conn:
+    with transaction(conn):
         ids = _seed(conn)
     cards_a = new_since_last_visit(conn, project_id=ids["proj_a"])
     features_a = {c.feature for c in cards_a}
@@ -239,7 +239,7 @@ def test_new_since_project_filter(tmp_path: Path) -> None:
 
 def test_in_progress_returns_only_in_progress_features(tmp_path: Path) -> None:
     conn = temp_conn(tmp_path)
-    with conn:
+    with transaction(conn):
         _seed(conn)
     cards = in_progress(conn)
     slugs = {c.feature for c in cards}
@@ -252,7 +252,7 @@ def test_in_progress_returns_only_in_progress_features(tmp_path: Path) -> None:
 
 def test_in_progress_ordered_by_most_recent_event(tmp_path: Path) -> None:
     conn = temp_conn(tmp_path)
-    with conn:
+    with transaction(conn):
         _seed(conn)
     cards = in_progress(conn)
     # feat-a-1 has doc with NEWER event; feat-a-noevent has no docs → sorts last
@@ -262,7 +262,7 @@ def test_in_progress_ordered_by_most_recent_event(tmp_path: Path) -> None:
 
 def test_in_progress_feature_with_no_active_doc_events_appears_last(tmp_path: Path) -> None:
     conn = temp_conn(tmp_path)
-    with conn:
+    with transaction(conn):
         _seed(conn)
     cards = in_progress(conn)
     slugs = [c.feature for c in cards]
@@ -272,7 +272,7 @@ def test_in_progress_feature_with_no_active_doc_events_appears_last(tmp_path: Pa
 
 def test_in_progress_project_filter(tmp_path: Path) -> None:
     conn = temp_conn(tmp_path)
-    with conn:
+    with transaction(conn):
         ids = _seed(conn)
     cards_a = in_progress(conn, project_id=ids["proj_a"])
     slugs_a = {c.feature for c in cards_a}
@@ -302,7 +302,7 @@ def test_recently_shipped_returns_within_window(tmp_path: Path) -> None:
     conn = temp_conn(tmp_path)
     now = datetime.now(tz=UTC)
     inside = (now - timedelta(days=10)).isoformat()
-    with conn:
+    with transaction(conn):
         conn.execute("INSERT INTO projects (name, created_at) VALUES ('proj-a', ?)", (inside,))
         _insert_shipped_event(conn, "proj-a", "feat-x", inside)
     cards = recently_shipped(conn, within_days=20)
@@ -316,7 +316,7 @@ def test_recently_shipped_excludes_outside_window(tmp_path: Path) -> None:
     conn = temp_conn(tmp_path)
     now = datetime.now(tz=UTC)
     outside = (now - timedelta(days=40)).isoformat()
-    with conn:
+    with transaction(conn):
         conn.execute("INSERT INTO projects (name, created_at) VALUES ('proj-a', ?)", (outside,))
         _insert_shipped_event(conn, "proj-a", "feat-x", outside)
     cards = recently_shipped(conn, within_days=30)
@@ -328,7 +328,7 @@ def test_recently_shipped_cutoff_boundary(tmp_path: Path) -> None:
     conn = temp_conn(tmp_path)
     now = datetime.now(tz=UTC)
     event_ts = (now - timedelta(days=10)).isoformat()
-    with conn:
+    with transaction(conn):
         conn.execute("INSERT INTO projects (name, created_at) VALUES ('proj-a', ?)", (event_ts,))
         _insert_shipped_event(conn, "proj-a", "feat-x", event_ts)
     # within_days=5: event is 10 days old, window is 5 days → outside
@@ -343,7 +343,7 @@ def test_recently_shipped_newest_first(tmp_path: Path) -> None:
     now = datetime.now(tz=UTC)
     t1 = (now - timedelta(days=5)).isoformat()
     t2 = (now - timedelta(days=2)).isoformat()
-    with conn:
+    with transaction(conn):
         conn.execute("INSERT INTO projects (name, created_at) VALUES ('proj-a', ?)", (t1,))
         _insert_shipped_event(conn, "proj-a", "feat-old", t1)
         _insert_shipped_event(conn, "proj-a", "feat-new", t2)
@@ -356,7 +356,7 @@ def test_recently_shipped_capped_at_limit(tmp_path: Path) -> None:
     conn = temp_conn(tmp_path)
     now = datetime.now(tz=UTC)
     base = (now - timedelta(days=1)).isoformat()
-    with conn:
+    with transaction(conn):
         conn.execute("INSERT INTO projects (name, created_at) VALUES ('proj-a', ?)", (base,))
         for i in range(10):
             _insert_shipped_event(conn, "proj-a", f"feat-{i}", base)
@@ -369,7 +369,7 @@ def test_recently_shipped_keeps_latest_per_feature(tmp_path: Path) -> None:
     now = datetime.now(tz=UTC)
     t1 = (now - timedelta(days=5)).isoformat()
     t2 = (now - timedelta(days=2)).isoformat()
-    with conn:
+    with transaction(conn):
         conn.execute("INSERT INTO projects (name, created_at) VALUES ('proj-a', ?)", (t1,))
         # Two shipped events for same feature
         _insert_shipped_event(conn, "proj-a", "feat-x", t1)
@@ -384,7 +384,7 @@ def test_recently_shipped_project_filter_by_name(tmp_path: Path) -> None:
     conn = temp_conn(tmp_path)
     now = datetime.now(tz=UTC)
     ts = (now - timedelta(days=5)).isoformat()
-    with conn:
+    with transaction(conn):
         conn.execute("INSERT INTO projects (name, created_at) VALUES ('proj-a', ?)", (ts,))
         conn.execute("INSERT INTO projects (name, created_at) VALUES ('proj-b', ?)", (ts,))
         _insert_shipped_event(conn, "proj-a", "feat-a", ts)
@@ -403,7 +403,7 @@ def test_recently_shipped_project_filter_by_name(tmp_path: Path) -> None:
 
 def test_build_inbox_none_returns_unfiltered(tmp_path: Path) -> None:
     conn = temp_conn(tmp_path)
-    with conn:
+    with transaction(conn):
         _seed(conn)
     inbox = build_inbox(conn)
     features = {c.feature for c in inbox.new_since}
@@ -416,7 +416,7 @@ def test_build_inbox_none_returns_unfiltered(tmp_path: Path) -> None:
 
 def test_build_inbox_known_project_filters(tmp_path: Path) -> None:
     conn = temp_conn(tmp_path)
-    with conn:
+    with transaction(conn):
         _seed(conn)
     inbox = build_inbox(conn, project="proj-a")
     # in_progress should only have proj-a features
@@ -427,7 +427,7 @@ def test_build_inbox_known_project_filters(tmp_path: Path) -> None:
 
 def test_build_inbox_unknown_project_returns_empty(tmp_path: Path) -> None:
     conn = temp_conn(tmp_path)
-    with conn:
+    with transaction(conn):
         _seed(conn)
     inbox = build_inbox(conn, project="no-such-project")
     assert inbox == Inbox([], [], [])

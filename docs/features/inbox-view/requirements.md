@@ -178,3 +178,13 @@ Decisions and reasoning captured during review iteration.
 - **Ordering most-recent-activity first, cross-project interleaved (round 1).** Every category sorts by recency; the cross-project view interleaves by recency rather than grouping per project.
 - **Empty categories hidden; all-empty shows one state (round 1).** A zero-row category is omitted; "Nothing's waiting for you" appears only when all three are empty. DB-unconfigured shows a distinct "no data yet" state.
 - **"Last activity" is computed over active docs only (round 1).** For feature-level cards, the most recent event across the feature's active documents, mirroring the unread feed's active-only scope.
+
+## Review decisions
+
+Decisions from post-merge review iteration.
+
+### Round 1
+
+- **Empty-state branch collapsed (fix).** `index.html` gated the body on `{% elif projects %}`, duplicating the "Nothing's waiting for you" panel and leaving the configured-with-projects-but-empty path untested. Restructured to `not configured / inbox.is_empty / categories` (added an `Inbox.is_empty` property); chips render whenever projects exist; one empty panel; added a route test for the has-projects-but-empty case.
+- **Deterministic ordering (fix).** Added secondary sort keys — `document_id DESC` for "New since last visit", `f.slug` for "In progress" — so ties on `last_activity` have a stable order.
+- **Test-seed clarity (fix).** Replaced the no-op `with conn:` wrappers in `inbox_test.py` (silent no-ops under autocommit) with the real `with transaction(conn):` form.
