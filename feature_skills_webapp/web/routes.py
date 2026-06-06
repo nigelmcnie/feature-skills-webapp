@@ -28,6 +28,7 @@ async def index(request: Request) -> HTMLResponse:
             "projects": projects,
             "active_project": project,
         },
+        headers={"Cache-Control": "no-store"},
     )
 
 
