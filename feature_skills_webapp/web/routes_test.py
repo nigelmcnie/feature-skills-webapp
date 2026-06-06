@@ -333,3 +333,53 @@ def test_unknown_project_returns_empty_state(temp_db: Path, tmp_path: Path) -> N
 
     assert resp.status_code == 200
     assert 'data-state="empty"' in resp.text
+
+
+# --- fragment endpoint (Phase 2 / sse-refresh) ---
+
+
+def test_fragment_returns_body_only_html(temp_db: Path, tmp_path: Path) -> None:
+    """GET /?fragment=1 returns a partial without <html>/<head>, status 200, no-store."""
+    docs_root = make_docs_root(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        resp = client.get("/?fragment=1")
+
+    assert resp.status_code == 200
+    assert resp.headers["cache-control"] == "no-store"
+    assert "<html" not in resp.text
+    assert "<head" not in resp.text
+    assert "feat-a" in resp.text
+
+
+def test_fragment_respects_project_filter(temp_db: Path, tmp_path: Path) -> None:
+    """?fragment=1&project=proj1 shows only proj1's cards."""
+    docs_root = make_two_project_docs_root(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        resp = client.get("/?fragment=1&project=proj1")
+
+    assert resp.status_code == 200
+    assert "feat-a" in resp.text
+    assert "feat-b" not in resp.text
+
+
+def test_fragment_not_configured_renders_panel() -> None:
+    """Not-configured fragment returns the not-configured panel, not an error."""
+    client = TestClient(create_app(db_path=None))
+    resp = client.get("/?fragment=1")
+
+    assert resp.status_code == 200
+    assert resp.headers["cache-control"] == "no-store"
+    assert 'data-state="not-configured"' in resp.text
+    assert "<html" not in resp.text
+
+
+def test_full_page_has_inbox_body_and_eventsource(temp_db: Path) -> None:
+    """Full page render contains #inbox-body wrapper and the EventSource bootstrap."""
+    client = TestClient(create_app(db_path=temp_db))
+    resp = client.get("/")
+
+    assert resp.status_code == 200
+    assert 'id="inbox-body"' in resp.text
+    assert "new EventSource" in resp.text
