@@ -4,6 +4,7 @@
 
 | Feature | Owner | Notes |
 |---|---|---|
+| [doc-view](docs/features/doc-view/requirements.md) | Nigel | Render an individual doc in the webapp shell with breadcrumbs; stamp read-state on view; wire inbox cards to open it. Next in build order after inbox-view. |
 
 ## Available
 
