@@ -163,3 +163,13 @@ Plan-level detail carried forward for `/feature-plan`; not binding.
 - **Tracker & archived docs (round 1):** rendered correctly if navigated to, but no new entry point added — a first-class Tracker affordance is deferred to a later project-view feature.
 - **comment-capture seam (round 1):** recorded that the content endpoint will need to inject `document_id` into the served file when comment-capture lands.
 - **View-source escape hatch (round 1):** added to phase 1 as a graceful-degradation hedge.
+
+## Review decisions
+
+### Round 1 (post-merge review)
+
+Reviewer verdict: faithful, complete, no blockers. Three cleanups applied directly to main:
+
+- **Redundant feature-id lookup:** `doc_shell` re-queried the feature id by `(project name, slug)` before `siblings()`, despite already joining `features`. Folded `f.id AS feature_id` into `ROW_SQL` and pass it straight through — one fewer round-trip per feature-doc view.
+- **Untested cache header:** added a test asserting `Cache-Control: no-store` on the inbox response — the load-bearing half of the back-button stale-read-state fix, previously unguarded against a refactor.
+- **Duplicated "Tracker" literal:** the feature-less breadcrumb now routes through `humanise_type("features")` rather than hardcoding the string, keeping one source of truth.

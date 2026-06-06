@@ -91,6 +91,17 @@ def test_index_not_configured_state(temp_db: Path) -> None:
     assert 'data-state="not-configured"' in response.text
 
 
+def test_index_sets_no_store_cache_control(temp_db: Path) -> None:
+    """The inbox response must be no-store so the back button never shows stale read-state.
+
+    The pageshow/bfcache reload in index.html is the belt; this header is the braces —
+    a refactor dropping it would silently reintroduce the stale-inbox bug.
+    """
+    client = TestClient(create_app(db_path=temp_db))
+    response = client.get("/")
+    assert response.headers["cache-control"] == "no-store"
+
+
 def test_healthz_ok(temp_db: Path) -> None:
     client = TestClient(create_app(db_path=temp_db))
     response = client.get("/healthz")

@@ -12,7 +12,7 @@ from feature_skills_webapp.web.db_dep import request_conn
 
 ROW_SQL = (
     "SELECT d.id, d.type, d.status, d.source_path, d.content_html, "
-    "  p.name AS project, f.slug AS feature "
+    "  p.name AS project, f.slug AS feature, f.id AS feature_id "
     "FROM documents d "
     "JOIN projects p ON d.project_id = p.id "
     "LEFT JOIN features f ON d.feature_id = f.id "
@@ -23,7 +23,7 @@ ROW_SQL = (
 def breadcrumbs(row: sqlite3.Row) -> list[tuple[str, str | None]]:
     crumbs: list[tuple[str, str | None]] = [(row["project"], None)]
     if row["feature"] is None:  # project-level tracker doc
-        crumbs.append(("Tracker", None))
+        crumbs.append((humanise_type("features"), None))
         return crumbs
     crumbs.append((row["feature"], None))
     label = humanise_type(row["type"])
@@ -67,13 +67,7 @@ async def doc_shell(request: Request) -> Response:
         available = row["status"] in ("active", "archived")
         nav: tuple[sqlite3.Row | None, sqlite3.Row | None] = (None, None)
         if row["feature"] is not None and row["status"] == "active":
-            feature_id = conn.execute(
-                "SELECT id FROM features WHERE project_id = ("
-                "  SELECT id FROM projects WHERE name = ?"
-                ") AND slug = ?",
-                (row["project"], row["feature"]),
-            ).fetchone()["id"]
-            nav = siblings(conn, feature_id, doc_id)
+            nav = siblings(conn, row["feature_id"], doc_id)
         mark_read(conn, doc_id)  # own transaction; after the read
     prev, nxt = nav
     return app.state.templates.TemplateResponse(
