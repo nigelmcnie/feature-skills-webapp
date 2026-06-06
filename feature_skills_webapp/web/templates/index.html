@@ -157,95 +157,29 @@
     <p>Cross-project feature activity</p>
   </header>
 
-{% if not configured %}
-  <div class="state-panel" data-state="not-configured">
-    <p>No data yet.</p>
-    <p class="hint">Configure a docs root and run discovery to populate the inbox.</p>
-  </div>
-
-{% else %}
-  {% if projects %}
-  <nav class="chips" aria-label="Project filter">
-    <a href="/" class="chip{% if not active_project %} active{% endif %}">All</a>
-    {% for proj in projects %}
-    <a href="/?project={{ proj }}" class="chip{% if active_project == proj %} active{% endif %}">{{ proj }}</a>
-    {% endfor %}
-  </nav>
-  {% endif %}
-
-  {% if inbox.is_empty %}
-  <div class="state-panel" data-state="empty">
-    <p>Nothing's waiting for you.</p>
-    <p class="hint">All caught up — no unread docs, nothing in progress, nothing recently shipped.</p>
-  </div>
-  {% else %}
-
-    {% if inbox.new_since %}
-    <section class="category">
-      <h2>New since last visit</h2>
-      <ul class="card-list">
-        {% for card in inbox.new_since %}
-        {% if card.document_id %}
-        <li><a class="card-link" href="/doc/{{ card.document_id }}"
-               aria-label="{{ card.project }} {{ card.feature }} {{ card.label }}">
-          <div class="card">
-            <span class="card-project">{{ card.project }}</span>
-            <span class="card-feature">{{ card.feature }}</span>
-            <span class="card-label">{{ card.label }}</span>
-            {% if card.last_activity %}<span class="card-time">{{ card.last_activity[:10] }}</span>{% endif %}
-          </div>
-        </a></li>
-        {% else %}
-        <li class="card">
-          <span class="card-project">{{ card.project }}</span>
-          <span class="card-feature">{{ card.feature }}</span>
-          <span class="card-label">{{ card.label }}</span>
-          {% if card.last_activity %}<span class="card-time">{{ card.last_activity[:10] }}</span>{% endif %}
-        </li>
-        {% endif %}
-        {% endfor %}
-      </ul>
-    </section>
-    {% endif %}
-
-    {% if inbox.in_progress %}
-    <section class="category">
-      <h2>In progress</h2>
-      <ul class="card-list">
-        {% for card in inbox.in_progress %}
-        <li class="card">
-          <span class="card-project">{{ card.project }}</span>
-          <span class="card-feature">{{ card.feature }}</span>
-          <span class="card-label">{{ card.label }}</span>
-          {% if card.last_activity %}<span class="card-time">{{ card.last_activity[:10] }}</span>{% endif %}
-        </li>
-        {% endfor %}
-      </ul>
-    </section>
-    {% endif %}
-
-    {% if inbox.recently_shipped %}
-    <section class="category">
-      <h2>Recently shipped</h2>
-      <ul class="card-list">
-        {% for card in inbox.recently_shipped %}
-        <li class="card">
-          <span class="card-project">{{ card.project }}</span>
-          <span class="card-feature">{{ card.feature }}</span>
-          <span class="card-label">{{ card.label }}</span>
-          {% if card.last_activity %}<span class="card-time">{{ card.last_activity[:10] }}</span>{% endif %}
-        </li>
-        {% endfor %}
-      </ul>
-    </section>
-    {% endif %}
-
-  {% endif %}
-{% endif %}
+  <div id="inbox-body">{% include "_inbox_body.html" %}</div>
 
 </div>
 <script>
   window.addEventListener('pageshow', (e) => { if (e.persisted) location.reload(); });
+
+  const es = new EventSource('/events');
+  let timer = null;
+  function scheduleRefetch() {
+    clearTimeout(timer);
+    timer = setTimeout(refetchInbox, 250);
+  }
+  async function refetchInbox() {
+    const params = new URLSearchParams(window.location.search);
+    params.set('fragment', '1');
+    const resp = await fetch('/?' + params.toString());
+    if (!resp.ok) return;
+    document.getElementById('inbox-body').innerHTML = await resp.text();
+  }
+  es.onmessage = scheduleRefetch;
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) scheduleRefetch();
+  });
 </script>
 </body>
 </html>

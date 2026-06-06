@@ -8,8 +8,11 @@ from starlette.templating import Jinja2Templates
 async def index(request: Request) -> HTMLResponse:
     app = request.app
     templates: Jinja2Templates = app.state.templates
+    fragment = request.query_params.get("fragment")
+    template = "_inbox_body.html" if fragment else "index.html"
+    headers = {"Cache-Control": "no-store"}
     if app.state.db_path is None:
-        return templates.TemplateResponse(request, "index.html", {"configured": False})
+        return templates.TemplateResponse(request, template, {"configured": False}, headers=headers)
     from feature_skills_webapp.storage.inbox import build_inbox
     from feature_skills_webapp.web.db_dep import request_conn
 
@@ -21,14 +24,14 @@ async def index(request: Request) -> HTMLResponse:
         ]
     return templates.TemplateResponse(
         request,
-        "index.html",
+        template,
         {
             "configured": True,
             "inbox": inbox,
             "projects": projects,
             "active_project": project,
         },
-        headers={"Cache-Control": "no-store"},
+        headers=headers,
     )
 
 
