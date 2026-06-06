@@ -4,6 +4,7 @@
 
 | Feature | Owner | Notes |
 |---|---|---|
+| [sse-refresh](docs/features/sse-refresh/requirements.md) | Nigel | Live inbox updates via SSE — `/events` endpoint pushes a change signal; the open tab re-fetches and swaps the inbox region without a manual reload. |
 
 ## Available
 
