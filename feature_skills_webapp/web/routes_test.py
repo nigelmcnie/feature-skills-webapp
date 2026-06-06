@@ -64,6 +64,20 @@ def make_docs_root_with_tracker(tmp_path: Path) -> Path:
     return docs_root
 
 
+def make_two_project_docs_root(tmp_path: Path) -> Path:
+    """Docs root with two projects, each with one unread doc."""
+    docs_root = tmp_path / "docs"
+    (docs_root / "proj1" / "feat-a").mkdir(parents=True)
+    (docs_root / "proj1" / "feat-a" / "context.html").write_text(
+        HTML_TEMPLATE.format(doc_type="context", title="proj1 ctx")
+    )
+    (docs_root / "proj2" / "feat-b").mkdir(parents=True)
+    (docs_root / "proj2" / "feat-b" / "context.html").write_text(
+        HTML_TEMPLATE.format(doc_type="context", title="proj2 ctx")
+    )
+    return docs_root
+
+
 def test_index_returns_200() -> None:
     client = TestClient(create_app(db_path=None))
     response = client.get("/")
@@ -228,3 +242,60 @@ def test_index_shows_recently_shipped(temp_db: Path, tmp_path: Path) -> None:
     assert response.status_code == 200
     assert "Recently shipped" in response.text
     assert "feat-a" in response.text
+
+
+# --- per-project filter (Phase 3) ---
+
+
+def test_project_filter_scopes_cards(temp_db: Path, tmp_path: Path) -> None:
+    """/?project=proj1 shows proj1's cards and not proj2's."""
+    docs_root = make_two_project_docs_root(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        resp_all = client.get("/")
+        resp_p1 = client.get("/?project=proj1")
+        resp_p2 = client.get("/?project=proj2")
+
+    assert "feat-a" in resp_all.text
+    assert "feat-b" in resp_all.text
+
+    assert "feat-a" in resp_p1.text
+    assert "feat-b" not in resp_p1.text
+
+    assert "feat-b" in resp_p2.text
+    assert "feat-a" not in resp_p2.text
+
+
+def test_chips_rendered_per_project(temp_db: Path, tmp_path: Path) -> None:
+    """Each project gets a chip; the active one is marked."""
+    docs_root = make_two_project_docs_root(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        resp = client.get("/?project=proj1")
+
+    assert 'href="/?project=proj1"' in resp.text
+    assert 'href="/?project=proj2"' in resp.text
+    # proj1 chip should be active, proj2 should not
+    assert 'href="/?project=proj1" class="chip active"' in resp.text
+    assert 'href="/?project=proj2" class="chip"' in resp.text
+
+
+def test_all_chip_active_on_unfiltered(temp_db: Path, tmp_path: Path) -> None:
+    """The All chip is active when no ?project param is given."""
+    docs_root = make_two_project_docs_root(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        resp = client.get("/")
+
+    assert 'href="/" class="chip active"' in resp.text
+
+
+def test_unknown_project_returns_empty_state(temp_db: Path, tmp_path: Path) -> None:
+    """/?project=no-such returns 200 and the all-empty state."""
+    docs_root = make_docs_root(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        resp = client.get("/?project=no-such")
+
+    assert resp.status_code == 200
+    assert 'data-state="empty"' in resp.text
