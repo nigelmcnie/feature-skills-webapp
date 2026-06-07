@@ -145,6 +145,15 @@ def test_post_400_non_integer_item_key(temp_db: Path) -> None:
     assert resp.status_code == 400
 
 
+def test_post_400_non_string_value(temp_db: Path) -> None:
+    client = TestClient(create_app(db_path=temp_db))
+    resp = client.post(
+        "/doc/1/synthesis-response",
+        json={"responses": {"1": 123}, "routine_flags": {}},
+    )
+    assert resp.status_code == 400
+
+
 def test_post_400_over_size_value(temp_db: Path, tmp_path: Path) -> None:
     docs_root, source_path = make_feedback_root(tmp_path)
     with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:

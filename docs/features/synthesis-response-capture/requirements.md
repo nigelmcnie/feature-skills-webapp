@@ -161,3 +161,11 @@ Plan-level detail surfaced during requirements exploration, carried forward for 
 - **Feedback docs excluded from sibling-nav** (plan review). Once indexed, active feedback docs are kept out of doc-view's prev/next sibling navigation — they're transient review artefacts, not part of the context→requirements→plan→review spine. Starting them out; cheap to revisit.
 - **Submit reads the iframe DOM directly** (plan review). The doc-view shell reads the same-origin, non-sandboxed feedback iframe's fields and POSTs them, rather than the postMessage bridge the requirements first proposed — no feature-skills template change, works on existing docs.
 - **No "consumed" marker** (round 1). Unlike `comments` (`status`/`integrated_at`), `synthesis_responses` gets no integration-state column in v1; the agent reads on demand within a round, so staleness isn't yet a problem. Noted as a known limitation.
+
+## Review decisions
+
+### Round 1 (post-merge review)
+
+- **Fixed:** the write endpoint's 1 MB cap was behind an `isinstance(val, str)` guard, so a non-string response value slipped past it and was stored as-is. Now non-string `responses`/`routine_flags` values are rejected with a 400, with a test.
+- **Declined (moot):** parenthesising the exception tuple. `ruff format` with `target-version = "py314"` and the `UP` lint rules *enforces* the bare `except ValueError, TypeError:` form — it strips the parens on format, so the suggestion can't be applied. The 3.14 floor is intentional (`requires-python >= 3.14`).
+- **Declined:** validating against negative `item_num` keys. The real client never emits them and nothing downstream breaks on a negative item number, so the guard would cover a case that can't occur.

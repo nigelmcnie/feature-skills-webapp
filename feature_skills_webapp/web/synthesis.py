@@ -33,13 +33,17 @@ async def post_synthesis_response(request: Request) -> JSONResponse:
     if not isinstance(routine_flags, dict):
         return JSONResponse({"error": "'routine_flags' must be an object"}, status_code=400)
 
-    # Validate all keys are integer strings and values fit within 1 MB — before BEGIN IMMEDIATE.
+    # Validate all keys are integer strings and values are strings within 1 MB — before BEGIN IMMEDIATE.
     for key, val in {**responses, **routine_flags}.items():
         try:
             int(key)
         except ValueError, TypeError:
             return JSONResponse({"error": f"item key is not an integer: {key!r}"}, status_code=400)
-        if isinstance(val, str) and len(val.encode()) > _MAX_VALUE_BYTES:
+        if not isinstance(val, str):
+            return JSONResponse(
+                {"error": f"item value must be a string: key {key!r}"}, status_code=400
+            )
+        if len(val.encode()) > _MAX_VALUE_BYTES:
             return JSONResponse({"error": f"item value exceeds 1 MB: key {key!r}"}, status_code=400)
 
     with request_conn(request.app) as conn:
