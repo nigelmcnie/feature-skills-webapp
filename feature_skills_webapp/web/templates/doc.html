@@ -22,6 +22,10 @@
   .sibling-nav a { color:var(--accent); text-decoration:none; white-space:nowrap; }
   .sibling-nav a:hover { text-decoration:underline; }
   .sibling-nav .sep { color:var(--text-faint); }
+  .submit-btn { background:var(--accent); color:var(--bg); border:none; padding:6px 14px;
+    border-radius:4px; font-size:0.85rem; font-weight:600; cursor:pointer; white-space:nowrap; }
+  .submit-btn:disabled { opacity:0.5; cursor:not-allowed; }
+  .submit-btn.btn-success { background:#4ade80; cursor:not-allowed; }
 </style></head><body>
 <header class="doc-bar">
   <nav class="crumbs">
@@ -38,6 +42,7 @@
       {% if next %}<a href="/doc/{{ next.id }}">{{ next.label }} →</a>{% endif %}
     </nav>
     {% endif %}
+    {% if is_synthesis %}<button id="submit-btn" class="submit-btn" disabled>Submit response</button>{% endif %}
     {% if available %}<a class="view-source" href="{{ raw_url }}" target="_blank">View source file</a>{% endif %}
   </div>
 </header>
@@ -45,5 +50,51 @@
   <iframe class="doc-frame" src="{{ raw_url }}" title="document"></iframe>
 {% else %}
   <div class="unavailable">This document is no longer available.</div>
+{% endif %}
+{% if is_synthesis %}
+<script>
+(function() {
+  var submitBtn = document.getElementById('submit-btn');
+  var frame = document.querySelector('.doc-frame');
+  if (!submitBtn || !frame) return;
+  frame.addEventListener('load', function() { submitBtn.disabled = false; });
+  submitBtn.addEventListener('click', async function() {
+    var fdoc = frame.contentDocument;
+    var textareas = fdoc ? fdoc.querySelectorAll('.your-thoughts textarea') : [];
+    if (!textareas.length) {
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Couldn’t read this doc";
+      return;
+    }
+    var responses = {};
+    textareas.forEach(function(ta) { responses[ta.dataset.item] = ta.value.trim(); });
+    var routine_flags = {};
+    fdoc.querySelectorAll('.tier-routine .flag-btn.active').forEach(function(el) {
+      var item = el.dataset.item;
+      var ta = fdoc.querySelector('.tier-routine li[data-item="' + item + '"] .flag-input textarea');
+      if (ta) routine_flags[item] = ta.value.trim();
+    });
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Submitting…';
+    try {
+      var resp = await fetch('{{ synthesis_post_url }}', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({responses: responses, routine_flags: routine_flags}),
+      });
+      if (resp.ok) {
+        submitBtn.textContent = 'Submitted ✓';
+        submitBtn.classList.add('btn-success');
+      } else {
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Submit failed — try again';
+      }
+    } catch (e) {
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Submit failed — try again';
+    }
+  });
+})();
+</script>
 {% endif %}
 </body></html>

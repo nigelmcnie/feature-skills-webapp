@@ -417,3 +417,86 @@ def test_archived_feature_doc_has_no_sibling_nav(temp_db: Path, tmp_path: Path) 
         response = client.get(f"/doc/{row['id']}")
     assert response.status_code == 200
     assert '<nav class="sibling-nav"' not in response.text
+
+
+# ---- is_synthesis / Submit button (synthesis-response-capture phase 4) ----
+
+HTML_FEEDBACK_NO_META = """\
+<!DOCTYPE html>
+<html><head><title>Feedback</title></head><body><p>feedback content</p></body></html>
+"""
+
+
+def make_docs_root_with_feedback(tmp_path: Path) -> Path:
+    """Docs root with context, plan, and an active feedback doc under feat-a."""
+    docs_root = make_docs_root(tmp_path)
+    (docs_root / "proj1" / "feat-a" / "requirements-feedback-1.html").write_text(
+        HTML_FEEDBACK_NO_META
+    )
+    return docs_root
+
+
+def make_docs_root_with_archived_feedback(tmp_path: Path) -> Path:
+    """Docs root with a feedback doc in .feedback-archive/ (archived status)."""
+    docs_root = tmp_path / "docs"
+    (docs_root / "proj1" / "feat-a" / ".feedback-archive").mkdir(parents=True)
+    (
+        docs_root / "proj1" / "feat-a" / ".feedback-archive" / "requirements-feedback-1.html"
+    ).write_text(HTML_FEEDBACK_NO_META)
+    return docs_root
+
+
+def _doc_id_by_type(temp_db: Path, doc_type: str) -> int:
+    from feature_skills_webapp.storage.db import connect
+
+    conn = connect(temp_db)
+    row = conn.execute("SELECT id FROM documents WHERE type = ? LIMIT 1", (doc_type,)).fetchone()
+    conn.close()
+    assert row is not None, f"No document of type {doc_type!r}"
+    return int(row["id"])
+
+
+def test_submit_button_shown_for_active_feedback_doc(temp_db: Path, tmp_path: Path) -> None:
+    docs_root = make_docs_root_with_feedback(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        doc_id = _doc_id_by_type(temp_db, "requirements-feedback")
+        response = client.get(f"/doc/{doc_id}")
+    assert response.status_code == 200
+    assert 'id="submit-btn"' in response.text
+    assert f"/doc/{doc_id}/synthesis-response" in response.text
+
+
+def test_submit_button_not_shown_for_plan_doc(temp_db: Path, tmp_path: Path) -> None:
+    docs_root = make_docs_root(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        doc_id = _doc_id_by_type(temp_db, "plan")
+        response = client.get(f"/doc/{doc_id}")
+    assert response.status_code == 200
+    assert 'id="submit-btn"' not in response.text
+
+
+def test_submit_button_not_shown_for_archived_feedback_doc(temp_db: Path, tmp_path: Path) -> None:
+    docs_root = make_docs_root_with_archived_feedback(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        doc_id = _doc_id_by_type(temp_db, "requirements-feedback")
+        response = client.get(f"/doc/{doc_id}")
+    assert response.status_code == 200
+    assert 'id="submit-btn"' not in response.text
+
+
+def test_siblings_omits_feedback_doc(temp_db: Path, tmp_path: Path) -> None:
+    """A feedback doc in feat-a does not appear as a sibling in prev/next nav."""
+    docs_root = make_docs_root_with_feedback(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        # View the context doc — its only sibling should be plan, not feedback
+        context_id = _doc_id_by_type(temp_db, "context")
+        plan_id = _doc_id_by_type(temp_db, "plan")
+        feedback_id = _doc_id_by_type(temp_db, "requirements-feedback")
+        response = client.get(f"/doc/{context_id}")
+    assert response.status_code == 200
+    assert f'href="/doc/{plan_id}"' in response.text
+    assert f'href="/doc/{feedback_id}"' not in response.text
