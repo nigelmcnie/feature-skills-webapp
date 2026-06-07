@@ -1,0 +1,102 @@
+"""Synthesis response capture: write and read endpoint handlers."""
+
+from __future__ import annotations
+
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+
+from feature_skills_webapp.storage.db import now_iso, transaction
+from feature_skills_webapp.web.db_dep import request_conn
+
+_MAX_VALUE_BYTES = 1024 * 1024  # 1 MB
+
+
+async def post_synthesis_response(request: Request) -> JSONResponse:
+    if request.app.state.db_path is None:
+        return JSONResponse({"error": "db not configured"}, status_code=503)
+
+    doc_id: int = request.path_params["document_id"]
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid JSON"}, status_code=400)
+
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "body must be a JSON object"}, status_code=400)
+
+    responses = body.get("responses", {})
+    routine_flags = body.get("routine_flags", {})
+
+    if not isinstance(responses, dict):
+        return JSONResponse({"error": "'responses' must be an object"}, status_code=400)
+    if not isinstance(routine_flags, dict):
+        return JSONResponse({"error": "'routine_flags' must be an object"}, status_code=400)
+
+    # Validate all keys are integer strings and values fit within 1 MB — before BEGIN IMMEDIATE.
+    for key, val in {**responses, **routine_flags}.items():
+        try:
+            int(key)
+        except ValueError, TypeError:
+            return JSONResponse({"error": f"item key is not an integer: {key!r}"}, status_code=400)
+        if isinstance(val, str) and len(val.encode()) > _MAX_VALUE_BYTES:
+            return JSONResponse({"error": f"item value exceeds 1 MB: key {key!r}"}, status_code=400)
+
+    with request_conn(request.app) as conn:
+        if conn.execute("SELECT id FROM documents WHERE id = ?", (doc_id,)).fetchone() is None:
+            return JSONResponse({"error": "document not found"}, status_code=404)
+
+        now = now_iso()
+        with transaction(conn):
+            conn.execute("DELETE FROM synthesis_responses WHERE document_id = ?", (doc_id,))
+            for item, text in responses.items():
+                conn.execute(
+                    "INSERT INTO synthesis_responses "
+                    "(document_id, item_num, response, routine_flag, updated_at) "
+                    "VALUES (?, ?, ?, NULL, ?)",
+                    (doc_id, int(item), text, now),
+                )
+            for item, comment in routine_flags.items():
+                conn.execute(
+                    "INSERT INTO synthesis_responses "
+                    "(document_id, item_num, response, routine_flag, updated_at) "
+                    "VALUES (?, ?, NULL, ?, ?)",
+                    (doc_id, int(item), comment, now),
+                )
+
+    items_written = len(responses) + len(routine_flags)
+    request.app.state.broadcaster.broadcast()
+    return JSONResponse({"document_id": doc_id, "items_written": items_written})
+
+
+async def get_synthesis_response(request: Request) -> JSONResponse:
+    if request.app.state.db_path is None:
+        return JSONResponse({"error": "db not configured"}, status_code=503)
+
+    path = request.query_params.get("path")
+    if not path:
+        return JSONResponse({"error": "path parameter required"}, status_code=400)
+
+    with request_conn(request.app) as conn:
+        doc_row = conn.execute("SELECT id FROM documents WHERE source_path = ?", (path,)).fetchone()
+        if doc_row is None:
+            return JSONResponse({"error": "document not found"}, status_code=404)
+
+        rows = conn.execute(
+            "SELECT item_num, response, routine_flag FROM synthesis_responses WHERE document_id = ?",
+            (doc_row["id"],),
+        ).fetchall()
+
+    responses = {str(r["item_num"]): r["response"] for r in rows if r["routine_flag"] is None}
+    routine_flags = {
+        str(r["item_num"]): r["routine_flag"] for r in rows if r["routine_flag"] is not None
+    }
+
+    return JSONResponse(
+        {
+            "doc": path,
+            "submitted": bool(rows),
+            "responses": responses,
+            "routine_flags": routine_flags,
+        }
+    )
