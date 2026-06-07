@@ -10,7 +10,7 @@ from starlette.staticfiles import StaticFiles
 from starlette.templating import Jinja2Templates
 
 from feature_skills_webapp.web.broadcaster import Broadcaster
-from feature_skills_webapp.web.comments import get_comments, post_comments
+from feature_skills_webapp.web.comments import get_comments, post_comments, post_comments_integrate
 from feature_skills_webapp.web.doc_view import doc_raw, doc_shell
 from feature_skills_webapp.web.events import events
 from feature_skills_webapp.web.routes import admin_discover, admin_mark_read, healthz, index
@@ -76,6 +76,7 @@ def create_app(db_path: Path | None, docs_root: Path | None = None) -> Starlette
             Route("/synthesis-response", get_synthesis_response),
             Route("/doc/{document_id:int}/comments", post_comments, methods=["POST"]),
             Route("/comments", get_comments),
+            Route("/comments/integrate", post_comments_integrate, methods=["POST"]),
             Mount("/static", StaticFiles(directory=STATIC_DIR)),
         ],
         lifespan=lifespan,

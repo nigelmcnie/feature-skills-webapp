@@ -305,3 +305,168 @@ def test_get_503_db_not_configured() -> None:
     client = TestClient(create_app(db_path=None))
     resp = client.get("/comments?path=/some/path.html")
     assert resp.status_code == 503
+
+
+# --- POST /comments/integrate ---
+
+
+def _post_and_get_ids(client: TestClient, doc_id: int, texts: list[str]) -> list[int]:
+    """Submit comments and return their DB ids."""
+    client.post(
+        f"/doc/{doc_id}/comments",
+        json={"comments": [{"text": t} for t in texts]},
+    )
+    resp = client.get(f"/comments?path={_source_path_for(client, doc_id)}")
+    return [c["id"] for c in resp.json()["comments"]]
+
+
+def _source_path_for(client: TestClient, doc_id: int) -> str:
+    from starlette.applications import Starlette
+
+    from feature_skills_webapp.storage.db import connect as db_connect
+
+    app = client.app
+    assert isinstance(app, Starlette)
+    conn = db_connect(app.state.db_path)
+    row = conn.execute("SELECT source_path FROM documents WHERE id = ?", (doc_id,)).fetchone()
+    conn.close()
+    assert row is not None
+    return row["source_path"]
+
+
+def test_integrate_marks_given_ids(temp_db: Path, tmp_path: Path) -> None:
+    docs_root, source_path = make_requirements_root(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        doc_id = get_doc_id(temp_db, source_path)
+
+        ids = _post_and_get_ids(client, doc_id, ["first", "second", "third"])
+        resp = client.post(
+            "/comments/integrate",
+            json={"path": source_path, "ids": [ids[0], ids[2]]},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["integrated"] == 2
+
+        get_resp = client.get(f"/comments?path={source_path}")
+        active = [c["text"] for c in get_resp.json()["comments"]]
+        assert active == ["second"]
+
+
+def test_integrate_excludes_integrated_from_active_read(temp_db: Path, tmp_path: Path) -> None:
+    docs_root, source_path = make_requirements_root(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        doc_id = get_doc_id(temp_db, source_path)
+
+        ids = _post_and_get_ids(client, doc_id, ["a", "b"])
+        client.post("/comments/integrate", json={"path": source_path, "ids": ids})
+
+        get_resp = client.get(f"/comments?path={source_path}")
+        got = get_resp.json()
+        assert got["submitted"] is True
+        assert got["comments"] == []
+
+
+def test_integrated_survives_later_active_set_replace(temp_db: Path, tmp_path: Path) -> None:
+    docs_root, source_path = make_requirements_root(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        doc_id = get_doc_id(temp_db, source_path)
+
+        ids = _post_and_get_ids(client, doc_id, ["old"])
+        client.post("/comments/integrate", json={"path": source_path, "ids": ids})
+
+        # Re-submit a new active set.
+        client.post(f"/doc/{doc_id}/comments", json={"comments": [{"text": "new"}]})
+
+        conn = connect(temp_db)
+        rows = conn.execute(
+            "SELECT status, text FROM comments WHERE document_id = ? ORDER BY id", (doc_id,)
+        ).fetchall()
+        conn.close()
+        statuses = [(r["status"], r["text"]) for r in rows]
+        assert ("integrated", "old") in statuses
+        assert ("active", "new") in statuses
+
+
+def test_integrate_cross_doc_ids_are_noops(temp_db: Path, tmp_path: Path) -> None:
+    docs_root = tmp_path / "docs"
+    feat_dir = docs_root / "proj1" / "feat-a"
+    feat_dir.mkdir(parents=True)
+    req_html = HTML_REQUIREMENTS.replace('content="requirements"', 'content="requirements"')
+    req_path = feat_dir / "requirements.html"
+    req_path.write_text(req_html)
+    plan_html = req_html.replace('content="requirements"', 'content="plan"').replace(
+        "<title>Requirements</title>", "<title>Plan</title>"
+    )
+    plan_path = feat_dir / "plan.html"
+    plan_path.write_text(plan_html)
+
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        req_id = get_doc_id(temp_db, str(req_path))
+        get_doc_id(temp_db, str(plan_path))  # ensure plan is indexed
+
+        # Post a comment on requirements and get its id.
+        req_comment_ids = _post_and_get_ids(client, req_id, ["req comment"])
+
+        # Try to integrate that id via the plan's path — should not mark it.
+        resp = client.post(
+            "/comments/integrate",
+            json={"path": str(plan_path), "ids": req_comment_ids},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["integrated"] == 0
+
+        # The requirements comment remains active.
+        get_resp = client.get(f"/comments?path={req_path!s}")
+        assert len(get_resp.json()["comments"]) == 1
+
+
+def test_integrate_events_row_written(temp_db: Path, tmp_path: Path) -> None:
+    docs_root, source_path = make_requirements_root(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        doc_id = get_doc_id(temp_db, source_path)
+
+        ids = _post_and_get_ids(client, doc_id, ["x"])
+        client.post("/comments/integrate", json={"path": source_path, "ids": ids})
+
+        conn = connect(temp_db)
+        row = conn.execute(
+            "SELECT event_type FROM events WHERE document_id = ? AND event_type = 'comment_integrated'",
+            (doc_id,),
+        ).fetchone()
+        conn.close()
+        assert row is not None
+
+
+def test_integrate_400_non_int_id(temp_db: Path) -> None:
+    client = TestClient(create_app(db_path=temp_db))
+    resp = client.post("/comments/integrate", json={"path": "/p.html", "ids": ["bad"]})
+    assert resp.status_code == 400
+
+
+def test_integrate_400_ids_not_list(temp_db: Path) -> None:
+    client = TestClient(create_app(db_path=temp_db))
+    resp = client.post("/comments/integrate", json={"path": "/p.html", "ids": 42})
+    assert resp.status_code == 400
+
+
+def test_integrate_400_missing_path(temp_db: Path) -> None:
+    client = TestClient(create_app(db_path=temp_db))
+    resp = client.post("/comments/integrate", json={"ids": []})
+    assert resp.status_code == 400
+
+
+def test_integrate_404_unknown_path(temp_db: Path) -> None:
+    client = TestClient(create_app(db_path=temp_db))
+    resp = client.post("/comments/integrate", json={"path": "/no/such.html", "ids": []})
+    assert resp.status_code == 404
+
+
+def test_integrate_503_db_not_configured() -> None:
+    client = TestClient(create_app(db_path=None))
+    resp = client.post("/comments/integrate", json={"path": "/p.html", "ids": []})
+    assert resp.status_code == 503

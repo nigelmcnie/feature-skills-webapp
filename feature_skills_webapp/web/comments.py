@@ -75,6 +75,54 @@ async def post_comments(request: Request) -> JSONResponse:
     return JSONResponse({"document_id": doc_id, "comments_written": len(comments)})
 
 
+async def post_comments_integrate(request: Request) -> JSONResponse:
+    if request.app.state.db_path is None:
+        return JSONResponse({"error": "db not configured"}, status_code=503)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid JSON"}, status_code=400)
+
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "body must be a JSON object"}, status_code=400)
+
+    path = body.get("path")
+    if not isinstance(path, str):
+        return JSONResponse({"error": "'path' must be a string"}, status_code=400)
+
+    ids = body.get("ids")
+    if not isinstance(ids, list):
+        return JSONResponse({"error": "'ids' must be a list"}, status_code=400)
+    for item in ids:
+        if not isinstance(item, int):
+            return JSONResponse({"error": "'ids' must be a list of integers"}, status_code=400)
+
+    with request_conn(request.app) as conn:
+        doc_row = conn.execute("SELECT id FROM documents WHERE source_path = ?", (path,)).fetchone()
+        if doc_row is None:
+            return JSONResponse({"error": "document not found"}, status_code=404)
+
+        doc_id = doc_row["id"]
+        now = now_iso()
+        count = 0
+        with transaction(conn):
+            for cid in ids:
+                conn.execute(
+                    "UPDATE comments SET status = 'integrated', integrated_at = ? "
+                    "WHERE id = ? AND document_id = ? AND status = 'active'",
+                    (now, cid, doc_id),
+                )
+                count += conn.execute("SELECT changes()").fetchone()[0]
+            conn.execute(
+                "INSERT INTO events (document_id, event_type, payload_json, created_at) "
+                "VALUES (?, 'comment_integrated', ?, ?)",
+                (doc_id, f'{{"count": {count}}}', now),
+            )
+
+    return JSONResponse({"integrated": count})
+
+
 async def get_comments(request: Request) -> JSONResponse:
     if request.app.state.db_path is None:
         return JSONResponse({"error": "db not configured"}, status_code=503)
