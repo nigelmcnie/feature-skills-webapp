@@ -67,6 +67,11 @@ async def doc_shell(request: Request) -> Response:
         crumbs = breadcrumbs(row)
         available = row["status"] in ("active", "archived")
         is_synthesis = row["type"].endswith(FEEDBACK_SUFFIX) and row["status"] == "active"
+        is_commentable = (
+            row["type"] in {"requirements", "plan"}
+            and row["status"] == "active"
+            and row["feature"] is not None
+        )
         nav: tuple[sqlite3.Row | None, sqlite3.Row | None] = (None, None)
         if row["feature"] is not None and row["status"] == "active":
             nav = siblings(conn, row["feature_id"], doc_id)
@@ -82,6 +87,8 @@ async def doc_shell(request: Request) -> Response:
             "raw_url": f"/doc/{doc_id}/raw",
             "is_synthesis": is_synthesis,
             "synthesis_post_url": f"/doc/{doc_id}/synthesis-response",
+            "is_commentable": is_commentable,
+            "comment_post_url": f"/doc/{doc_id}/comments",
             "prev": {"id": prev["id"], "label": humanise_type(prev["type"])} if prev else None,
             "next": {"id": nxt["id"], "label": humanise_type(nxt["type"])} if nxt else None,
         },
