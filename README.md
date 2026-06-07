@@ -104,6 +104,23 @@ curl -s 127.0.0.1:8800/healthz
 # Expected: {"status":"ok"}
 ```
 
+## Updating after a dependency change
+
+The systemd service runs the `uv tool`-installed entrypoint
+(`~/.local/bin/feature-skills-webapp`), whose environment is **separate**
+from the project `.venv` that `uv run` / `uv sync` manage. Tests and local
+`uv run` invocations use `.venv`, so they will **not** surface a runtime
+dependency that's missing from the deployed tool environment.
+
+So whenever the runtime dependencies in `pyproject.toml` change, reinstall
+the tool and restart the service — otherwise the service crash-loops on
+`ModuleNotFoundError`:
+
+```bash
+uv tool install --editable . --reinstall
+systemctl --user restart feature-skills-webapp
+```
+
 ## Development
 
 ```bash
