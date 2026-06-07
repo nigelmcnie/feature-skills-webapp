@@ -21,6 +21,25 @@
   </div>
   {% else %}
 
+    {% if inbox.awaiting_input %}
+    <section class="category">
+      <h2>Awaiting your input</h2>
+      <ul class="card-list">
+        {% for card in inbox.awaiting_input %}
+        <li><a class="card-link" href="/doc/{{ card.document_id }}"
+               aria-label="{{ card.project }} {{ card.feature }} {{ card.label }}">
+          <div class="card">
+            <span class="card-project">{{ card.project }}</span>
+            <span class="card-feature">{{ card.feature }}</span>
+            <span class="card-label">{{ card.label }}</span>
+            {% if card.last_activity %}<span class="card-time">{{ card.last_activity[:10] }}</span>{% endif %}
+          </div>
+        </a></li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% endif %}
+
     {% if inbox.new_since %}
     <section class="category">
       <h2>New since last visit</h2>

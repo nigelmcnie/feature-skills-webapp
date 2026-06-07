@@ -383,3 +383,55 @@ def test_full_page_has_inbox_body_and_eventsource(temp_db: Path) -> None:
     assert resp.status_code == 200
     assert 'id="inbox-body"' in resp.text
     assert "new EventSource" in resp.text
+
+
+HTML_FEEDBACK_NO_META = """\
+<!DOCTYPE html>
+<html><head><title>Feedback</title></head><body><p>feedback content</p></body></html>
+"""
+
+
+def make_docs_root_with_feedback(tmp_path: Path) -> Path:
+    docs_root = tmp_path / "docs"
+    (docs_root / "proj1" / "feat-a").mkdir(parents=True)
+    (docs_root / "proj1" / "feat-a" / "requirements-feedback-1.html").write_text(
+        HTML_FEEDBACK_NO_META
+    )
+    return docs_root
+
+
+# --- awaiting-input inbox (synthesis-response-capture) ---
+
+
+def test_index_shows_awaiting_input_for_unsubmitted_feedback(temp_db: Path, tmp_path: Path) -> None:
+    """An unsubmitted feedback doc appears under 'Awaiting your input' with a card link."""
+    docs_root = make_docs_root_with_feedback(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+
+        from feature_skills_webapp.storage.db import connect
+
+        conn = connect(temp_db)
+        doc_id = conn.execute(
+            "SELECT id FROM documents WHERE type='requirements-feedback'"
+        ).fetchone()["id"]
+        conn.close()
+
+        resp = client.get("/")
+
+    assert resp.status_code == 200
+    assert "Awaiting your input" in resp.text
+    assert f'href="/doc/{doc_id}"' in resp.text
+    assert "New since last visit" not in resp.text
+
+
+def test_index_awaiting_input_project_filter(temp_db: Path, tmp_path: Path) -> None:
+    """/?project=proj1 scopes the Awaiting your input section to proj1."""
+    docs_root = make_docs_root_with_feedback(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        resp_p1 = client.get("/?project=proj1")
+        resp_p2 = client.get("/?project=proj2")
+
+    assert "Awaiting your input" in resp_p1.text
+    assert "Awaiting your input" not in resp_p2.text

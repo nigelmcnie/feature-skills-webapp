@@ -9,6 +9,7 @@ from pathlib import Path
 from feature_skills_webapp.storage.db import connect, migrate, transaction
 from feature_skills_webapp.storage.inbox import (
     Inbox,
+    awaiting_input,
     build_inbox,
     humanise_type,
     in_progress,
@@ -430,8 +431,134 @@ def test_build_inbox_unknown_project_returns_empty(tmp_path: Path) -> None:
     with transaction(conn):
         _seed(conn)
     inbox = build_inbox(conn, project="no-such-project")
-    assert inbox == Inbox([], [], [])
+    assert inbox == Inbox([], [], [], [])
     # Verify it's truly empty, not unfiltered
     assert inbox.new_since == []
     assert inbox.in_progress == []
     assert inbox.recently_shipped == []
+    assert inbox.awaiting_input == []
+
+
+# --- awaiting_input ---
+
+
+def _insert_feedback_doc(
+    conn: sqlite3.Connection,
+    project_name: str,
+    feature_slug: str,
+    doc_type: str = "requirements-feedback",
+    status: str = "active",
+    path: str | None = None,
+    ts: str = "2020-06-01T00:00:00+00:00",
+) -> int:
+    """Insert a feedback doc row for testing, auto-creating project and feature if needed."""
+    conn.execute(
+        "INSERT INTO projects (name, created_at) VALUES (?, ?) ON CONFLICT(name) DO NOTHING",
+        (project_name, ts),
+    )
+    proj_id = conn.execute("SELECT id FROM projects WHERE name = ?", (project_name,)).fetchone()[
+        "id"
+    ]
+    conn.execute(
+        "INSERT INTO features (project_id, slug, created_at, updated_at) VALUES (?, ?, ?, ?) "
+        "ON CONFLICT(project_id, slug) DO NOTHING",
+        (proj_id, feature_slug, ts, ts),
+    )
+    feat_id = conn.execute(
+        "SELECT id FROM features WHERE project_id = ? AND slug = ?", (proj_id, feature_slug)
+    ).fetchone()["id"]
+    source = path or f"/docs/{project_name}/{feature_slug}/{doc_type}-1.html"
+    conn.execute(
+        "INSERT INTO documents (project_id, feature_id, type, status, source_path, "
+        "metadata_json, source_mtime, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, '{}', ?, ?, ?)",
+        (proj_id, feat_id, doc_type, status, source, ts, ts, ts),
+    )
+    doc_id = conn.execute("SELECT id FROM documents WHERE source_path = ?", (source,)).fetchone()[
+        "id"
+    ]
+    conn.execute(
+        "INSERT INTO events (document_id, event_type, payload_json, created_at) "
+        "VALUES (?, 'created', '{}', ?)",
+        (doc_id, ts),
+    )
+    return doc_id
+
+
+def test_awaiting_input_active_unsubmitted_feedback_appears(tmp_path: Path) -> None:
+    conn = temp_conn(tmp_path)
+    with transaction(conn):
+        doc_id = _insert_feedback_doc(conn, "proj-a", "feat-a")
+    cards = awaiting_input(conn)
+    assert len(cards) == 1
+    assert cards[0].document_id == doc_id
+    assert cards[0].feature == "feat-a"
+    assert cards[0].label == "Requirements feedback"
+
+
+def test_awaiting_input_excluded_from_new_since(tmp_path: Path) -> None:
+    conn = temp_conn(tmp_path)
+    with transaction(conn):
+        doc_id = _insert_feedback_doc(conn, "proj-a", "feat-a")
+    new_cards = new_since_last_visit(conn)
+    assert not any(c.document_id == doc_id for c in new_cards)
+
+
+def test_awaiting_input_leaves_after_submission(tmp_path: Path) -> None:
+    conn = temp_conn(tmp_path)
+    ts = "2020-06-01T00:00:00+00:00"
+    with transaction(conn):
+        doc_id = _insert_feedback_doc(conn, "proj-a", "feat-a")
+    assert len(awaiting_input(conn)) == 1
+
+    with transaction(conn):
+        conn.execute(
+            "INSERT INTO synthesis_responses (document_id, item_num, response, routine_flag, updated_at) "
+            "VALUES (?, 1, '', NULL, ?)",
+            (doc_id, ts),
+        )
+    assert awaiting_input(conn) == []
+
+
+def test_awaiting_input_archived_doc_never_appears(tmp_path: Path) -> None:
+    conn = temp_conn(tmp_path)
+    with transaction(conn):
+        _insert_feedback_doc(conn, "proj-a", "feat-a", status="archived")
+    assert awaiting_input(conn) == []
+
+
+def test_awaiting_input_submitted_doc_appears_in_new_since(tmp_path: Path) -> None:
+    """Once submitted, a feedback doc is no longer excluded from new_since."""
+    conn = temp_conn(tmp_path)
+    ts = "2020-06-01T00:00:00+00:00"
+    with transaction(conn):
+        doc_id = _insert_feedback_doc(conn, "proj-a", "feat-a")
+        conn.execute(
+            "INSERT INTO synthesis_responses (document_id, item_num, response, routine_flag, updated_at) "
+            "VALUES (?, 1, 'answer', NULL, ?)",
+            (doc_id, ts),
+        )
+    new_cards = new_since_last_visit(conn)
+    assert any(c.document_id == doc_id for c in new_cards)
+
+
+def test_awaiting_input_is_empty_accounts_for_category(tmp_path: Path) -> None:
+    conn = temp_conn(tmp_path)
+    with transaction(conn):
+        _insert_feedback_doc(conn, "proj-a", "feat-a")
+    inbox = build_inbox(conn)
+    assert not inbox.is_empty
+    assert len(inbox.awaiting_input) == 1
+
+
+def test_awaiting_input_project_filter(tmp_path: Path) -> None:
+    conn = temp_conn(tmp_path)
+    with transaction(conn):
+        _insert_feedback_doc(conn, "proj-a", "feat-a")
+        _insert_feedback_doc(
+            conn, "proj-b", "feat-b", path="/docs/proj-b/feat-b/plan-feedback-1.html"
+        )
+    proj_a_id = conn.execute("SELECT id FROM projects WHERE name='proj-a'").fetchone()["id"]
+    cards_a = awaiting_input(conn, project_id=proj_a_id)
+    assert len(cards_a) == 1
+    assert cards_a[0].project == "proj-a"

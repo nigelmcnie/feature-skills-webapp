@@ -6,6 +6,8 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
+from feature_skills_webapp.storage.walker import FEEDBACK_SUFFIX
+
 SHIPPED_RECENT_DAYS = 30
 SHIPPED_LIMIT = 5
 
@@ -40,11 +42,14 @@ class Inbox:
     new_since: list[InboxCard]
     in_progress: list[InboxCard]
     recently_shipped: list[InboxCard]
+    awaiting_input: list[InboxCard]
 
     @property
     def is_empty(self) -> bool:
         """True when no category has any cards — drives the inbox's all-empty state."""
-        return not (self.new_since or self.in_progress or self.recently_shipped)
+        return not (
+            self.new_since or self.in_progress or self.recently_shipped or self.awaiting_input
+        )
 
 
 def _doc_card(r: sqlite3.Row) -> InboxCard:
@@ -88,9 +93,11 @@ def new_since_last_visit(
         "WHERE d.status = 'active' AND EXISTS ("
         "  SELECT 1 FROM events e WHERE e.document_id = d.id "
         "  AND e.created_at > COALESCE("
-        "    (SELECT last_read_at FROM read_state WHERE document_id = d.id), ''))"
+        "    (SELECT last_read_at FROM read_state WHERE document_id = d.id), '')) "
+        "AND NOT (d.type LIKE ? AND NOT EXISTS ("
+        "  SELECT 1 FROM synthesis_responses sr WHERE sr.document_id = d.id))"
     )
-    params: list[object] = []
+    params: list[object] = [f"%{FEEDBACK_SUFFIX}"]
     if project_id is not None:
         sql += " AND d.project_id = ?"  # noqa: S608
         params.append(project_id)
@@ -140,15 +147,34 @@ def recently_shipped(
     return [_shipped_card(r) for r in conn.execute(sql, params).fetchall()]
 
 
+def awaiting_input(conn: sqlite3.Connection, project_id: int | None = None) -> list[InboxCard]:
+    sql = (
+        "SELECT d.id AS document_id, d.type AS doc_type, p.name AS project, f.slug AS feature, "
+        "  (SELECT MAX(e.created_at) FROM events e WHERE e.document_id = d.id) AS last_activity "
+        "FROM documents d "
+        "JOIN projects p ON d.project_id = p.id "
+        "JOIN features  f ON d.feature_id = f.id "
+        "WHERE d.status = 'active' AND d.type LIKE ? "
+        "  AND NOT EXISTS (SELECT 1 FROM synthesis_responses sr WHERE sr.document_id = d.id)"
+    )
+    params: list[object] = [f"%{FEEDBACK_SUFFIX}"]
+    if project_id is not None:
+        sql += " AND d.project_id = ?"  # noqa: S608
+        params.append(project_id)
+    sql += " ORDER BY last_activity DESC, document_id DESC"
+    return [_doc_card(r) for r in conn.execute(sql, params).fetchall()]
+
+
 def build_inbox(conn: sqlite3.Connection, project: str | None = None) -> Inbox:
     project_id: int | None = None
     if project is not None:
         row = conn.execute("SELECT id FROM projects WHERE name = ?", (project,)).fetchone()
         if row is None:
-            return Inbox([], [], [])
+            return Inbox([], [], [], [])
         project_id = row["id"]
     return Inbox(
         new_since=new_since_last_visit(conn, project_id),
         in_progress=in_progress(conn, project_id),
         recently_shipped=recently_shipped(conn, project),
+        awaiting_input=awaiting_input(conn, project_id),
     )
