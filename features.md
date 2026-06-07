@@ -4,6 +4,7 @@
 
 | Feature | Owner | Notes |
 |---|---|---|
+| [skill-webapp-integration](docs/features/skill-webapp-integration/requirements.md) | Nigel | Wire the feature-skills skills into the webapp: drop all Chrome auto-opens (developer uses the inbox), and read review responses *and* click-to-comment annotations over HTTP via non-blocking polling instead of clipboard paste. Folds in `comment-capture` (#8) — adds the webapp's comment capture/read surface. |
 
 ## Available
 
@@ -21,8 +22,8 @@ Topological build order per the design doc (§6).
 5. `doc-view` — render individual docs in the webapp shell
 6. `sse-refresh` — live inbox updates via SSE
 7. `synthesis-response-capture` — POST instead of clipboard
-8. `comment-capture` — persistent click-to-comment
-9. `skill-integration-parallel` — drop Chrome calls from feature-skills
+8. `comment-capture` — persistent click-to-comment *(folded into `skill-webapp-integration`)*
+9. `skill-webapp-integration` — drop Chrome + clipboard from feature-skills; read responses & comments over HTTP
 
 ## Done
 
