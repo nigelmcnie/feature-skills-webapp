@@ -8,6 +8,7 @@ from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, R
 
 from feature_skills_webapp.storage.inbox import DOC_TYPE_ORDER, humanise_type
 from feature_skills_webapp.storage.read_state import mark_read
+from feature_skills_webapp.storage.walker import FEEDBACK_SUFFIX
 from feature_skills_webapp.web.db_dep import request_conn
 
 ROW_SQL = (
@@ -41,8 +42,8 @@ def siblings(
     conn: sqlite3.Connection, feature_id: int, current_id: int
 ) -> tuple[sqlite3.Row | None, sqlite3.Row | None]:
     rows = conn.execute(
-        "SELECT id, type FROM documents WHERE feature_id = ? AND status = 'active'",
-        (feature_id,),
+        "SELECT id, type FROM documents WHERE feature_id = ? AND status = 'active' AND type NOT LIKE ?",
+        (feature_id, f"%{FEEDBACK_SUFFIX}"),
     ).fetchall()
     ordered = sorted(rows, key=lambda r: (_rank(r["type"]), r["id"]))
     ids = [r["id"] for r in ordered]
@@ -65,6 +66,7 @@ async def doc_shell(request: Request) -> Response:
             return PlainTextResponse("Not found", status_code=404)
         crumbs = breadcrumbs(row)
         available = row["status"] in ("active", "archived")
+        is_synthesis = row["type"].endswith(FEEDBACK_SUFFIX) and row["status"] == "active"
         nav: tuple[sqlite3.Row | None, sqlite3.Row | None] = (None, None)
         if row["feature"] is not None and row["status"] == "active":
             nav = siblings(conn, row["feature_id"], doc_id)
@@ -78,6 +80,8 @@ async def doc_shell(request: Request) -> Response:
             "crumbs": crumbs,
             "available": available,
             "raw_url": f"/doc/{doc_id}/raw",
+            "is_synthesis": is_synthesis,
+            "synthesis_post_url": f"/doc/{doc_id}/synthesis-response",
             "prev": {"id": prev["id"], "label": humanise_type(prev["type"])} if prev else None,
             "next": {"id": nxt["id"], "label": humanise_type(nxt["type"])} if nxt else None,
         },
