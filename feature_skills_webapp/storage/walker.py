@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sqlite3
 import time
 from dataclasses import dataclass
@@ -14,6 +15,15 @@ from pathlib import Path
 from feature_skills_webapp.storage.db import now_iso, transaction
 
 log = logging.getLogger(__name__)
+
+FEEDBACK_SUFFIX = "-feedback"
+_FEEDBACK_RE = re.compile(r"^(?P<phase>[a-z]+)-feedback-\d+$")
+
+
+def feedback_type(rel_path: Path) -> str | None:
+    """Synthetic doc type for a feedback doc, e.g. 'requirements-feedback'. None if not one."""
+    m = _FEEDBACK_RE.match(rel_path.stem)
+    return f"{m.group('phase')}{FEEDBACK_SUFFIX}" if m else None
 
 
 @dataclass(frozen=True)
@@ -302,11 +312,14 @@ def _process_file(
         summary.errors += 1
         return
 
-    parsed = parse_doc_html(html_content)
-    if parsed is None:
-        log.debug("Skipping %s: no feature-doc-type meta tag", abs_path)
+    mp = _MetaParser()
+    mp.feed(html_content)
+    doc_type = mp.doc_type or feedback_type(rel_path)
+    if doc_type is None:
+        log.debug("Skipping %s: no meta tag and not a feedback doc", abs_path)
         summary.errors += 1
         return
+    parsed = ParsedDoc(doc_type=doc_type, title=mp.title)
 
     project_id = _upsert_project(conn, identity.project, now)
     feature_id = (

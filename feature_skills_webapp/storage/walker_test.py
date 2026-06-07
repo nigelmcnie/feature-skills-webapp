@@ -8,9 +8,11 @@ import time
 from pathlib import Path
 
 from feature_skills_webapp.storage.db import connect, migrate
+from feature_skills_webapp.storage.inbox import humanise_type
 from feature_skills_webapp.storage.walker import (
     DocIdentity,
     ParsedDoc,
+    feedback_type,
     identity_for,
     parse_doc,
     parse_tracker,
@@ -761,3 +763,98 @@ def test_changed_false_for_errors_only():
     from feature_skills_webapp.storage.walker import WalkSummary
 
     assert WalkSummary(errors=5).changed is False
+
+
+# --- feedback_type ---
+
+HTML_FEEDBACK_NO_META = """\
+<!DOCTYPE html>
+<html><head><title>Feedback</title></head><body><p>feedback content</p></body></html>
+"""
+
+
+def test_feedback_type_requirements():
+    assert feedback_type(Path("proj/feat/requirements-feedback-1.html")) == "requirements-feedback"
+
+
+def test_feedback_type_plan():
+    assert feedback_type(Path("proj/feat/plan-feedback-2.html")) == "plan-feedback"
+
+
+def test_feedback_type_non_feedback_returns_none():
+    assert feedback_type(Path("proj/feat/requirements.html")) is None
+    assert feedback_type(Path("proj/feat/context.html")) is None
+    assert feedback_type(Path("proj/features.html")) is None
+
+
+def test_feedback_type_archived():
+    assert (
+        feedback_type(Path("proj/feat/.feedback-archive/requirements-feedback-1.html"))
+        == "requirements-feedback"
+    )
+
+
+def test_feedback_doc_active_indexes_with_synthetic_type(tmp_path: Path):
+    docs_root = tmp_path / "docs"
+    (docs_root / "proj1" / "feat-a").mkdir(parents=True)
+    (docs_root / "proj1" / "feat-a" / "requirements-feedback-1.html").write_text(
+        HTML_FEEDBACK_NO_META
+    )
+
+    conn = temp_conn(tmp_path)
+    summary = walk(conn, docs_root, reconcile=False)
+
+    assert summary.created == 1
+    assert summary.errors == 0
+
+    doc = conn.execute("SELECT type, status FROM documents").fetchone()
+    assert doc["type"] == "requirements-feedback"
+    assert doc["status"] == "active"
+
+
+def test_feedback_doc_archived_indexes_as_archived(tmp_path: Path):
+    docs_root = tmp_path / "docs"
+    archive_dir = docs_root / "proj1" / "feat-a" / ".feedback-archive"
+    archive_dir.mkdir(parents=True)
+    (archive_dir / "requirements-feedback-1.html").write_text(HTML_FEEDBACK_NO_META)
+
+    conn = temp_conn(tmp_path)
+    summary = walk(conn, docs_root, reconcile=False)
+
+    assert summary.created == 1
+    assert summary.errors == 0
+
+    doc = conn.execute("SELECT type, status FROM documents").fetchone()
+    assert doc["type"] == "requirements-feedback"
+    assert doc["status"] == "archived"
+
+
+def test_depth4_non_feedback_archive_still_skipped(tmp_path: Path):
+    docs_root = tmp_path / "docs"
+    deep_dir = docs_root / "proj1" / "feat-a" / "other-subdir"
+    deep_dir.mkdir(parents=True)
+    (deep_dir / "requirements-feedback-1.html").write_text(HTML_FEEDBACK_NO_META)
+
+    conn = temp_conn(tmp_path)
+    summary = walk(conn, docs_root, reconcile=False)
+
+    assert summary.created == 0
+    assert conn.execute("SELECT COUNT(*) AS n FROM documents").fetchone()["n"] == 0
+
+
+def test_typeless_non_feedback_doc_still_skipped(tmp_path: Path):
+    docs_root = tmp_path / "docs"
+    (docs_root / "proj1" / "feat-a").mkdir(parents=True)
+    (docs_root / "proj1" / "feat-a" / "not-a-feedback.html").write_text(HTML_FEEDBACK_NO_META)
+
+    conn = temp_conn(tmp_path)
+    summary = walk(conn, docs_root, reconcile=False)
+
+    assert summary.created == 0
+    assert summary.errors == 1
+    assert conn.execute("SELECT COUNT(*) AS n FROM documents").fetchone()["n"] == 0
+
+
+def test_humanise_type_feedback():
+    assert humanise_type("requirements-feedback") == "Requirements feedback"
+    assert humanise_type("plan-feedback") == "Plan feedback"
