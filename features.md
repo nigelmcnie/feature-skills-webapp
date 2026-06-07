@@ -4,6 +4,7 @@
 
 | Feature | Owner | Notes |
 |---|---|---|
+| [synthesis-response-capture](docs/features/synthesis-response-capture/context.md) | Nigel | POST a synthesis response in-webapp instead of copy-pasting a JSON blob; store it and light up an "Awaiting your input" inbox category. Requirements phase. |
 
 ## Available
 
