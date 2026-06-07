@@ -43,6 +43,7 @@
     </nav>
     {% endif %}
     {% if is_synthesis %}<button id="submit-btn" class="submit-btn" disabled>Submit response</button>{% endif %}
+    {% if is_commentable %}<button id="comment-submit-btn" class="submit-btn" disabled>Submit comments</button>{% endif %}
     {% if available %}<a class="view-source" href="{{ raw_url }}" target="_blank">View source file</a>{% endif %}
   </div>
 </header>
@@ -50,6 +51,39 @@
   <iframe class="doc-frame" src="{{ raw_url }}" title="document"></iframe>
 {% else %}
   <div class="unavailable">This document is no longer available.</div>
+{% endif %}
+{% if is_commentable %}
+<script>
+(function() {
+  var commentBtn = document.getElementById('comment-submit-btn');
+  var frame = document.querySelector('.doc-frame');
+  if (!commentBtn || !frame) return;
+  frame.addEventListener('load', function() { commentBtn.disabled = false; });
+  commentBtn.addEventListener('click', async function() {
+    var data = (frame.contentWindow && frame.contentWindow.__fsComments) || [];
+    var payload = data.map(function(c) { return { excerpt: c.excerpt, text: c.text }; });
+    commentBtn.disabled = true;
+    commentBtn.textContent = 'Submitting…';
+    try {
+      var resp = await fetch('{{ comment_post_url }}', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({comments: payload}),
+      });
+      if (resp.ok) {
+        commentBtn.textContent = 'Submitted ✓';
+        commentBtn.classList.add('btn-success');
+      } else {
+        commentBtn.disabled = false;
+        commentBtn.textContent = 'Submit failed — try again';
+      }
+    } catch (e) {
+      commentBtn.disabled = false;
+      commentBtn.textContent = 'Submit failed — try again';
+    }
+  });
+})();
+</script>
 {% endif %}
 {% if is_synthesis %}
 <script>

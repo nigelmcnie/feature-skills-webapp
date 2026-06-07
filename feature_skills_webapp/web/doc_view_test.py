@@ -500,3 +500,86 @@ def test_siblings_omits_feedback_doc(temp_db: Path, tmp_path: Path) -> None:
     assert response.status_code == 200
     assert f'href="/doc/{plan_id}"' in response.text
     assert f'href="/doc/{feedback_id}"' not in response.text
+
+
+# ---- is_commentable / comment Submit button ----
+
+
+HTML_REQUIREMENTS = """\
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="feature-doc-type" content="requirements">
+<title>feat-a requirements</title>
+</head>
+<body>MARKER_requirements</body>
+</html>
+"""
+
+
+def make_docs_root_with_requirements(tmp_path: Path) -> Path:
+    docs_root = tmp_path / "docs"
+    (docs_root / "proj1" / "feat-a").mkdir(parents=True)
+    (docs_root / "proj1" / "feat-a" / "requirements.html").write_text(HTML_REQUIREMENTS)
+    return docs_root
+
+
+def test_comment_button_shown_for_active_requirements_doc(temp_db: Path, tmp_path: Path) -> None:
+    docs_root = make_docs_root_with_requirements(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        doc_id = _doc_id_by_type(temp_db, "requirements")
+        response = client.get(f"/doc/{doc_id}")
+    assert response.status_code == 200
+    assert 'id="comment-submit-btn"' in response.text
+    assert f"/doc/{doc_id}/comments" in response.text
+
+
+def test_comment_button_shown_for_active_plan_doc(temp_db: Path, tmp_path: Path) -> None:
+    docs_root = make_docs_root(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        doc_id = _doc_id_by_type(temp_db, "plan")
+        response = client.get(f"/doc/{doc_id}")
+    assert response.status_code == 200
+    assert 'id="comment-submit-btn"' in response.text
+    assert f"/doc/{doc_id}/comments" in response.text
+
+
+def test_comment_button_not_shown_for_feedback_doc(temp_db: Path, tmp_path: Path) -> None:
+    docs_root = make_docs_root_with_feedback(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        doc_id = _doc_id_by_type(temp_db, "requirements-feedback")
+        response = client.get(f"/doc/{doc_id}")
+    assert response.status_code == 200
+    assert 'id="comment-submit-btn"' not in response.text
+
+
+def test_comment_button_not_shown_for_tracker_doc(temp_db: Path, tmp_path: Path) -> None:
+    docs_root = make_docs_root_with_tracker(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        from feature_skills_webapp.storage.db import connect
+
+        conn = connect(temp_db)
+        row = conn.execute("SELECT id FROM documents WHERE type='features' LIMIT 1").fetchone()
+        conn.close()
+        response = client.get(f"/doc/{row['id']}")
+    assert response.status_code == 200
+    assert 'id="comment-submit-btn"' not in response.text
+
+
+def test_comment_button_not_shown_for_archived_doc(temp_db: Path, tmp_path: Path) -> None:
+    docs_root = make_docs_root_with_archived(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        from feature_skills_webapp.storage.db import connect
+
+        conn = connect(temp_db)
+        row = conn.execute("SELECT id FROM documents WHERE status='archived' LIMIT 1").fetchone()
+        conn.close()
+        response = client.get(f"/doc/{row['id']}")
+    assert response.status_code == 200
+    assert 'id="comment-submit-btn"' not in response.text
