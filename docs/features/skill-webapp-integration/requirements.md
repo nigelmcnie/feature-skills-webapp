@@ -203,3 +203,13 @@ Plan-level detail surfaced during requirements exploration, carried forward for 
 - **Clipboard fallback kept for unreachable + give-up** (round 1). Not removed in v1; the likelier trigger is a developer giving up the wait, not a down server. Full removal deferred.
 - **SSE done-signal deferred** (round 1). Exposing `last_submit_at` / a count over SSE is unnecessary while submit is a clean terminal edge; revisit only if that proves insufficient.
 - **Deep-link kept out of the headline flow** (round 1). The skill points at the inbox; optionally the read endpoint can return the doc's webapp URL cheaply, but per-doc deep-linking isn't a scoped deliverable.
+
+## Review decisions
+
+### Round 1 (post-merge review)
+
+- **Fixed (blocker):** the rewired skills sent unexpanded `~` paths to `?path=`, which never matched the walker's expanded `source_path` — every poll/integrate 404'd forever and silently fell back to clipboard, defeating the HTTP handoff. Replaced `~/` with `$HOME/` in all poll/fetch/integrate curls across `feature-requirements`, `feature-review`, `feature-plan`, `feature-iterate`; `webapp-polling.md` now states the path must be absolute and tilde-expanded. The webapp side was already correct.
+- **User (button prominence):** the doc footer's "Copy" button was the visual call-to-action while Submit — the actual primary target now that HTTP is the path — was a subordinate bar button. Decided (both repos): demoted the footer Copy button to a secondary outline style in the three templates, and made Submit a prominent bottom action-bar CTA in the `doc-view` shell. Templates stay copy-capable for the standalone clipboard fallback.
+- **Fixed:** added a read-during-submit concurrency test — a replace-active-set resubmit during the agent's read→integrate window hard-deletes the read rows, so integrating the stale ids is a no-op and the newer comment stays active.
+- **Fixed (routine):** the comment-integrate events row now has a count assertion; added a 400-before-404 ordering test for `post_comments`; switched both events payloads from a hand-built f-string to `json.dumps`.
+- **Declined:** bounding `len(ids)` on the integrate endpoint — loopback-only and practically bounded, not worth gating.

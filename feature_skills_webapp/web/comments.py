@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import cast
 
 from starlette.requests import Request
@@ -68,7 +69,7 @@ async def post_comments(request: Request) -> JSONResponse:
             conn.execute(
                 "INSERT INTO events (document_id, event_type, payload_json, created_at) "
                 "VALUES (?, 'comment_submitted', ?, ?)",
-                (doc_id, f'{{"count": {len(comments)}}}', now),
+                (doc_id, json.dumps({"count": len(comments)}), now),
             )
 
     request.app.state.broadcaster.broadcast()
@@ -117,7 +118,7 @@ async def post_comments_integrate(request: Request) -> JSONResponse:
             conn.execute(
                 "INSERT INTO events (document_id, event_type, payload_json, created_at) "
                 "VALUES (?, 'comment_integrated', ?, ?)",
-                (doc_id, f'{{"count": {count}}}', now),
+                (doc_id, json.dumps({"count": count}), now),
             )
 
     return JSONResponse({"integrated": count})

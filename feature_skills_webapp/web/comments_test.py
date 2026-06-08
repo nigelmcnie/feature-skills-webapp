@@ -228,6 +228,14 @@ def test_post_404_unknown_document(temp_db: Path) -> None:
     assert resp.status_code == 404
 
 
+def test_post_malformed_body_returns_400_before_404(temp_db: Path) -> None:
+    # Validation runs before the doc-existence check (mirrors synthesis.py), so a
+    # malformed body on an unknown doc id is a 400, not a 404.
+    client = TestClient(create_app(db_path=temp_db))
+    resp = client.post("/doc/99999/comments", json={"comments": "not a list"})
+    assert resp.status_code == 400
+
+
 def test_post_503_db_not_configured() -> None:
     client = TestClient(create_app(db_path=None))
     resp = client.post("/doc/1/comments", json={"comments": []})
@@ -424,6 +432,30 @@ def test_integrate_cross_doc_ids_are_noops(temp_db: Path, tmp_path: Path) -> Non
         assert len(get_resp.json()["comments"]) == 1
 
 
+def test_integrate_stale_ids_after_resubmit_leaves_new_active(
+    temp_db: Path, tmp_path: Path
+) -> None:
+    # Concurrency: the agent reads ids [a, b], then the human re-submits
+    # (replace-active-set hard-deletes a, b and inserts c). The agent then
+    # integrates the stale ids it read — this must be a no-op (the rows are
+    # gone) and must not touch the newer active comment c.
+    docs_root, source_path = make_requirements_root(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        doc_id = get_doc_id(temp_db, source_path)
+
+        stale_ids = _post_and_get_ids(client, doc_id, ["a", "b"])
+        # Human re-submits during the agent's read→integrate window.
+        client.post(f"/doc/{doc_id}/comments", json={"comments": [{"text": "c"}]})
+
+        resp = client.post("/comments/integrate", json={"path": source_path, "ids": stale_ids})
+        assert resp.status_code == 200
+        assert resp.json()["integrated"] == 0
+
+        got = client.get(f"/comments?path={source_path}").json()
+        assert [c["text"] for c in got["comments"]] == ["c"]
+
+
 def test_integrate_events_row_written(temp_db: Path, tmp_path: Path) -> None:
     docs_root, source_path = make_requirements_root(tmp_path)
     with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
@@ -435,11 +467,40 @@ def test_integrate_events_row_written(temp_db: Path, tmp_path: Path) -> None:
 
         conn = connect(temp_db)
         row = conn.execute(
-            "SELECT event_type FROM events WHERE document_id = ? AND event_type = 'comment_integrated'",
+            "SELECT event_type, payload_json FROM events "
+            "WHERE document_id = ? AND event_type = 'comment_integrated'",
             (doc_id,),
         ).fetchone()
         conn.close()
         assert row is not None
+        assert "1" in row["payload_json"]
+
+
+def test_integrate_events_count_reflects_only_rows_changed(temp_db: Path, tmp_path: Path) -> None:
+    docs_root, source_path = make_requirements_root(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        doc_id = get_doc_id(temp_db, source_path)
+
+        ids = _post_and_get_ids(client, doc_id, ["a", "b", "c"])
+        # Integrate two real ids plus one already-integrated and one bogus id;
+        # the events count must reflect only the rows actually flipped (2).
+        client.post("/comments/integrate", json={"path": source_path, "ids": [ids[0]]})
+        client.post(
+            "/comments/integrate",
+            json={"path": source_path, "ids": [ids[0], ids[1], ids[2], 999999]},
+        )
+
+        conn = connect(temp_db)
+        row = conn.execute(
+            "SELECT payload_json FROM events "
+            "WHERE document_id = ? AND event_type = 'comment_integrated' "
+            "ORDER BY id DESC LIMIT 1",
+            (doc_id,),
+        ).fetchone()
+        conn.close()
+        # ids[0] was already integrated and 999999 doesn't exist, so only ids[1], ids[2] flip.
+        assert row["payload_json"] == '{"count": 2}'
 
 
 def test_integrate_400_non_int_id(temp_db: Path) -> None:
