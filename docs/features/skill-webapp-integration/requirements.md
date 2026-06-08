@@ -213,3 +213,7 @@ Plan-level detail surfaced during requirements exploration, carried forward for 
 - **Fixed:** added a read-during-submit concurrency test — a replace-active-set resubmit during the agent's read→integrate window hard-deletes the read rows, so integrating the stale ids is a no-op and the newer comment stays active.
 - **Fixed (routine):** the comment-integrate events row now has a count assertion; added a 400-before-404 ordering test for `post_comments`; switched both events payloads from a hand-built f-string to `json.dumps`.
 - **Declined:** bounding `len(ids)` on the integrate endpoint — loopback-only and practically bounded, not worth gating.
+
+### Round 2 (re-review)
+
+- **Fixed (blocker, incompletely applied in round 1):** the round-1 fix expanded `$HOME` in the double-quoted GET `?path=` URLs but left it inside the *single-quoted* `-d` JSON bodies of the four `/comments/integrate` curls, where `$HOME` stays literal — reproducing the original 404/silent-fallback bug on the integrate leg. Fixed by closing and reopening the quoting around the variable (`'"$HOME"'`) so it expands; verified the body expands to the absolute path and parses as valid JSON.
