@@ -6,6 +6,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
+from feature_skills_webapp.storage.read_state import mark_documents_read
 from feature_skills_webapp.storage.walker import FEEDBACK_SUFFIX
 
 SHIPPED_RECENT_DAYS = 30
@@ -178,6 +179,11 @@ def awaiting_input(conn: sqlite3.Connection, project_id: int | None = None) -> l
         params.append(project_id)
     sql += " ORDER BY last_activity DESC, document_id DESC"
     return [_doc_card(r) for r in conn.execute(sql, params).fetchall()]
+
+
+def mark_new_since_read(conn: sqlite3.Connection, project_id: int | None = None) -> int:
+    ids = [c.document_id for c in new_since_last_visit(conn, project_id) if c.document_id]
+    return mark_documents_read(conn, ids)
 
 
 def build_inbox(conn: sqlite3.Connection, project: str | None = None) -> Inbox:

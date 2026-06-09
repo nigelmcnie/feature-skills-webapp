@@ -133,6 +133,23 @@
     flex-shrink: 0;
   }
 
+  /* Mark-all-read button in category header */
+  .category h2 { display: flex; align-items: center; gap: 10px; }
+  .mark-read-btn {
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 2px 10px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text-faint);
+    cursor: pointer;
+    margin-left: auto;
+  }
+  .mark-read-btn:hover { border-color: var(--accent); color: var(--accent); }
+
   /* Per-doc-type badge colours — base amber is the fallback (card-label default) */
   .badge-requirements { color: #93c5fd; background: #1e3a5f; }
   .badge-plan         { color: #c4b5fd; background: #2e1065; }
@@ -187,6 +204,23 @@
   es.onmessage = scheduleRefetch;
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) scheduleRefetch();
+  });
+
+  document.getElementById('inbox-body').addEventListener('click', async (e) => {
+    const btn = e.target.closest('.mark-read-btn');
+    if (!btn) return;
+    const params = new URLSearchParams(window.location.search);
+    const project = params.get('project');
+    const url = '/admin/mark-read' + (project ? '?project=' + encodeURIComponent(project) : '');
+    btn.disabled = true;
+    const resp = await fetch(url, { method: 'POST' });
+    if (resp.ok) {
+      const data = await resp.json();
+      btn.textContent = 'Marked ' + data.stamped + ' as read';
+      await refetchInbox();
+    } else {
+      btn.disabled = false;
+    }
   });
 </script>
 </body>

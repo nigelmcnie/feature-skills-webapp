@@ -61,6 +61,24 @@ async def admin_mark_read(request: Request) -> JSONResponse:
     return JSONResponse({"project": project, "stamped": stamped})
 
 
+async def admin_mark_new_since_read(request: Request) -> JSONResponse:
+    if request.app.state.db_path is None:
+        return JSONResponse({"error": "db not configured"}, status_code=503)
+    project = request.query_params.get("project")
+    from feature_skills_webapp.storage.inbox import mark_new_since_read
+    from feature_skills_webapp.web.db_dep import request_conn
+
+    with request_conn(request.app) as conn:
+        project_id = None
+        if project is not None:
+            row = conn.execute("SELECT id FROM projects WHERE name = ?", (project,)).fetchone()
+            if row is None:
+                return JSONResponse({"error": "unknown project"}, status_code=404)
+            project_id = row["id"]
+        stamped = mark_new_since_read(conn, project_id)
+    return JSONResponse({"stamped": stamped})
+
+
 async def admin_discover(request: Request) -> JSONResponse:
     if not hasattr(request.app.state, "walk_queue"):
         return JSONResponse({"error": "discovery not configured"}, status_code=503)

@@ -7,7 +7,12 @@ from datetime import datetime
 from pathlib import Path
 
 from feature_skills_webapp.storage.db import connect, migrate, now_iso
-from feature_skills_webapp.storage.read_state import mark_all_read, mark_read, unread_document_ids
+from feature_skills_webapp.storage.read_state import (
+    mark_all_read,
+    mark_documents_read,
+    mark_read,
+    unread_document_ids,
+)
 
 
 def temp_conn(tmp_path: Path) -> sqlite3.Connection:
@@ -192,6 +197,42 @@ def test_equal_timestamp_tie_reads_as_read(tmp_path: Path) -> None:
         (ids["doc_a"],),
     )
     assert ids["doc_a"] in unread_document_ids(conn)
+
+
+# --- mark_documents_read tests ---
+
+
+def test_mark_documents_read_stamps_ids_and_returns_count(tmp_path: Path) -> None:
+    conn = temp_conn(tmp_path)
+    with conn:
+        ids = _seed(conn)
+    count = mark_documents_read(conn, [ids["doc_a"], ids["doc_b"]])
+    assert count == 2
+    assert ids["doc_a"] not in unread_document_ids(conn)
+    assert ids["doc_b"] not in unread_document_ids(conn)
+
+
+def test_mark_documents_read_empty_list_is_noop(tmp_path: Path) -> None:
+    conn = temp_conn(tmp_path)
+    with conn:
+        ids = _seed(conn)
+    count = mark_documents_read(conn, [])
+    assert count == 0
+    assert ids["doc_a"] in unread_document_ids(conn)
+
+
+def test_mark_documents_read_upserts(tmp_path: Path) -> None:
+    conn = temp_conn(tmp_path)
+    with conn:
+        ids = _seed(conn)
+    mark_documents_read(conn, [ids["doc_a"]])
+    # second call should not raise and should leave doc_a read
+    mark_documents_read(conn, [ids["doc_a"]])
+    row_count = conn.execute(
+        "SELECT COUNT(*) AS n FROM read_state WHERE document_id=?", (ids["doc_a"],)
+    ).fetchone()["n"]
+    assert row_count == 1
+    assert ids["doc_a"] not in unread_document_ids(conn)
 
 
 # --- mark_all_read tests ---

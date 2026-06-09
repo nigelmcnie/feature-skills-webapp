@@ -14,6 +14,7 @@ from feature_skills_webapp.storage.inbox import (
     build_inbox,
     humanise_type,
     in_progress,
+    mark_new_since_read,
     new_since_last_visit,
     recently_shipped,
 )
@@ -655,3 +656,44 @@ def test_awaiting_input_project_filter(tmp_path: Path) -> None:
     cards_a = awaiting_input(conn, project_id=proj_a_id)
     assert len(cards_a) == 1
     assert cards_a[0].project == "proj-a"
+
+
+# --- mark_new_since_read ---
+
+
+def test_mark_new_since_read_stamps_new_since_docs(tmp_path: Path) -> None:
+    conn = temp_conn(tmp_path)
+    with transaction(conn):
+        ids = _seed(conn)
+    # doc_active_a1 and doc_active_a2 are new-since
+    count = mark_new_since_read(conn)
+    assert count == 2
+    assert ids["doc_active_a1"] not in [
+        c.document_id for c in new_since_last_visit(conn) if c.document_id
+    ]
+    assert ids["doc_active_a2"] not in [
+        c.document_id for c in new_since_last_visit(conn) if c.document_id
+    ]
+
+
+def test_mark_new_since_read_leaves_awaiting_input_untouched(tmp_path: Path) -> None:
+    conn = temp_conn(tmp_path)
+    with transaction(conn):
+        doc_id = _insert_feedback_doc(conn, "proj-a", "feat-a")
+    # awaiting-input doc should not be stamped by mark_new_since_read
+    mark_new_since_read(conn)
+    row = conn.execute(
+        "SELECT last_read_at FROM read_state WHERE document_id=?", (doc_id,)
+    ).fetchone()
+    assert row is None
+
+
+def test_mark_new_since_read_project_scope(tmp_path: Path) -> None:
+    conn = temp_conn(tmp_path)
+    with transaction(conn):
+        ids = _seed(conn)
+    proj_a_id = ids["proj_a"]
+    count = mark_new_since_read(conn, project_id=proj_a_id)
+    assert count == 2
+    # proj-b's doc is already read (doc_active_b1 has read_state in _seed); still no new-since from b
+    assert new_since_last_visit(conn, project_id=ids["proj_b"]) == []
