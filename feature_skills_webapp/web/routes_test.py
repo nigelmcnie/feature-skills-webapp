@@ -435,3 +435,34 @@ def test_index_awaiting_input_project_filter(temp_db: Path, tmp_path: Path) -> N
 
     assert "Awaiting your input" in resp_p1.text
     assert "Awaiting your input" not in resp_p2.text
+
+
+# --- badge CSS classes (Phase 1 — doc-type badges) ---
+
+
+def make_docs_root_with_types(tmp_path: Path) -> Path:
+    """Docs root with context, requirements, and plan docs for badge class testing."""
+    docs_root = tmp_path / "docs"
+    (docs_root / "proj1" / "feat-a").mkdir(parents=True)
+    (docs_root / "proj1" / "feat-a" / "context.html").write_text(
+        HTML_TEMPLATE.format(doc_type="context", title="ctx")
+    )
+    (docs_root / "proj1" / "feat-a" / "requirements.html").write_text(
+        HTML_TEMPLATE.format(doc_type="requirements", title="req")
+    )
+    (docs_root / "proj1" / "feat-a" / "plan.html").write_text(
+        HTML_TEMPLATE.format(doc_type="plan", title="plan")
+    )
+    return docs_root
+
+
+def test_index_renders_badge_css_classes(temp_db: Path, tmp_path: Path) -> None:
+    """Rendered inbox HTML carries badge-<type> classes for seeded doc types."""
+    docs_root = make_docs_root_with_types(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        resp = client.get("/")
+    assert resp.status_code == 200
+    assert "badge-context" in resp.text
+    assert "badge-requirements" in resp.text
+    assert "badge-plan" in resp.text

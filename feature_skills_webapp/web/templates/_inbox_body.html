@@ -31,7 +31,7 @@
           <div class="card">
             <span class="card-project">{{ card.project }}</span>
             <span class="card-feature">{{ card.feature }}</span>
-            <span class="card-label">{{ card.label }}</span>
+            <span class="card-label badge-{{ card.badge }}">{{ card.label }}</span>
             {% if card.last_activity %}<span class="card-time">{{ card.last_activity[:10] }}</span>{% endif %}
           </div>
         </a></li>
@@ -51,7 +51,7 @@
           <div class="card">
             <span class="card-project">{{ card.project }}</span>
             <span class="card-feature">{{ card.feature }}</span>
-            <span class="card-label">{{ card.label }}</span>
+            <span class="card-label badge-{{ card.badge }}">{{ card.label }}</span>
             {% if card.last_activity %}<span class="card-time">{{ card.last_activity[:10] }}</span>{% endif %}
           </div>
         </a></li>

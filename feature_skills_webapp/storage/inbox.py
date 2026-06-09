@@ -28,6 +28,14 @@ def humanise_type(doc_type: str) -> str:
     return doc_type.replace("-", " ").replace("_", " ").capitalize()
 
 
+def badge_kind(doc_type: str | None) -> str:
+    if doc_type is None:
+        return "context"
+    if doc_type.endswith(FEEDBACK_SUFFIX):
+        return "feedback"
+    return doc_type
+
+
 @dataclass(frozen=True)
 class InboxCard:
     project: str
@@ -35,6 +43,7 @@ class InboxCard:
     label: str
     last_activity: str | None
     document_id: int | None = None
+    badge: str = "context"
 
 
 @dataclass(frozen=True)
@@ -59,15 +68,17 @@ def _doc_card(r: sqlite3.Row) -> InboxCard:
         label=humanise_type(r["doc_type"]),
         last_activity=r["last_activity"],
         document_id=r["document_id"],
+        badge=badge_kind(r["doc_type"]),
     )
 
 
-def _feature_card(r: sqlite3.Row, *, label: str) -> InboxCard:
+def _feature_card(r: sqlite3.Row, *, label: str, badge: str) -> InboxCard:
     return InboxCard(
         project=r["project"],
         feature=r["feature"],
         label=label,
         last_activity=r["last_activity"],
+        badge=badge,
     )
 
 
@@ -77,6 +88,7 @@ def _shipped_card(r: sqlite3.Row) -> InboxCard:
         feature=r["slug"],
         label="Shipped",
         last_activity=r["shipped_at"],
+        badge="shipped",
     )
 
 
@@ -121,7 +133,10 @@ def in_progress(conn: sqlite3.Connection, project_id: int | None = None) -> list
         params.append(project_id)
     # f.slug is a stable secondary key so ties on last_activity have a deterministic order.
     sql += " ORDER BY COALESCE(last_activity,'') DESC, f.slug"
-    return [_feature_card(r, label="In progress") for r in conn.execute(sql, params).fetchall()]
+    return [
+        _feature_card(r, label="In progress", badge="in-progress")
+        for r in conn.execute(sql, params).fetchall()
+    ]
 
 
 def recently_shipped(

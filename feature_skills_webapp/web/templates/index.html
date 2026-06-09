@@ -133,6 +133,14 @@
     flex-shrink: 0;
   }
 
+  /* Per-doc-type badge colours — base amber is the fallback (card-label default) */
+  .badge-requirements { color: #93c5fd; background: #1e3a5f; }
+  .badge-plan         { color: #c4b5fd; background: #2e1065; }
+  .badge-review       { color: #5eead4; background: #042f2e; }
+  .badge-feedback     { color: #f9a8d4; background: #500724; }
+  .badge-shipped      { color: #4ade80; background: #052e16; }
+  .badge-in-progress  { color: var(--text-faint); background: var(--surface); }
+
   /* Empty / not-configured states */
   .state-panel {
     text-align: center;
