@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="color-scheme" content="dark">
+<title>{{ project }}</title>
+<style>
+  :root {
+    --bg: #1c1917;
+    --surface: #292524;
+    --border: #44403c;
+    --accent: #f59e0b;
+    --accent-soft: #92400e;
+    --text: #fafaf9;
+    --text-muted: #d6d3d1;
+    --text-faint: #a8a29e;
+  }
+  * { box-sizing: border-box; }
+  html { font-size: 18px; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    margin: 0;
+    padding: 0;
+    line-height: 1.6;
+  }
+  .page { max-width: 860px; margin: 0 auto; padding: 32px 24px 80px; }
+
+  /* Breadcrumb */
+  .crumbs { display: flex; align-items: center; gap: 8px; font-size: 0.9rem;
+            margin-bottom: 24px; color: var(--text-faint); }
+  .crumbs .current { color: var(--text); font-weight: 600; }
+
+  /* Page header */
+  .page-header {
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 16px;
+    margin-bottom: 28px;
+  }
+  .page-header h1 { margin: 0; font-size: 1.5rem; font-weight: 600; letter-spacing: -0.02em; }
+  .tracker-link { display: inline-block; margin-top: 8px; font-size: 0.85rem;
+                  color: var(--accent); text-decoration: none; }
+  .tracker-link:hover { text-decoration: underline; }
+
+  /* Feature groups */
+  .feat-group { margin-bottom: 32px; }
+  .feat-group h2 {
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--text-faint);
+    margin: 0 0 12px;
+  }
+  .feat-list { list-style: none; margin: 0; padding: 0; }
+  .feat-row {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding: 10px 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin-bottom: 6px;
+    text-decoration: none;
+    color: inherit;
+  }
+  .feat-row:hover { border-color: var(--accent); }
+  .feat-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .feat-slug { font-weight: 500; color: var(--text); flex: 1; }
+  .feat-owner { font-size: 0.82rem; color: var(--text-faint); white-space: nowrap; flex-shrink: 0; }
+  .feat-activity { font-size: 0.78rem; color: var(--text-faint); white-space: nowrap; flex-shrink: 0; }
+
+  /* Done group de-emphasised */
+  .feat-group.done-group { opacity: 0.65; }
+  .feat-group.done-group h2 { color: var(--text-faint); }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <nav class="crumbs">
+    <span class="current">{{ project }}</span>
+  </nav>
+
+  <header class="page-header">
+    <h1>{{ project }}</h1>
+    {% if tracker_id %}
+    <a class="tracker-link" href="/doc/{{ tracker_id }}">View feature tracker →</a>
+    {% endif %}
+  </header>
+
+  {% if in_progress %}
+  <section class="feat-group">
+    <h2>In progress</h2>
+    <ul class="feat-list">
+      {% for feat in in_progress %}
+      <li>
+        <a class="feat-row" href="/project/{{ project | urlencode }}/feature/{{ feat.slug | urlencode }}"
+           aria-label="{{ feat.slug }}">
+          <span class="feat-slug">{{ feat.slug }}</span>
+          {% if feat.owner %}<span class="feat-owner">{{ feat.owner }}</span>{% endif %}
+          {% if feat.last_activity %}<span class="feat-activity">{{ feat.last_activity[:10] }}</span>{% endif %}
+        </a>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
+  {% if available %}
+  <section class="feat-group">
+    <h2>Available</h2>
+    <ul class="feat-list">
+      {% for feat in available %}
+      <li>
+        <a class="feat-row" href="/project/{{ project | urlencode }}/feature/{{ feat.slug | urlencode }}"
+           aria-label="{{ feat.slug }}">
+          <span class="feat-slug">{{ feat.slug }}</span>
+          {% if feat.owner %}<span class="feat-owner">{{ feat.owner }}</span>{% endif %}
+          {% if feat.last_activity %}<span class="feat-activity">{{ feat.last_activity[:10] }}</span>{% endif %}
+        </a>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
+  {% if done %}
+  <section class="feat-group done-group">
+    <h2>Done</h2>
+    <ul class="feat-list">
+      {% for feat in done %}
+      <li>
+        <a class="feat-row" href="/project/{{ project | urlencode }}/feature/{{ feat.slug | urlencode }}"
+           aria-label="{{ feat.slug }}">
+          <span class="feat-slug">{{ feat.slug }}</span>
+          {% if feat.owner %}<span class="feat-owner">{{ feat.owner }}</span>{% endif %}
+          {% if feat.last_activity %}<span class="feat-activity">{{ feat.last_activity[:10] }}</span>{% endif %}
+        </a>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
+  {% if not in_progress and not available and not done %}
+  <p style="color: var(--text-faint); font-size: 0.9rem;">No features yet.</p>
+  {% endif %}
+
+</div>
+<script>
+  const es = new EventSource('/events');
+  let seenFirst = false;
+  es.onmessage = () => {
+    if (!seenFirst) { seenFirst = true; return; }
+    location.reload();
+  };
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) location.reload();
+  });
+</script>
+</body>
+</html>

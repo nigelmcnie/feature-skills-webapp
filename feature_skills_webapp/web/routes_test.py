@@ -538,3 +538,16 @@ def test_index_renders_badge_css_classes(temp_db: Path, tmp_path: Path) -> None:
     assert "badge-context" in resp.text
     assert "badge-requirements" in resp.text
     assert "badge-plan" in resp.text
+
+
+# --- inbox project-name links (Phase 4) ---
+
+
+def test_inbox_card_project_name_links_to_project_page(temp_db: Path, tmp_path: Path) -> None:
+    """Cards carry a project-page href on the project name."""
+    docs_root = make_docs_root(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        resp = client.get("/")
+    assert resp.status_code == 200
+    assert 'href="/project/proj1"' in resp.text

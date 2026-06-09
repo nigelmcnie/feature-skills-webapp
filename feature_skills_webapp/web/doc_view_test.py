@@ -611,3 +611,31 @@ def test_tracker_doc_crumb_has_no_feature_href(temp_db: Path, tmp_path: Path) ->
         response = client.get(f"/doc/{row['id']}")
     assert response.status_code == 200
     assert "/project/proj1/feature/" not in response.text
+
+
+# ---- project breadcrumb href (Phase 4) ----
+
+
+def test_project_crumb_carries_project_page_href(temp_db: Path, tmp_path: Path) -> None:
+    docs_root = make_docs_root(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        doc_id = _doc_id_by_type(temp_db, "plan")
+        response = client.get(f"/doc/{doc_id}")
+    assert response.status_code == 200
+    assert 'href="/project/proj1"' in response.text
+
+
+def test_tracker_project_crumb_carries_project_page_href(temp_db: Path, tmp_path: Path) -> None:
+    """The tracker doc's project crumb also links to the project page."""
+    docs_root = make_docs_root_with_tracker(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        from feature_skills_webapp.storage.db import connect
+
+        conn = connect(temp_db)
+        row = conn.execute("SELECT id FROM documents WHERE type='features' LIMIT 1").fetchone()
+        conn.close()
+        response = client.get(f"/doc/{row['id']}")
+    assert response.status_code == 200
+    assert 'href="/project/proj1"' in response.text

@@ -23,13 +23,12 @@ ROW_SQL = (
 
 
 def breadcrumbs(row: sqlite3.Row) -> list[tuple[str, str | None]]:
-    crumbs: list[tuple[str, str | None]] = [(row["project"], None)]
+    project_href = f"/project/{quote(row['project'], safe='')}"
+    crumbs: list[tuple[str, str | None]] = [(row["project"], project_href)]
     if row["feature"] is None:  # project-level tracker doc
         crumbs.append((humanise_type("features"), None))
         return crumbs
-    feature_href = (
-        f"/project/{quote(row['project'], safe='')}/feature/{quote(row['feature'], safe='')}"
-    )
+    feature_href = f"{project_href}/feature/{quote(row['feature'], safe='')}"
     crumbs.append((row["feature"], feature_href))
     label = humanise_type(row["type"])
     if row["status"] == "archived":
