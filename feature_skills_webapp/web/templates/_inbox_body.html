@@ -27,9 +27,12 @@
       <ul class="card-list">
         {% for card in inbox.awaiting_input %}
         <li class="card">
-          <span class="card-project">{{ card.project }}</span>
+          <a class="card-project" href="/project/{{ card.project | urlencode }}"
+             aria-label="{{ card.project }}">{{ card.project }}</a>
+          {% if card.feature %}
           <a class="card-feature" href="/project/{{ card.project | urlencode }}/feature/{{ card.feature | urlencode }}"
              aria-label="{{ card.feature }}">{{ card.feature }}</a>
+          {% endif %}
           {% if card.document_id %}
           <a href="/doc/{{ card.document_id }}" aria-label="Open {{ card.feature }} {{ card.label }}">
             <span class="card-label badge-{{ card.badge }}">{{ card.label }}</span>
@@ -50,9 +53,12 @@
       <ul class="card-list">
         {% for card in inbox.new_since %}
         <li class="card">
-          <span class="card-project">{{ card.project }}</span>
+          <a class="card-project" href="/project/{{ card.project | urlencode }}"
+             aria-label="{{ card.project }}">{{ card.project }}</a>
+          {% if card.feature %}
           <a class="card-feature" href="/project/{{ card.project | urlencode }}/feature/{{ card.feature | urlencode }}"
              aria-label="{{ card.feature }}">{{ card.feature }}</a>
+          {% endif %}
           {% if card.document_id %}
           <a href="/doc/{{ card.document_id }}" aria-label="Open {{ card.feature }} {{ card.label }}">
             <span class="card-label badge-{{ card.badge }}">{{ card.label }}</span>
@@ -73,9 +79,12 @@
       <ul class="card-list">
         {% for card in inbox.in_progress %}
         <li class="card">
-          <span class="card-project">{{ card.project }}</span>
+          <a class="card-project" href="/project/{{ card.project | urlencode }}"
+             aria-label="{{ card.project }}">{{ card.project }}</a>
+          {% if card.feature %}
           <a class="card-feature" href="/project/{{ card.project | urlencode }}/feature/{{ card.feature | urlencode }}"
              aria-label="{{ card.feature }}">{{ card.feature }}</a>
+          {% endif %}
           <span class="card-label badge-{{ card.badge }}">{{ card.label }}</span>
           {% if card.last_activity %}<span class="card-time">{{ card.last_activity[:10] }}</span>{% endif %}
         </li>
@@ -90,9 +99,12 @@
       <ul class="card-list">
         {% for card in inbox.recently_shipped %}
         <li class="card">
-          <span class="card-project">{{ card.project }}</span>
+          <a class="card-project" href="/project/{{ card.project | urlencode }}"
+             aria-label="{{ card.project }}">{{ card.project }}</a>
+          {% if card.feature %}
           <a class="card-feature" href="/project/{{ card.project | urlencode }}/feature/{{ card.feature | urlencode }}"
              aria-label="{{ card.feature }}">{{ card.feature }}</a>
+          {% endif %}
           <span class="card-label badge-{{ card.badge }}">{{ card.label }}</span>
           {% if card.last_activity %}<span class="card-time">{{ card.last_activity[:10] }}</span>{% endif %}
         </li>
