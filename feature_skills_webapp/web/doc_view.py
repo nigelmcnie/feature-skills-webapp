@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
+from urllib.parse import quote
 
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
@@ -26,7 +27,10 @@ def breadcrumbs(row: sqlite3.Row) -> list[tuple[str, str | None]]:
     if row["feature"] is None:  # project-level tracker doc
         crumbs.append((humanise_type("features"), None))
         return crumbs
-    crumbs.append((row["feature"], None))
+    feature_href = (
+        f"/project/{quote(row['project'], safe='')}/feature/{quote(row['feature'], safe='')}"
+    )
+    crumbs.append((row["feature"], feature_href))
     label = humanise_type(row["type"])
     if row["status"] == "archived":
         label += " (archived)"
