@@ -10,6 +10,7 @@ from feature_skills_webapp.storage.db import connect, migrate, transaction
 from feature_skills_webapp.storage.inbox import (
     Inbox,
     awaiting_input,
+    badge_kind,
     build_inbox,
     humanise_type,
     in_progress,
@@ -173,6 +174,98 @@ def test_humanise_type_known() -> None:
 def test_humanise_type_unknown_capitalises_and_spaces() -> None:
     assert humanise_type("requirements-feedback-1") == "Requirements feedback 1"
     assert humanise_type("my_doc") == "My doc"
+
+
+# --- badge_kind ---
+
+
+def test_badge_kind_known_types() -> None:
+    assert badge_kind("context") == "context"
+    assert badge_kind("requirements") == "requirements"
+    assert badge_kind("plan") == "plan"
+    assert badge_kind("review") == "review"
+
+
+def test_badge_kind_feedback_variants_normalise() -> None:
+    assert badge_kind("requirements-feedback") == "feedback"
+    assert badge_kind("plan-feedback") == "feedback"
+    assert badge_kind("review-feedback") == "feedback"
+
+
+def test_badge_kind_none_returns_context() -> None:
+    assert badge_kind(None) == "context"
+
+
+def test_doc_card_badge_from_doc_type(tmp_path: Path) -> None:
+    conn = temp_conn(tmp_path)
+    ts = "2020-06-01T00:00:00+00:00"
+    with transaction(conn):
+        conn.execute("INSERT INTO projects (name, created_at) VALUES ('proj', ?)", (ts,))
+        proj_id = conn.execute("SELECT id FROM projects WHERE name='proj'").fetchone()["id"]
+        conn.execute(
+            "INSERT INTO features (project_id, slug, status, created_at, updated_at) "
+            "VALUES (?, 'feat', 'in_progress', ?, ?)",
+            (proj_id, ts, ts),
+        )
+        feat_id = conn.execute(
+            "SELECT id FROM features WHERE project_id=? AND slug='feat'", (proj_id,)
+        ).fetchone()["id"]
+
+        def _insert(doc_type: str, path: str) -> None:
+            conn.execute(
+                "INSERT INTO documents (project_id, feature_id, type, status, source_path, "
+                "metadata_json, source_mtime, created_at, updated_at) "
+                "VALUES (?, ?, ?, 'active', ?, '{}', ?, ?, ?)",
+                (proj_id, feat_id, doc_type, path, ts, ts, ts),
+            )
+            doc_id = conn.execute(
+                "SELECT id FROM documents WHERE source_path=?", (path,)
+            ).fetchone()["id"]
+            conn.execute(
+                "INSERT INTO events (document_id, event_type, payload_json, created_at) "
+                "VALUES (?, 'created', '{}', ?)",
+                (doc_id, ts),
+            )
+
+        _insert("requirements", "/docs/proj/feat/requirements.html")
+        _insert("requirements-feedback", "/docs/proj/feat/requirements-feedback-1.html")
+        conn.execute(
+            "INSERT INTO synthesis_responses (document_id, item_num, response, routine_flag, updated_at) "
+            "VALUES ((SELECT id FROM documents WHERE source_path='/docs/proj/feat/requirements-feedback-1.html'), 1, 'ans', NULL, ?)",
+            (ts,),
+        )
+
+    new_cards = new_since_last_visit(conn)
+    req_card = next(
+        c
+        for c in new_cards
+        if "requirements" in c.label.lower() and "feedback" not in c.label.lower()
+    )
+    fb_card = next(c for c in new_cards if "feedback" in c.label.lower())
+    assert req_card.badge == "requirements"
+    assert fb_card.badge == "feedback"
+
+
+def test_in_progress_card_badge(tmp_path: Path) -> None:
+    conn = temp_conn(tmp_path)
+    with transaction(conn):
+        _seed(conn)
+    cards = in_progress(conn)
+    assert all(c.badge == "in-progress" for c in cards)
+
+
+def test_shipped_card_badge(tmp_path: Path) -> None:
+    conn = temp_conn(tmp_path)
+    import datetime
+
+    now = datetime.datetime.now(tz=datetime.UTC)
+    ts = (now - datetime.timedelta(days=1)).isoformat()
+    with transaction(conn):
+        conn.execute("INSERT INTO projects (name, created_at) VALUES ('proj', ?)", (ts,))
+        _insert_shipped_event(conn, "proj", "feat-x", ts)
+    cards = recently_shipped(conn, within_days=30)
+    assert len(cards) == 1
+    assert cards[0].badge == "shipped"
 
 
 # --- new_since_last_visit ---
