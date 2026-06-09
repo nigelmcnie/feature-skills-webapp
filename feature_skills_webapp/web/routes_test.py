@@ -504,6 +504,30 @@ def make_docs_root_with_types(tmp_path: Path) -> Path:
     return docs_root
 
 
+def test_inbox_card_feature_name_links_to_feature_page(temp_db: Path, tmp_path: Path) -> None:
+    """Cards in new-since and in-progress carry a feature-page href on the feature name."""
+    docs_root = make_docs_root(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        resp = client.get("/")
+    assert resp.status_code == 200
+    assert 'href="/project/proj1/feature/feat-a"' in resp.text
+
+
+def test_inbox_card_badge_links_to_doc(temp_db: Path, tmp_path: Path) -> None:
+    """The doc-type badge in new-since cards links to /doc/{id}."""
+    docs_root = make_docs_root(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        from feature_skills_webapp.storage.db import connect
+
+        conn = connect(temp_db)
+        doc_id = conn.execute("SELECT id FROM documents LIMIT 1").fetchone()["id"]
+        conn.close()
+        resp = client.get("/")
+    assert f'href="/doc/{doc_id}"' in resp.text
+
+
 def test_index_renders_badge_css_classes(temp_db: Path, tmp_path: Path) -> None:
     """Rendered inbox HTML carries badge-<type> classes for seeded doc types."""
     docs_root = make_docs_root_with_types(tmp_path)

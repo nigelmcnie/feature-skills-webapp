@@ -13,6 +13,7 @@ from feature_skills_webapp.web.broadcaster import Broadcaster
 from feature_skills_webapp.web.comments import get_comments, post_comments, post_comments_integrate
 from feature_skills_webapp.web.doc_view import doc_raw, doc_shell
 from feature_skills_webapp.web.events import events
+from feature_skills_webapp.web.feature_page import feature_page
 from feature_skills_webapp.web.routes import (
     admin_discover,
     admin_mark_new_since_read,
@@ -73,6 +74,7 @@ def create_app(db_path: Path | None, docs_root: Path | None = None) -> Starlette
             Route("/admin/discover", admin_discover, methods=["POST"]),
             Route("/admin/mark-read", admin_mark_new_since_read, methods=["POST"]),
             Route("/admin/projects/{project}/mark-read", admin_mark_read, methods=["POST"]),
+            Route("/project/{project}/feature/{slug}", feature_page),
             Route("/doc/{document_id:int}", doc_shell),
             Route("/doc/{document_id:int}/raw", doc_raw),
             Route(

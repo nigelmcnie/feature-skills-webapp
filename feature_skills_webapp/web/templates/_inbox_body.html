@@ -26,15 +26,19 @@
       <h2>Awaiting your input</h2>
       <ul class="card-list">
         {% for card in inbox.awaiting_input %}
-        <li><a class="card-link" href="/doc/{{ card.document_id }}"
-               aria-label="{{ card.project }} {{ card.feature }} {{ card.label }}">
-          <div class="card">
-            <span class="card-project">{{ card.project }}</span>
-            <span class="card-feature">{{ card.feature }}</span>
+        <li class="card">
+          <span class="card-project">{{ card.project }}</span>
+          <a class="card-feature" href="/project/{{ card.project | urlencode }}/feature/{{ card.feature | urlencode }}"
+             aria-label="{{ card.feature }}">{{ card.feature }}</a>
+          {% if card.document_id %}
+          <a href="/doc/{{ card.document_id }}" aria-label="Open {{ card.feature }} {{ card.label }}">
             <span class="card-label badge-{{ card.badge }}">{{ card.label }}</span>
-            {% if card.last_activity %}<span class="card-time">{{ card.last_activity[:10] }}</span>{% endif %}
-          </div>
-        </a></li>
+          </a>
+          {% else %}
+          <span class="card-label badge-{{ card.badge }}">{{ card.label }}</span>
+          {% endif %}
+          {% if card.last_activity %}<span class="card-time">{{ card.last_activity[:10] }}</span>{% endif %}
+        </li>
         {% endfor %}
       </ul>
     </section>
@@ -45,24 +49,19 @@
       <h2>New since last visit <button class="mark-read-btn" type="button">Mark all read</button></h2>
       <ul class="card-list">
         {% for card in inbox.new_since %}
-        {% if card.document_id %}
-        <li><a class="card-link" href="/doc/{{ card.document_id }}"
-               aria-label="{{ card.project }} {{ card.feature }} {{ card.label }}">
-          <div class="card">
-            <span class="card-project">{{ card.project }}</span>
-            <span class="card-feature">{{ card.feature }}</span>
-            <span class="card-label badge-{{ card.badge }}">{{ card.label }}</span>
-            {% if card.last_activity %}<span class="card-time">{{ card.last_activity[:10] }}</span>{% endif %}
-          </div>
-        </a></li>
-        {% else %}
         <li class="card">
           <span class="card-project">{{ card.project }}</span>
-          <span class="card-feature">{{ card.feature }}</span>
-          <span class="card-label">{{ card.label }}</span>
+          <a class="card-feature" href="/project/{{ card.project | urlencode }}/feature/{{ card.feature | urlencode }}"
+             aria-label="{{ card.feature }}">{{ card.feature }}</a>
+          {% if card.document_id %}
+          <a href="/doc/{{ card.document_id }}" aria-label="Open {{ card.feature }} {{ card.label }}">
+            <span class="card-label badge-{{ card.badge }}">{{ card.label }}</span>
+          </a>
+          {% else %}
+          <span class="card-label badge-{{ card.badge }}">{{ card.label }}</span>
+          {% endif %}
           {% if card.last_activity %}<span class="card-time">{{ card.last_activity[:10] }}</span>{% endif %}
         </li>
-        {% endif %}
         {% endfor %}
       </ul>
     </section>
@@ -75,8 +74,9 @@
         {% for card in inbox.in_progress %}
         <li class="card">
           <span class="card-project">{{ card.project }}</span>
-          <span class="card-feature">{{ card.feature }}</span>
-          <span class="card-label">{{ card.label }}</span>
+          <a class="card-feature" href="/project/{{ card.project | urlencode }}/feature/{{ card.feature | urlencode }}"
+             aria-label="{{ card.feature }}">{{ card.feature }}</a>
+          <span class="card-label badge-{{ card.badge }}">{{ card.label }}</span>
           {% if card.last_activity %}<span class="card-time">{{ card.last_activity[:10] }}</span>{% endif %}
         </li>
         {% endfor %}
@@ -91,8 +91,9 @@
         {% for card in inbox.recently_shipped %}
         <li class="card">
           <span class="card-project">{{ card.project }}</span>
-          <span class="card-feature">{{ card.feature }}</span>
-          <span class="card-label">{{ card.label }}</span>
+          <a class="card-feature" href="/project/{{ card.project | urlencode }}/feature/{{ card.feature | urlencode }}"
+             aria-label="{{ card.feature }}">{{ card.feature }}</a>
+          <span class="card-label badge-{{ card.badge }}">{{ card.label }}</span>
           {% if card.last_activity %}<span class="card-time">{{ card.last_activity[:10] }}</span>{% endif %}
         </li>
         {% endfor %}

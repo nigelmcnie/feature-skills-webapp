@@ -1,0 +1,199 @@
+from pathlib import Path
+
+from starlette.testclient import TestClient
+
+from feature_skills_webapp.web.app import create_app
+
+HTML_TEMPLATE = """\
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="feature-doc-type" content="{doc_type}">
+<title>{title}</title>
+</head>
+<body>MARKER_{doc_type}</body>
+</html>
+"""
+
+FEATURES_HTML = """\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="feature-doc-type" content="features">
+<title>proj1 — Features</title>
+</head>
+<body>
+<section id="in-progress">
+  <table class="features">
+    <tbody>
+      <tr>
+        <td class="feature-name">feat-a</td>
+        <td class="feature-owner">Alice</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+<section id="done">
+  <table class="features">
+    <tbody>
+      <tr class="empty"><td colspan="2">Nothing done yet.</td></tr>
+    </tbody>
+  </table>
+</section>
+</body>
+</html>
+"""
+
+HTML_FEEDBACK = """\
+<!DOCTYPE html>
+<html><head><title>Feedback</title></head><body>feedback content</body></html>
+"""
+
+
+def make_docs_root(tmp_path: Path) -> Path:
+    docs_root = tmp_path / "docs"
+    (docs_root / "proj1" / "feat-a").mkdir(parents=True)
+    for doc_type in ("context", "requirements", "plan"):
+        (docs_root / "proj1" / "feat-a" / f"{doc_type}.html").write_text(
+            HTML_TEMPLATE.format(doc_type=doc_type, title=f"feat-a {doc_type}")
+        )
+    return docs_root
+
+
+def make_docs_root_with_feedback(tmp_path: Path) -> Path:
+    docs_root = make_docs_root(tmp_path)
+    (docs_root / "proj1" / "feat-a" / "requirements-feedback-1.html").write_text(HTML_FEEDBACK)
+    return docs_root
+
+
+def make_docs_root_with_archived(tmp_path: Path) -> Path:
+    docs_root = make_docs_root(tmp_path)
+    archive = docs_root / "proj1" / "feat-a" / ".feedback-archive"
+    archive.mkdir(parents=True)
+    (archive / "requirements-feedback-1.html").write_text(HTML_FEEDBACK)
+    return docs_root
+
+
+def make_docs_root_no_docs(tmp_path: Path) -> Path:
+    docs_root = tmp_path / "docs"
+    (docs_root / "proj1" / "feat-a").mkdir(parents=True)
+    # feature exists (no docs), needs a tracker to register the feature
+    (docs_root / "proj1" / "features.html").write_text(FEATURES_HTML)
+    return docs_root
+
+
+def _discover_and_get_feature_page(
+    temp_db: Path, docs_root: Path, project: str = "proj1", slug: str = "feat-a"
+):
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        resp = client.get(f"/project/{project}/feature/{slug}")
+    return resp
+
+
+# ---- 404 / 503 ----
+
+
+def test_feature_page_unknown_project_returns_404(temp_db: Path, tmp_path: Path) -> None:
+    docs_root = make_docs_root(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        resp = client.get("/project/no-such/feature/feat-a")
+    assert resp.status_code == 404
+
+
+def test_feature_page_unknown_slug_returns_404(temp_db: Path, tmp_path: Path) -> None:
+    docs_root = make_docs_root(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        resp = client.get("/project/proj1/feature/no-such")
+    assert resp.status_code == 404
+
+
+def test_feature_page_503_when_db_not_configured() -> None:
+    client = TestClient(create_app(db_path=None))
+    resp = client.get("/project/proj1/feature/feat-a")
+    assert resp.status_code == 503
+
+
+# ---- primary docs in type order ----
+
+
+def test_feature_page_primary_docs_render_in_type_order(temp_db: Path, tmp_path: Path) -> None:
+    docs_root = make_docs_root(tmp_path)
+    resp = _discover_and_get_feature_page(temp_db, docs_root)
+    assert resp.status_code == 200
+    # all three primary doc types appear
+    assert "Context" in resp.text
+    assert "Requirements" in resp.text
+    assert "Plan" in resp.text
+    # context appears before requirements, requirements before plan
+    assert resp.text.index("Context") < resp.text.index("Requirements")
+    assert resp.text.index("Requirements") < resp.text.index("Plan")
+
+
+def test_feature_page_primary_doc_links_to_doc(temp_db: Path, tmp_path: Path) -> None:
+    docs_root = make_docs_root(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        from feature_skills_webapp.storage.db import connect
+
+        conn = connect(temp_db)
+        doc_id = conn.execute("SELECT id FROM documents WHERE type='plan' LIMIT 1").fetchone()["id"]
+        conn.close()
+        resp = client.get("/project/proj1/feature/feat-a")
+    assert f'href="/doc/{doc_id}"' in resp.text
+
+
+# ---- feedback section ----
+
+
+def test_feature_page_unanswered_feedback_badged_awaiting(temp_db: Path, tmp_path: Path) -> None:
+    docs_root = make_docs_root_with_feedback(tmp_path)
+    resp = _discover_and_get_feature_page(temp_db, docs_root)
+    assert resp.status_code == 200
+    assert "Awaiting your input" in resp.text
+
+
+def test_feature_page_answered_feedback_not_badged_awaiting(temp_db: Path, tmp_path: Path) -> None:
+    docs_root = make_docs_root_with_feedback(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        from feature_skills_webapp.storage.db import connect
+
+        conn = connect(temp_db)
+        doc_id = conn.execute(
+            "SELECT id FROM documents WHERE type='requirements-feedback' LIMIT 1"
+        ).fetchone()["id"]
+        conn.execute(
+            "INSERT INTO synthesis_responses (document_id, item_num, response, routine_flag, updated_at) "
+            "VALUES (?, 1, 'answer', NULL, '2020-06-01T00:00:00+00:00')",
+            (doc_id,),
+        )
+        conn.commit()
+        conn.close()
+        resp = client.get("/project/proj1/feature/feat-a")
+    assert resp.status_code == 200
+    assert "Awaiting your input" not in resp.text
+
+
+# ---- archived section ----
+
+
+def test_feature_page_archived_in_own_subsection(temp_db: Path, tmp_path: Path) -> None:
+    docs_root = make_docs_root_with_archived(tmp_path)
+    resp = _discover_and_get_feature_page(temp_db, docs_root)
+    assert resp.status_code == 200
+    assert "Archived" in resp.text
+
+
+# ---- no docs ----
+
+
+def test_feature_page_no_docs_renders_empty_hint(temp_db: Path, tmp_path: Path) -> None:
+    docs_root = make_docs_root_no_docs(tmp_path)
+    resp = _discover_and_get_feature_page(temp_db, docs_root)
+    assert resp.status_code == 200
+    assert "No documents yet" in resp.text

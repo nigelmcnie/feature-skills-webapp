@@ -583,3 +583,31 @@ def test_comment_button_not_shown_for_archived_doc(temp_db: Path, tmp_path: Path
         response = client.get(f"/doc/{row['id']}")
     assert response.status_code == 200
     assert 'id="comment-submit-btn"' not in response.text
+
+
+# ---- feature breadcrumb href (Phase 3) ----
+
+
+def test_feature_crumb_carries_feature_page_href(temp_db: Path, tmp_path: Path) -> None:
+    docs_root = make_docs_root(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        doc_id = _doc_id_by_type(temp_db, "plan")
+        response = client.get(f"/doc/{doc_id}")
+    assert response.status_code == 200
+    assert 'href="/project/proj1/feature/feat-a"' in response.text
+
+
+def test_tracker_doc_crumb_has_no_feature_href(temp_db: Path, tmp_path: Path) -> None:
+    """The tracker (project-level) doc has no feature crumb, so no feature-page href."""
+    docs_root = make_docs_root_with_tracker(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        from feature_skills_webapp.storage.db import connect
+
+        conn = connect(temp_db)
+        row = conn.execute("SELECT id FROM documents WHERE type='features' LIMIT 1").fetchone()
+        conn.close()
+        response = client.get(f"/doc/{row['id']}")
+    assert response.status_code == 200
+    assert "/project/proj1/feature/" not in response.text
