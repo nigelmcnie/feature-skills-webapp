@@ -4,12 +4,12 @@
 
 | Feature | Owner | Notes |
 |---|---|---|
+| [extra-pages](docs/features/extra-pages/context.md) | Nigel | Inbox/navigation gaps: bulk "mark all read" on the New-since-last-visit feed, a per-feature page (all docs for a feature) and a per-project page (features in a project) with sensible inbox links, and visually differentiated doc-type badges. |
 
 ## Available
 
 | Feature | Notes |
 |---|---|
-| [extra-pages](docs/features/extra-pages/context.md) | Inbox/navigation gaps: bulk "mark all read" on the New-since-last-visit feed, a per-feature page (all docs for a feature) and a per-project page (features in a project) with sensible inbox links, and visually differentiated doc-type badges. |
 
 ## Suggested order
 
