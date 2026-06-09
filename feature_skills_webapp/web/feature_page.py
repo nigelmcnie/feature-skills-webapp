@@ -5,13 +5,14 @@ import sqlite3
 from starlette.requests import Request
 from starlette.responses import JSONResponse, PlainTextResponse, Response
 
-from feature_skills_webapp.storage.inbox import DOC_TYPE_ORDER, badge_kind, humanise_type
+from feature_skills_webapp.storage.inbox import (
+    DOC_TYPE_ORDER,
+    badge_kind,
+    doc_type_rank,
+    humanise_type,
+)
 from feature_skills_webapp.storage.walker import FEEDBACK_SUFFIX
 from feature_skills_webapp.web.db_dep import request_conn
-
-
-def _rank(t: str) -> int:
-    return DOC_TYPE_ORDER.index(t) if t in DOC_TYPE_ORDER else len(DOC_TYPE_ORDER)
 
 
 async def feature_page(request: Request) -> Response:
@@ -39,7 +40,7 @@ async def feature_page(request: Request) -> Response:
 
     primary = sorted(
         [d for d in docs if d["status"] == "active" and d["type"] in DOC_TYPE_ORDER],
-        key=lambda d: (_rank(d["type"]), d["id"]),
+        key=lambda d: (doc_type_rank(d["type"]), d["id"]),
     )
     feedback = sorted(
         [d for d in docs if d["status"] == "active" and d["type"].endswith(FEEDBACK_SUFFIX)],
@@ -47,7 +48,7 @@ async def feature_page(request: Request) -> Response:
     )
     archived = sorted(
         [d for d in docs if d["status"] == "archived"],
-        key=lambda d: (_rank(d["type"]), d["id"]),
+        key=lambda d: (doc_type_rank(d["type"]), d["id"]),
     )
 
     def _ctx(d: sqlite3.Row) -> dict[str, object]:

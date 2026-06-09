@@ -37,6 +37,11 @@ def badge_kind(doc_type: str | None) -> str:
     return doc_type
 
 
+def doc_type_rank(doc_type: str) -> int:
+    """Sort key placing known doc types in DOC_TYPE_ORDER, unknowns last."""
+    return DOC_TYPE_ORDER.index(doc_type) if doc_type in DOC_TYPE_ORDER else len(DOC_TYPE_ORDER)
+
+
 @dataclass(frozen=True)
 class InboxCard:
     project: str

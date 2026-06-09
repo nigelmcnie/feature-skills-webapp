@@ -197,3 +197,21 @@ def test_feature_page_no_docs_renders_empty_hint(temp_db: Path, tmp_path: Path) 
     resp = _discover_and_get_feature_page(temp_db, docs_root)
     assert resp.status_code == 200
     assert "No documents yet" in resp.text
+
+
+# ---- read-state is not stamped by the feature page ----
+
+
+def test_feature_page_does_not_stamp_read_state(temp_db: Path, tmp_path: Path) -> None:
+    """Listing a feature's docs must not mark them read — only opening /doc/{id} does."""
+    docs_root = make_docs_root(tmp_path)
+    from feature_skills_webapp.storage.db import connect
+
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        resp = client.get("/project/proj1/feature/feat-a")
+        assert resp.status_code == 200
+        conn = connect(temp_db)
+        count = conn.execute("SELECT COUNT(*) AS n FROM read_state").fetchone()["n"]
+        conn.close()
+    assert count == 0

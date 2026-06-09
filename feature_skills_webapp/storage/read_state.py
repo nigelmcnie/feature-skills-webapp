@@ -33,6 +33,8 @@ def mark_all_read(conn: sqlite3.Connection, project_id: int) -> int:
 
 
 def mark_documents_read(conn: sqlite3.Connection, document_ids: list[int]) -> int:
+    if not document_ids:
+        return 0
     now = now_iso()
     with transaction(conn):
         for doc_id in document_ids:

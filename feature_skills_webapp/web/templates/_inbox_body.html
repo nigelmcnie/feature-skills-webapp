@@ -30,16 +30,10 @@
           <a class="card-project" href="/project/{{ card.project | urlencode }}"
              aria-label="{{ card.project }}">{{ card.project }}</a>
           {% if card.feature %}
-          <a class="card-feature" href="/project/{{ card.project | urlencode }}/feature/{{ card.feature | urlencode }}"
-             aria-label="{{ card.feature }}">{{ card.feature }}</a>
+          <a class="card-feature" href="/doc/{{ card.document_id }}"
+             aria-label="Open {{ card.feature }} {{ card.label }}">{{ card.feature }}</a>
           {% endif %}
-          {% if card.document_id %}
-          <a href="/doc/{{ card.document_id }}" aria-label="Open {{ card.feature }} {{ card.label }}">
-            <span class="card-label badge-{{ card.badge }}">{{ card.label }}</span>
-          </a>
-          {% else %}
           <span class="card-label badge-{{ card.badge }}">{{ card.label }}</span>
-          {% endif %}
           {% if card.last_activity %}<span class="card-time">{{ card.last_activity[:10] }}</span>{% endif %}
         </li>
         {% endfor %}
@@ -56,16 +50,10 @@
           <a class="card-project" href="/project/{{ card.project | urlencode }}"
              aria-label="{{ card.project }}">{{ card.project }}</a>
           {% if card.feature %}
-          <a class="card-feature" href="/project/{{ card.project | urlencode }}/feature/{{ card.feature | urlencode }}"
-             aria-label="{{ card.feature }}">{{ card.feature }}</a>
+          <a class="card-feature" href="/doc/{{ card.document_id }}"
+             aria-label="Open {{ card.feature }} {{ card.label }}">{{ card.feature }}</a>
           {% endif %}
-          {% if card.document_id %}
-          <a href="/doc/{{ card.document_id }}" aria-label="Open {{ card.feature }} {{ card.label }}">
-            <span class="card-label badge-{{ card.badge }}">{{ card.label }}</span>
-          </a>
-          {% else %}
           <span class="card-label badge-{{ card.badge }}">{{ card.label }}</span>
-          {% endif %}
           {% if card.last_activity %}<span class="card-time">{{ card.last_activity[:10] }}</span>{% endif %}
         </li>
         {% endfor %}

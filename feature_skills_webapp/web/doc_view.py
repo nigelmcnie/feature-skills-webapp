@@ -7,7 +7,7 @@ from urllib.parse import quote
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 
-from feature_skills_webapp.storage.inbox import DOC_TYPE_ORDER, humanise_type
+from feature_skills_webapp.storage.inbox import doc_type_rank, humanise_type
 from feature_skills_webapp.storage.read_state import mark_read
 from feature_skills_webapp.storage.walker import FEEDBACK_SUFFIX
 from feature_skills_webapp.web.db_dep import request_conn
@@ -24,7 +24,7 @@ ROW_SQL = (
 
 def breadcrumbs(row: sqlite3.Row) -> list[tuple[str, str | None]]:
     project_href = f"/project/{quote(row['project'], safe='')}"
-    crumbs: list[tuple[str, str | None]] = [(row["project"], project_href)]
+    crumbs: list[tuple[str, str | None]] = [("Home", "/"), (row["project"], project_href)]
     if row["feature"] is None:  # project-level tracker doc
         crumbs.append((humanise_type("features"), None))
         return crumbs
@@ -37,10 +37,6 @@ def breadcrumbs(row: sqlite3.Row) -> list[tuple[str, str | None]]:
     return crumbs
 
 
-def _rank(t: str) -> int:
-    return DOC_TYPE_ORDER.index(t) if t in DOC_TYPE_ORDER else len(DOC_TYPE_ORDER)
-
-
 def siblings(
     conn: sqlite3.Connection, feature_id: int, current_id: int
 ) -> tuple[sqlite3.Row | None, sqlite3.Row | None]:
@@ -48,7 +44,7 @@ def siblings(
         "SELECT id, type FROM documents WHERE feature_id = ? AND status = 'active' AND type NOT LIKE ?",
         (feature_id, f"%{FEEDBACK_SUFFIX}"),
     ).fetchall()
-    ordered = sorted(rows, key=lambda r: (_rank(r["type"]), r["id"]))
+    ordered = sorted(rows, key=lambda r: (doc_type_rank(r["type"]), r["id"]))
     ids = [r["id"] for r in ordered]
     if current_id not in ids:
         return None, None

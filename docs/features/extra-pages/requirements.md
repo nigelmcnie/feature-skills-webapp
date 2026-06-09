@@ -148,3 +148,13 @@ Plan-level pointers, not binding:
 - **Round 1:** Badges differentiate by colour *and* label (never colour alone), with a committed type→colour mapping, for colour-blind legibility.
 - **Round 1:** Unknown project/feature names 404; feedback docs grouped (not interleaved) on the feature page; the null-feature tracker doc surfaces on the project page only.
 - **Out of scope (round 1):** unread-count indicators on project/feature links — a natural adjacent win, deferred.
+
+## Review decisions
+
+### Round 1 (post-merge review)
+
+- **User:** Inbox "New since last visit" / "Awaiting your input" cards now link the feature name to the *document*, not the feature page — these are per-document lists, so the row should open the doc (regression from the card restructure). Per-feature sections ("In progress" / "Recently shipped") keep feature name → feature page. The feature page stays reachable via the doc's breadcrumb.
+- **User:** Added a linked breadcrumb root across the doc view, feature page and project page — labelled **"Home"** (the inbox is what you're looking at on the Home page), not "Inbox". Resolves the no-way-back-to-inbox gap on the project page and doc view, and links the feature page's own project crumb.
+- Deduplicated `_rank`: promoted to `storage/inbox.py` as `doc_type_rank`, imported by `doc_view.py` and `feature_page.py`.
+- Added a regression test that the feature and project pages don't stamp read-state (only opening a doc does).
+- Added an empty-list early-return to `mark_documents_read`; dropped the unused `notes` field from the project-page context.

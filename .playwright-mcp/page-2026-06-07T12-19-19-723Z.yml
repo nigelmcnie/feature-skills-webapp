@@ -1,0 +1,50 @@
+- generic [ref=e2]:
+  - banner [ref=e3]:
+    - heading "Inbox" [level=1] [ref=e4]
+    - paragraph [ref=e5]: Cross-project feature activity
+  - generic [ref=e6]:
+    - navigation "Project filter" [ref=e7]:
+      - link "All" [ref=e8] [cursor=pointer]:
+        - /url: /
+      - link "feature-skills-webapp" [ref=e9] [cursor=pointer]:
+        - /url: /?project=feature-skills-webapp
+      - link "kea" [ref=e10] [cursor=pointer]:
+        - /url: /?project=kea
+      - link "planning" [ref=e11] [cursor=pointer]:
+        - /url: /?project=planning
+    - generic [ref=e12]:
+      - heading "In progress" [level=2] [ref=e13]
+      - list [ref=e14]:
+        - listitem [ref=e15]:
+          - generic [ref=e16]: kea
+          - generic [ref=e17]: compile-record
+          - generic [ref=e18]: In progress
+          - generic [ref=e19]: 2026-06-07
+    - generic [ref=e20]:
+      - heading "Recently shipped" [level=2] [ref=e21]
+      - list [ref=e22]:
+        - listitem [ref=e23]:
+          - generic [ref=e24]: feature-skills-webapp
+          - generic [ref=e25]: sse-refresh
+          - generic [ref=e26]: Shipped
+          - generic [ref=e27]: 2026-06-07
+        - listitem [ref=e28]:
+          - generic [ref=e29]: kea
+          - generic [ref=e30]: segment-disposition-capture
+          - generic [ref=e31]: Shipped
+          - generic [ref=e32]: 2026-06-07
+        - listitem [ref=e33]:
+          - generic [ref=e34]: feature-skills-webapp
+          - generic [ref=e35]: doc-view
+          - generic [ref=e36]: Shipped
+          - generic [ref=e37]: 2026-06-06
+        - listitem [ref=e38]:
+          - generic [ref=e39]: kea
+          - generic [ref=e40]: honest-placeholder-completeness
+          - generic [ref=e41]: Shipped
+          - generic [ref=e42]: 2026-06-06
+        - listitem [ref=e43]:
+          - generic [ref=e44]: feature-skills-webapp
+          - generic [ref=e45]: inbox-view
+          - generic [ref=e46]: Shipped
+          - generic [ref=e47]: 2026-06-06

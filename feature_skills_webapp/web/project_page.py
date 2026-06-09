@@ -18,7 +18,7 @@ async def project_page(request: Request) -> Response:
         if proj is None:
             return PlainTextResponse("Not found", status_code=404)
         feats = conn.execute(
-            "SELECT f.slug, f.status, f.owner, f.notes, "
+            "SELECT f.slug, f.status, f.owner, "
             "  (SELECT MAX(e.created_at) FROM events e "
             "   JOIN documents d ON e.document_id = d.id "
             "   WHERE d.feature_id = f.id AND d.status = 'active') AS last_activity "
@@ -39,7 +39,6 @@ async def project_page(request: Request) -> Response:
         return {
             "slug": f["slug"],
             "owner": f["owner"],
-            "notes": f["notes"],
             "last_activity": f["last_activity"],
         }
 

@@ -211,3 +211,21 @@ def test_project_page_no_tracker_doc_no_tracker_link(temp_db: Path, tmp_path: Pa
         resp = client.get("/project/proj1")
     assert resp.status_code == 200
     assert "feature tracker" not in resp.text
+
+
+# ---- read-state is not stamped by the project page ----
+
+
+def test_project_page_does_not_stamp_read_state(temp_db: Path, tmp_path: Path) -> None:
+    """Listing a project's features must not mark any doc read."""
+    docs_root = make_docs_root_with_tracker(tmp_path)
+    from feature_skills_webapp.storage.db import connect
+
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        resp = client.get("/project/proj1")
+        assert resp.status_code == 200
+        conn = connect(temp_db)
+        count = conn.execute("SELECT COUNT(*) AS n FROM read_state").fetchone()["n"]
+        conn.close()
+    assert count == 0
