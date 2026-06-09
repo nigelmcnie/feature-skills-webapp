@@ -437,6 +437,54 @@ def test_index_awaiting_input_project_filter(temp_db: Path, tmp_path: Path) -> N
     assert "Awaiting your input" not in resp_p2.text
 
 
+# --- POST /admin/mark-read (Phase 2 — mark new since read) ---
+
+
+def test_admin_mark_new_since_read_stamps_all(temp_db: Path, tmp_path: Path) -> None:
+    docs_root = make_docs_root(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        response = client.post("/admin/mark-read")
+    assert response.status_code == 200
+    assert "stamped" in response.json()
+    assert isinstance(response.json()["stamped"], int)
+
+
+def test_admin_mark_new_since_read_scoped_by_project(temp_db: Path, tmp_path: Path) -> None:
+    docs_root = make_two_project_docs_root(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        resp = client.post("/admin/mark-read?project=proj1")
+    assert resp.status_code == 200
+    assert isinstance(resp.json()["stamped"], int)
+
+
+def test_admin_mark_new_since_read_unknown_project_404(temp_db: Path, tmp_path: Path) -> None:
+    docs_root = make_docs_root(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        resp = client.post("/admin/mark-read?project=no-such")
+    assert resp.status_code == 404
+    assert resp.json()["error"] == "unknown project"
+
+
+def test_admin_mark_new_since_read_503_when_db_not_configured() -> None:
+    client = TestClient(create_app(db_path=None))
+    resp = client.post("/admin/mark-read")
+    assert resp.status_code == 503
+    assert resp.json()["error"] == "db not configured"
+
+
+def test_admin_mark_new_since_read_clears_new_since(temp_db: Path, tmp_path: Path) -> None:
+    docs_root = make_docs_root(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        before = client.get("/")
+        assert "New since last visit" in before.text
+        client.post("/admin/mark-read")
+        after = client.get("/")
+    assert "New since last visit" not in after.text
+
+
 # --- badge CSS classes (Phase 1 — doc-type badges) ---
 
 

@@ -42,7 +42,7 @@
 
     {% if inbox.new_since %}
     <section class="category">
-      <h2>New since last visit</h2>
+      <h2>New since last visit <button class="mark-read-btn" type="button">Mark all read</button></h2>
       <ul class="card-list">
         {% for card in inbox.new_since %}
         {% if card.document_id %}

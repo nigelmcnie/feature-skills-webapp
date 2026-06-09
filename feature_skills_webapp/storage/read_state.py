@@ -32,6 +32,18 @@ def mark_all_read(conn: sqlite3.Connection, project_id: int) -> int:
     return len(rows)
 
 
+def mark_documents_read(conn: sqlite3.Connection, document_ids: list[int]) -> int:
+    now = now_iso()
+    with transaction(conn):
+        for doc_id in document_ids:
+            conn.execute(
+                "INSERT INTO read_state (document_id, last_read_at) VALUES (?, ?) "
+                "ON CONFLICT(document_id) DO UPDATE SET last_read_at = excluded.last_read_at",
+                (doc_id, now),
+            )
+    return len(document_ids)
+
+
 def unread_document_ids(conn: sqlite3.Connection, project_id: int | None = None) -> list[int]:
     sql = (
         "SELECT d.id FROM documents d "
