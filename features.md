@@ -10,6 +10,7 @@
 | Feature | Notes |
 |---|---|
 | [versioned-content-store](docs/features/versioned-content-store/context.md) | Move structured doc content into the DB, versioned, via a re-runnable importer — the foundation (F1) for diffable docs and a flagged inbox. |
+| [server-rendered-docs](docs/features/server-rendered-docs/context.md) | Render docs from the DB and drop the iframe (F2, needs F1) — re-homes comments & synthesis as native UI instead of scraping the frame. |
 
 ## Suggested order
 
