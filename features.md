@@ -9,6 +9,7 @@
 
 | Feature | Notes |
 |---|---|
+| [versioned-content-store](docs/features/versioned-content-store/context.md) | Move structured doc content into the DB, versioned, via a re-runnable importer — the foundation (F1) for diffable docs and a flagged inbox. |
 
 ## Suggested order
 
