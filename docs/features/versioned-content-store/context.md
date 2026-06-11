@@ -36,6 +36,8 @@ The shape mirrors how `read-state` shipped: plumbing in place and proven before 
 
 **feature-skills does not change in F1.** This is a webapp-only feature. The skills keep writing files to the dev-store exactly as they do; the importer ingests them. Switching the skills to submit content directly (via MCP) is a later cutover feature, and is what eventually lets the dev-store be deleted, with per-repo exports as optional outputs.
 
+**Design for cross-agent direct writes — without building them yet.** A parallel goal has emerged: make this workflow usable from Codex as well as Claude (see the cross-agent plan in Links). The eventual integration point is a later feature (agents submit structured updates through an API/MCP instead of writing files), but F1 should make the cheap, additive schema decisions now that *don't foreclose* it. The load-bearing one: **decouple document identity from `source_path`**. Today a document's identity effectively *is* its path — the unique index is on `source_path` — which is the deepest `~/.claude`-coupling in the schema and the thing that makes any non-file writer impossible. F1 should give documents a stable **logical identity** (the importer derives it from the path; a future API supplies it directly — same key both ways, so import-from-file and submit-via-API converge on the same row and the cutover stays clean), make `source_path` a derived/optional input with the unique index moved to the logical key, and record the originating **agent/actor** in the change metadata (the same "why did it change" channel, now also "which agent"). Note this also removes the file-watcher-timing fragility entirely: an explicit write *is* the event, with no walk to wait on.
+
 **Test discipline is inherited.** No-network (`pytest-socket`), xdist with a per-worker DB, exercise against a temp DB and the `transaction()` helper, per existing storage conventions.
 
 ## Links
@@ -46,6 +48,7 @@ The shape mirrors how `read-state` shipped: plumbing in place and proven before 
 - Current rendering: `feature_skills_webapp/web/doc_view.py` (note the unused `content_html` seam from migration 0002).
 - Inbox consumer: `feature_skills_webapp/storage/inbox.py`
 - Precedent: [read-state context](../read-state/context.html) — plumbing-before-consumer.
+- Cross-agent plan: [codex/plan.md](file:///home/nigel/codex/plan.md) — Codex's analysis of the F1/F2 migration as the path to dual Claude+Codex use.
 
 ## Open questions
 
@@ -54,3 +57,4 @@ The shape mirrors how `read-state` shipped: plumbing in place and proven before 
 3. **What "content equality" means for the no-op check.** Byte-equality of the serialised sections, or a normalised compare (whitespace, attribute order)? Too strict and trivial reflows cut noisy versions; too loose and real edits get swallowed.
 4. **Tracker manifest.** The tracker's body is a table of rows, not prose sections. Does it ride the generic model as a single opaque-body "section", or get a small bespoke manifest? Confirm the dual representation (versioned opaque content + extracted rows) stays clean either way.
 5. **Does the importer fully supersede the walk, or run alongside it?** During F1 the iframe still renders from disk, so both the old metadata path and the new content/version path may need to coexist. Decide whether F1 rewires the existing walk in place or adds the versioning as a second pass over the same scan.
+6. **How is logical document identity represented?** A composite of existing columns (`project`, `feature`, `type`) vs a single logical-id string — note the templates already carry a convention, `const docId = 'docs/features/<feature>/context'`. Either way, feedback docs break the singleton assumption: they're `<phase>-feedback-<N>`, multiple per phase, filename-typed with no meta tag, so they need an instance discriminator in the key. This is the decision that makes a future Codex/API writer possible, so it's worth getting right in F1 even though F1 itself only writes via the importer.
