@@ -15,6 +15,7 @@ EXPECTED_TABLES = {
     "projects",
     "features",
     "documents",
+    "document_versions",
     "read_state",
     "synthesis_responses",
     "comments",
@@ -37,10 +38,10 @@ def test_connect_foreign_keys(tmp_path: Path) -> None:
     conn.close()
 
 
-def test_migrate_fresh_returns_version_2(tmp_path: Path) -> None:
+def test_migrate_fresh_returns_version_3(tmp_path: Path) -> None:
     conn = connect(tmp_path / "test.db")
     version = migrate(conn)
-    assert version == 2
+    assert version == 3
     conn.close()
 
 
@@ -52,7 +53,7 @@ def test_migrate_idempotent(tmp_path: Path) -> None:
 
     conn = connect(db)
     version = migrate(conn)
-    assert version == 2
+    assert version == 3
     conn.close()
 
 
@@ -60,7 +61,7 @@ def test_schema_version_after_migrate(tmp_path: Path) -> None:
     conn = connect(tmp_path / "test.db")
     migrate(conn)
     v = current_version(conn)
-    assert v == 2
+    assert v == 3
     conn.close()
 
 
@@ -232,9 +233,9 @@ def test_migrate_v1_to_v2_upgrade_path(tmp_path: Path) -> None:
     assert "status" not in cols_v1
     assert "project_id" not in cols_v1
 
-    # Run the real migration set: upgrades 1 -> 2 in place.
-    assert migrate(conn) == 2
-    assert current_version(conn) == 2
+    # Run the real migration set: upgrades 1 -> 3 in place.
+    assert migrate(conn) == 3
+    assert current_version(conn) == 3
     cols_v2 = {r["name"] for r in conn.execute("PRAGMA table_info(documents)").fetchall()}
     assert "status" in cols_v2
     assert "project_id" in cols_v2

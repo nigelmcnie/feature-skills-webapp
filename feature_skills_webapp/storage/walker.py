@@ -13,17 +13,30 @@ from html.parser import HTMLParser
 from pathlib import Path
 
 from feature_skills_webapp.storage.db import now_iso, transaction
+from feature_skills_webapp.storage.doc_content import manifest_for, parse_content, serialise
+from feature_skills_webapp.storage.versions import current_content, record_version
 
 log = logging.getLogger(__name__)
 
 FEEDBACK_SUFFIX = "-feedback"
-_FEEDBACK_RE = re.compile(r"^(?P<phase>[a-z]+)-feedback-\d+$")
+_FEEDBACK_RE = re.compile(r"^(?P<phase>[a-z]+)-feedback-(?P<num>\d+)$")
 
 
 def feedback_type(rel_path: Path) -> str | None:
     """Synthetic doc type for a feedback doc, e.g. 'requirements-feedback'. None if not one."""
     m = _FEEDBACK_RE.match(rel_path.stem)
     return f"{m.group('phase')}{FEEDBACK_SUFFIX}" if m else None
+
+
+def feedback_instance(rel_path: Path) -> int:
+    """Return the instance N from a feedback filename (e.g. 2 from requirements-feedback-2.html)."""
+    m = _FEEDBACK_RE.match(rel_path.stem)
+    return int(m.group("num")) if m else 1
+
+
+def logical_key(project: str, feature: str | None, doc_type: str, instance: int) -> str:
+    """Canonical stable identity key for a document: '{project}/{feature or '-'}/{doc_type}/{instance}'."""
+    return f"{project}/{feature or '-'}/{doc_type}/{instance}"
 
 
 @dataclass(frozen=True)
@@ -48,6 +61,7 @@ class WalkSummary:
     reactivated: int = 0
     shipped: int = 0
     errors: int = 0
+    unparsed: int = 0
     duration_ms: int = 0
 
     @property
@@ -286,22 +300,43 @@ def _process_file(
         return
 
     source_path = str(abs_path)
+    mtime = datetime.fromtimestamp(st.st_mtime, tz=UTC).isoformat()
+
+    # Derive doc_type hint and instance from path for the logical_key lookup.
+    # The meta tag (read below) confirms the stored type; path derivation is consistent
+    # for all well-formed docs and avoids reading the file just to do the lookup.
+    ft = feedback_type(rel_path)
+    doc_type_hint = ft if ft is not None else rel_path.stem
+    instance = feedback_instance(rel_path) if ft is not None else 1
+    lkey = logical_key(identity.project, identity.feature, doc_type_hint, instance)
+
     row = conn.execute(
-        "SELECT id, status, source_mtime, metadata_json FROM documents WHERE source_path=?",
-        (source_path,),
+        "SELECT id, status, source_path, source_mtime, metadata_json "
+        "FROM documents WHERE logical_key=?",
+        (lkey,),
     ).fetchone()
 
-    mtime = datetime.fromtimestamp(st.st_mtime, tz=UTC).isoformat()
     cached_size = json.loads(row["metadata_json"] or "{}").get("size") if row else None
 
-    # Gate: skip read+write if unchanged
-    if (
-        row
-        and row["status"] != "missing"
-        and row["source_mtime"] == mtime
-        and cached_size == st.st_size
-    ):
-        return
+    # Gate: skip file read when status is not 'missing', mtime+size unchanged, and a
+    # version already exists. Still update source_path/status if the file moved.
+    cur = None
+    if row:
+        cur = current_content(conn, row["id"])
+        need_read = (
+            row["status"] == "missing"
+            or row["source_mtime"] != mtime
+            or cached_size != st.st_size
+            or cur is None
+        )
+        if not need_read:
+            desired = "archived" if identity.archived else "active"
+            if row["source_path"] != source_path or row["status"] != desired:
+                conn.execute(
+                    "UPDATE documents SET source_path=?, status=?, updated_at=? WHERE id=?",
+                    (source_path, desired, now, row["id"]),
+                )
+            return
 
     # Read the file once here and reuse the text for both the meta parse and (for
     # features.html) the tracker parse, rather than reading it twice.
@@ -314,12 +349,18 @@ def _process_file(
 
     mp = _MetaParser()
     mp.feed(html_content)
-    doc_type = mp.doc_type or feedback_type(rel_path)
+    doc_type = mp.doc_type or ft
     if doc_type is None:
         log.debug("Skipping %s: no meta tag and not a feedback doc", abs_path)
         summary.errors += 1
         return
     parsed = ParsedDoc(doc_type=doc_type, title=mp.title)
+
+    # Parse structured content for versioning.
+    content = parse_content(html_content, manifest_for(doc_type))
+    if content.shape == "sections" and not content.sections:
+        log.warning("Section-parse failure (no main/zero sections): %s", abs_path)
+        summary.unparsed += 1
 
     project_id = _upsert_project(conn, identity.project, now)
     feature_id = (
@@ -333,15 +374,28 @@ def _process_file(
     )
 
     if row is None:
-        conn.execute(
+        cursor = conn.execute(
             "INSERT INTO documents "
-            "(project_id, feature_id, type, status, source_path, metadata_json, source_mtime, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (project_id, feature_id, parsed.doc_type, desired, source_path, meta, mtime, now, now),
+            "(project_id, feature_id, type, status, source_path, logical_key, instance, "
+            "metadata_json, source_mtime, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                project_id,
+                feature_id,
+                parsed.doc_type,
+                desired,
+                source_path,
+                lkey,
+                instance,
+                meta,
+                mtime,
+                now,
+                now,
+            ),
         )
-        doc_id = conn.execute(
-            "SELECT id FROM documents WHERE source_path=?", (source_path,)
-        ).fetchone()["id"]
+        doc_id = cursor.lastrowid
+        assert doc_id is not None
+        record_version(conn, doc_id, content, actor="importer", now=now)
         conn.execute(
             "INSERT INTO events (document_id, event_type, payload_json, created_at) "
             "VALUES (?, 'created', ?, ?)",
@@ -350,29 +404,49 @@ def _process_file(
         summary.created += 1
     else:
         doc_id = row["id"]
+        old_status = row["status"]
         conn.execute(
             "UPDATE documents SET project_id=?, feature_id=?, type=?, status=?, "
-            "metadata_json=?, source_mtime=?, updated_at=? WHERE id=?",
-            (project_id, feature_id, parsed.doc_type, desired, meta, mtime, now, doc_id),
+            "source_path=?, logical_key=?, instance=?, metadata_json=?, source_mtime=?, "
+            "updated_at=? WHERE id=?",
+            (
+                project_id,
+                feature_id,
+                parsed.doc_type,
+                desired,
+                source_path,
+                lkey,
+                instance,
+                meta,
+                mtime,
+                now,
+                doc_id,
+            ),
         )
-        # Precedence note: a doc returning from 'missing' is reported as 'reactivated'
-        # even if it reappears under .feedback-archive/ — reactivation wins over
-        # archival. Its status is still set to 'archived' (via `desired`) above.
-        old_status = row["status"]
-        if old_status == "missing":
-            event_type = "reactivated"
-            summary.reactivated += 1
-        elif desired == "archived" and old_status != "archived":
-            event_type = "archived"
-            summary.archived += 1
-        else:
-            event_type = "updated"
-            summary.updated += 1
-        conn.execute(
-            "INSERT INTO events (document_id, event_type, payload_json, created_at) "
-            "VALUES (?, ?, ?, ?)",
-            (doc_id, event_type, payload, now),
-        )
+
+        if cur is None:
+            # Seed the first version silently — no event, no summary counter.
+            record_version(conn, doc_id, content, actor="importer", now=now)
+        elif serialise(cur) != serialise(content):
+            # Content changed: record the new version and emit the appropriate event.
+            # Precedence: reactivation wins over archival (a doc returning from 'missing'
+            # is reported as 'reactivated' even if it reappears under .feedback-archive/).
+            record_version(conn, doc_id, content, actor="importer", now=now)
+            if old_status == "missing":
+                event_type = "reactivated"
+                summary.reactivated += 1
+            elif desired == "archived" and old_status != "archived":
+                event_type = "archived"
+                summary.archived += 1
+            else:
+                event_type = "updated"
+                summary.updated += 1
+            conn.execute(
+                "INSERT INTO events (document_id, event_type, payload_json, created_at) "
+                "VALUES (?, ?, ?, ?)",
+                (doc_id, event_type, payload, now),
+            )
+        # else: content identical — metadata already updated, no version or event.
 
     # For project-level features.html docs, parse the tracker (reusing html_content)
     # and upsert feature metadata. Guarded so a tracker mishap can't abort the walk.

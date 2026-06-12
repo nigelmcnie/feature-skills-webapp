@@ -9,11 +9,14 @@ from pathlib import Path
 
 from feature_skills_webapp.storage.db import connect, migrate
 from feature_skills_webapp.storage.inbox import humanise_type
+from feature_skills_webapp.storage.versions import backfill_logical_keys, current_content
 from feature_skills_webapp.storage.walker import (
     DocIdentity,
     ParsedDoc,
+    feedback_instance,
     feedback_type,
     identity_for,
+    logical_key,
     parse_doc,
     parse_tracker,
     walk,
@@ -27,7 +30,11 @@ HTML_TEMPLATE = """\
 <meta name="feature-doc-type" content="{doc_type}">
 <title>{title}</title>
 </head>
-<body><p>content</p></body>
+<body>
+<main class="document">
+<section id="content"><p>{title}</p></section>
+</main>
+</body>
 </html>
 """
 
@@ -45,6 +52,7 @@ def temp_conn(tmp_path: Path) -> sqlite3.Connection:
     db = tmp_path / "test.db"
     conn = connect(db)
     migrate(conn)
+    backfill_logical_keys(conn)
     return conn
 
 
@@ -858,3 +866,335 @@ def test_typeless_non_feedback_doc_still_skipped(tmp_path: Path):
 def test_humanise_type_feedback():
     assert humanise_type("requirements-feedback") == "Requirements feedback"
     assert humanise_type("plan-feedback") == "Plan feedback"
+
+
+# --- feedback_instance and logical_key helpers ---
+
+
+def test_feedback_instance_returns_n():
+    assert feedback_instance(Path("proj/feat/requirements-feedback-1.html")) == 1
+    assert feedback_instance(Path("proj/feat/plan-feedback-2.html")) == 2
+    assert feedback_instance(Path("proj/feat/requirements-feedback-10.html")) == 10
+
+
+def test_feedback_instance_non_feedback_returns_1():
+    assert feedback_instance(Path("proj/feat/requirements.html")) == 1
+    assert feedback_instance(Path("proj/feat/context.html")) == 1
+
+
+def test_logical_key_feature_doc():
+    assert logical_key("proj", "feat", "context", 1) == "proj/feat/context/1"
+
+
+def test_logical_key_project_level():
+    assert logical_key("proj", None, "features", 1) == "proj/-/features/1"
+
+
+def test_logical_key_feedback():
+    assert (
+        logical_key("proj", "feat", "requirements-feedback", 2)
+        == "proj/feat/requirements-feedback/2"
+    )
+
+
+# --- Phase 2: versioning ---
+
+HTML_WITH_MAIN = """\
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="feature-doc-type" content="{doc_type}">
+<title>{title}</title>
+</head>
+<body>
+<main class="document">
+<section id="content"><p>{body}</p></section>
+</main>
+</body>
+</html>
+"""
+
+HTML_NO_MAIN = """\
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="feature-doc-type" content="context">
+<title>No main</title>
+</head>
+<body><p>content but no main</p></body>
+</html>
+"""
+
+
+def make_section_html(doc_type: str, body: str) -> str:
+    return HTML_WITH_MAIN.format(doc_type=doc_type, title="Title", body=body)
+
+
+def test_fresh_walk_seeds_v1_silently(tmp_path: Path):
+    """First walk records v1 for each doc; no 'updated' events, only 'created'."""
+    docs_root = tmp_path / "docs"
+    _make_tree(docs_root)
+    conn = temp_conn(tmp_path)
+
+    summary = walk(conn, docs_root, reconcile=False)
+
+    assert summary.created == 3
+    assert summary.updated == 0
+
+    # Each doc should have exactly one version
+    doc_ids = [r["id"] for r in conn.execute("SELECT id FROM documents").fetchall()]
+    for doc_id in doc_ids:
+        ver_count = conn.execute(
+            "SELECT COUNT(*) AS n FROM document_versions WHERE document_id=?", (doc_id,)
+        ).fetchone()["n"]
+        assert ver_count == 1
+
+    # Only 'created' events (no extra events for the seed)
+    event_types = {
+        r["event_type"] for r in conn.execute("SELECT event_type FROM events").fetchall()
+    }
+    assert event_types == {"created"}
+
+
+def test_identical_resave_cuts_no_version(tmp_path: Path):
+    """Re-walking an unchanged file cuts no new version and emits no event."""
+    docs_root = tmp_path / "docs"
+    _make_tree(docs_root)
+    conn = temp_conn(tmp_path)
+
+    walk(conn, docs_root, reconcile=False)
+    event_count_before = conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
+    ver_count_before = conn.execute("SELECT COUNT(*) AS n FROM document_versions").fetchone()["n"]
+
+    walk(conn, docs_root, reconcile=False)
+
+    assert conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"] == event_count_before
+    assert (
+        conn.execute("SELECT COUNT(*) AS n FROM document_versions").fetchone()["n"]
+        == ver_count_before
+    )
+
+
+def test_changed_content_cuts_new_version(tmp_path: Path):
+    """Modifying a file produces exactly one new version and one updated event."""
+    docs_root = tmp_path / "docs"
+    _make_tree(docs_root)
+    conn = temp_conn(tmp_path)
+
+    walk(conn, docs_root, reconcile=False)
+
+    target = docs_root / "proj1" / "feat-a" / "context.html"
+    time.sleep(0.01)
+    target.write_text(make_html("context", "Updated Title"))
+
+    summary = walk(conn, docs_root, reconcile=False)
+    assert summary.updated == 1
+
+    doc_id = conn.execute(
+        "SELECT id FROM documents WHERE source_path LIKE '%context%' AND type='context'"
+    ).fetchone()["id"]
+    ver_count = conn.execute(
+        "SELECT COUNT(*) AS n FROM document_versions WHERE document_id=?", (doc_id,)
+    ).fetchone()["n"]
+    assert ver_count == 2
+
+    events = conn.execute("SELECT event_type FROM events WHERE document_id=?", (doc_id,)).fetchall()
+    event_types = [r["event_type"] for r in events]
+    assert "created" in event_types
+    assert "updated" in event_types
+
+
+def test_seed_existing_row_on_first_phase2_walk(tmp_path: Path):
+    """A row that already exists but has no version (legacy row) gets v1 seeded silently."""
+    conn = temp_conn(tmp_path)
+    now = "2025-01-01T00:00:00+00:00"
+    conn.execute("INSERT OR IGNORE INTO projects (name, created_at) VALUES ('proj', ?)", (now,))
+    project_id = conn.execute("SELECT id FROM projects WHERE name='proj'").fetchone()["id"]
+    conn.execute(
+        "INSERT OR IGNORE INTO features (project_id, slug, created_at, updated_at) "
+        "VALUES (?, 'feat', ?, ?)",
+        (project_id, now, now),
+    )
+    feature_id = conn.execute(
+        "SELECT id FROM features WHERE project_id=? AND slug='feat'", (project_id,)
+    ).fetchone()["id"]
+
+    docs_root = tmp_path / "docs"
+    (docs_root / "proj" / "feat").mkdir(parents=True)
+    html = make_html("context", "ctx")
+    (docs_root / "proj" / "feat" / "context.html").write_text(html)
+
+    import os
+
+    mtime_dt = (
+        __import__("datetime")
+        .datetime.fromtimestamp(
+            os.stat(docs_root / "proj" / "feat" / "context.html").st_mtime,
+            tz=__import__("datetime").timezone.utc,
+        )
+        .isoformat()
+    )
+
+    # Insert a legacy row with matching mtime (so mtime gate would pass) but no version
+    conn.execute(
+        "INSERT INTO documents "
+        "(project_id, feature_id, type, status, source_path, logical_key, instance, "
+        "metadata_json, source_mtime, created_at, updated_at) "
+        "VALUES (?, ?, 'context', 'active', ?, 'proj/feat/context/1', 1, "
+        "'{\"size\": 0}', ?, ?, ?)",
+        (
+            project_id,
+            feature_id,
+            str(docs_root / "proj" / "feat" / "context.html"),
+            mtime_dt,
+            now,
+            now,
+        ),
+    )
+    doc_id = conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
+    # Ensure size matches so only the "no version" condition triggers re-read
+    file_size = (docs_root / "proj" / "feat" / "context.html").stat().st_size
+    conn.execute(
+        "UPDATE documents SET metadata_json=? WHERE id=?",
+        (json.dumps({"size": file_size}), doc_id),
+    )
+
+    summary = walk(conn, docs_root, reconcile=False)
+
+    # Should seed v1 silently — no event (not 'updated', not anything new except the seed)
+    assert summary.updated == 0
+    assert summary.created == 0
+    ver = conn.execute(
+        "SELECT COUNT(*) AS n FROM document_versions WHERE document_id=?", (doc_id,)
+    ).fetchone()["n"]
+    assert ver == 1
+    # No extra events (no 'updated' for seed)
+    events = conn.execute("SELECT event_type FROM events WHERE document_id=?", (doc_id,)).fetchall()
+    assert len(events) == 0
+
+
+def test_archival_reconciles_onto_one_row(tmp_path: Path):
+    """Moving a doc to .feedback-archive/ updates the existing row (no new row, no missing event)."""
+    docs_root = tmp_path / "docs"
+    (docs_root / "proj1" / "feat-a").mkdir(parents=True)
+    active_path = docs_root / "proj1" / "feat-a" / "requirements-feedback-1.html"
+    active_path.write_text(HTML_FEEDBACK_NO_META)
+
+    conn = temp_conn(tmp_path)
+    walk(conn, docs_root, reconcile=False)
+
+    doc_id_before = conn.execute("SELECT id FROM documents").fetchone()["id"]
+
+    # Move file to archive
+    archive_dir = docs_root / "proj1" / "feat-a" / ".feedback-archive"
+    archive_dir.mkdir()
+    archived_path = archive_dir / "requirements-feedback-1.html"
+    active_path.rename(archived_path)
+
+    summary = walk(conn, docs_root, reconcile=True)
+
+    # Same document row — no duplicate
+    rows = conn.execute("SELECT id, status FROM documents").fetchall()
+    assert len(rows) == 1
+    assert rows[0]["id"] == doc_id_before
+    assert rows[0]["status"] == "archived"
+
+    # No 'missing' event (the row's source_path was updated to the archive path before reconcile)
+    assert summary.missing == 0
+    missing_events = conn.execute("SELECT id FROM events WHERE event_type='missing'").fetchall()
+    assert len(missing_events) == 0
+
+
+def test_reactivation_with_same_content_no_event(tmp_path: Path):
+    """A doc that returns with byte-identical content triggers no reactivated event."""
+    docs_root = tmp_path / "docs"
+    (docs_root / "proj1" / "feat-a").mkdir(parents=True)
+    html = make_section_html("context", "fixed body")
+    target = docs_root / "proj1" / "feat-a" / "context.html"
+    target.write_text(html)
+
+    conn = temp_conn(tmp_path)
+    walk(conn, docs_root, reconcile=False)
+    target.unlink()
+    walk(conn, docs_root, reconcile=True)
+
+    # Bring back with identical content
+    target.write_text(html)
+    summary = walk(conn, docs_root, reconcile=False)
+
+    # No reactivated event because content is identical
+    assert summary.reactivated == 0
+    assert summary.updated == 0
+
+
+def test_unparsed_counter_for_section_doc_without_main(tmp_path: Path):
+    """A context doc without <main class="document"> increments unparsed and still creates the row."""
+    docs_root = tmp_path / "docs"
+    (docs_root / "proj1" / "feat-a").mkdir(parents=True)
+    (docs_root / "proj1" / "feat-a" / "context.html").write_text(HTML_NO_MAIN)
+
+    conn = temp_conn(tmp_path)
+    summary = walk(conn, docs_root, reconcile=False)
+
+    assert summary.unparsed == 1
+    assert summary.created == 1  # doc still indexed
+
+    doc_id = conn.execute("SELECT id FROM documents").fetchone()["id"]
+    ver = conn.execute(
+        "SELECT content_json FROM document_versions WHERE document_id=?", (doc_id,)
+    ).fetchone()
+    assert ver is not None
+    import json as _json
+
+    data = _json.loads(ver["content_json"])
+    assert data["sections"] == []  # empty sections — the sentinel value
+
+
+def test_logical_key_stored_on_new_doc(tmp_path: Path):
+    """New docs have logical_key and instance populated in the documents row."""
+    docs_root = tmp_path / "docs"
+    (docs_root / "proj1" / "feat-a").mkdir(parents=True)
+    (docs_root / "proj1" / "feat-a" / "context.html").write_text(make_html("context", "ctx"))
+
+    conn = temp_conn(tmp_path)
+    walk(conn, docs_root, reconcile=False)
+
+    doc = conn.execute("SELECT logical_key, instance FROM documents").fetchone()
+    assert doc["logical_key"] == "proj1/feat-a/context/1"
+    assert doc["instance"] == 1
+
+
+def test_feedback_doc_logical_key_uses_instance(tmp_path: Path):
+    """A feedback doc uses instance N from filename in its logical_key."""
+    docs_root = tmp_path / "docs"
+    (docs_root / "proj1" / "feat-a").mkdir(parents=True)
+    (docs_root / "proj1" / "feat-a" / "requirements-feedback-3.html").write_text(
+        HTML_FEEDBACK_NO_META
+    )
+
+    conn = temp_conn(tmp_path)
+    walk(conn, docs_root, reconcile=False)
+
+    doc = conn.execute("SELECT logical_key, instance FROM documents").fetchone()
+    assert doc["logical_key"] == "proj1/feat-a/requirements-feedback/3"
+    assert doc["instance"] == 3
+
+
+def test_current_version_via_walk(tmp_path: Path):
+    """current_content returns the version seeded on the first walk."""
+    docs_root = tmp_path / "docs"
+    (docs_root / "proj1" / "feat-a").mkdir(parents=True)
+    html = make_section_html("context", "original body")
+    (docs_root / "proj1" / "feat-a" / "context.html").write_text(html)
+
+    conn = temp_conn(tmp_path)
+    walk(conn, docs_root, reconcile=False)
+
+    doc_id = conn.execute("SELECT id FROM documents").fetchone()["id"]
+    content = current_content(conn, doc_id)
+    assert content is not None
+    assert content.shape == "sections"
+    assert len(content.sections) == 1
+    assert "original body" in content.sections[0].body
