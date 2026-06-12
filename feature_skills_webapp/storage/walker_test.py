@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 from feature_skills_webapp.storage.db import connect, migrate
@@ -1006,6 +1008,20 @@ def test_changed_content_cuts_new_version(tmp_path: Path):
     assert "updated" in event_types
 
 
+def test_walk_leaves_content_html_null(tmp_path: Path):
+    """F1 must not populate content_html: doc_raw prefers it over disk (doc_view.py),
+    so writing it would silently change the render source. Versioned content lives in
+    document_versions instead — content_html stays the untouched F2 seam."""
+    docs_root = tmp_path / "docs"
+    _make_tree(docs_root)
+    conn = temp_conn(tmp_path)
+    walk(conn, docs_root, reconcile=False)
+
+    rows = conn.execute("SELECT content_html FROM documents").fetchall()
+    assert rows, "expected indexed documents"
+    assert all(r["content_html"] is None for r in rows)
+
+
 def test_seed_existing_row_on_first_phase2_walk(tmp_path: Path):
     """A row that already exists but has no version (legacy row) gets v1 seeded silently."""
     conn = temp_conn(tmp_path)
@@ -1026,16 +1042,9 @@ def test_seed_existing_row_on_first_phase2_walk(tmp_path: Path):
     html = make_html("context", "ctx")
     (docs_root / "proj" / "feat" / "context.html").write_text(html)
 
-    import os
-
-    mtime_dt = (
-        __import__("datetime")
-        .datetime.fromtimestamp(
-            os.stat(docs_root / "proj" / "feat" / "context.html").st_mtime,
-            tz=__import__("datetime").timezone.utc,
-        )
-        .isoformat()
-    )
+    mtime_dt = datetime.fromtimestamp(
+        os.stat(docs_root / "proj" / "feat" / "context.html").st_mtime, tz=UTC
+    ).isoformat()
 
     # Insert a legacy row with matching mtime (so mtime gate would pass) but no version
     conn.execute(

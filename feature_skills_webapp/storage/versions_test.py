@@ -326,3 +326,83 @@ def test_backfill_fresh_db_no_rows(tmp_path: Path) -> None:
         "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_documents_logical_key_unique'"
     ).fetchone()
     assert idx is not None
+
+
+def _seed_collision_pair(conn: sqlite3.Connection) -> tuple[int, int]:
+    """Seed two pre-backfill rows that share one logical key (active + missing).
+
+    Returns (active_id, missing_id); after backfill the active row is the survivor.
+    """
+    now = now_iso()
+    conn.execute("INSERT OR IGNORE INTO projects (name, created_at) VALUES ('proj', ?)", (now,))
+    project_id = conn.execute("SELECT id FROM projects WHERE name='proj'").fetchone()["id"]
+    conn.execute(
+        "INSERT OR IGNORE INTO features (project_id, slug, created_at, updated_at) "
+        "VALUES (?, 'feat', ?, ?)",
+        (project_id, now, now),
+    )
+    feature_id = conn.execute(
+        "SELECT id FROM features WHERE project_id=? AND slug='feat'", (project_id,)
+    ).fetchone()["id"]
+    ids: dict[str, int] = {}
+    for status, path in [("active", "/a/context.html"), ("missing", "/b/context.html")]:
+        conn.execute(
+            "INSERT INTO documents "
+            "(project_id, feature_id, type, status, source_path, "
+            "metadata_json, source_mtime, created_at, updated_at) "
+            "VALUES (?, ?, 'context', ?, ?, '{}', '2025-01-01T00:00:00+00:00', ?, ?)",
+            (project_id, feature_id, status, path, now, now),
+        )
+        ids[status] = conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
+    return ids["active"], ids["missing"]
+
+
+def test_backfill_merges_synthesis_responses_survivor_wins(tmp_path: Path) -> None:
+    """Loser synthesis answers merge onto the survivor, but the survivor wins a per-item_num
+    conflict (the documented-loss policy: ON CONFLICT(document_id, item_num) DO NOTHING)."""
+    conn = _conn_no_backfill(tmp_path)
+    survivor_id, loser_id = _seed_collision_pair(conn)
+    now = now_iso()
+    # Survivor already answered item 1; loser answered item 1 (conflict) and item 2 (new).
+    for doc_id, item, resp in [
+        (survivor_id, 1, "survivor-answer"),
+        (loser_id, 1, "loser-answer"),
+        (loser_id, 2, "loser-only"),
+    ]:
+        conn.execute(
+            "INSERT INTO synthesis_responses "
+            "(document_id, item_num, response, routine_flag, updated_at) "
+            "VALUES (?, ?, ?, NULL, ?)",
+            (doc_id, item, resp, now),
+        )
+
+    backfill_logical_keys(conn)
+
+    rows = conn.execute(
+        "SELECT item_num, response FROM synthesis_responses WHERE document_id=? ORDER BY item_num",
+        (survivor_id,),
+    ).fetchall()
+    assert {r["item_num"]: r["response"] for r in rows} == {1: "survivor-answer", 2: "loser-only"}
+    # Loser row deleted, so no orphaned synthesis rows remain.
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) AS n FROM synthesis_responses WHERE document_id=?", (loser_id,)
+        ).fetchone()["n"]
+        == 0
+    )
+
+
+def test_backfill_repoints_comments_to_survivor(tmp_path: Path) -> None:
+    """A comment on the losing row is repointed to the survivor, not cascade-deleted."""
+    conn = _conn_no_backfill(tmp_path)
+    survivor_id, loser_id = _seed_collision_pair(conn)
+    conn.execute(
+        "INSERT INTO comments (document_id, excerpt, text, status, created_at) "
+        "VALUES (?, 'excerpt', 'a note', 'active', ?)",
+        (loser_id, now_iso()),
+    )
+    backfill_logical_keys(conn)
+    rows = conn.execute("SELECT document_id, text FROM comments").fetchall()
+    assert len(rows) == 1
+    assert rows[0]["document_id"] == survivor_id
+    assert rows[0]["text"] == "a note"

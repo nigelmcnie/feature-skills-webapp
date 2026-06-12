@@ -204,3 +204,15 @@ Plan-level detail and still-open decisions, carried forward for `/feature-plan`.
 - **Versions track content, not status** (round 1). Archival / missing are status transitions and cut no version; reactivation-with-change does.
 - **F1 inherits the missed-walk fragility by design** (round 1). It makes detection content-based once a walk runs but doesn't change when walks run; the fragility is fixed only when an explicit-write API lands. Captured as a Non-goal so the Problem section doesn't over-promise.
 - **Content-equality is byte-fidelity-conservative, not semantic normalisation** (plan review round 1). The deterministic re-serialiser preserves attribute order / in-tag whitespace, so the invariant (literal no-op → no version) holds, but a byte-different-but-equal resave may cut a harmless spurious version. Chosen over normalisation because it never swallows a real edit and agents regenerate whole docs anyway — normalisation is complexity for little gain.
+
+## Review decisions
+
+### Round 1 (post-merge review)
+
+The merged implementation reviewed clean — all 8 plan decisions implemented faithfully, no blockers, QC green (372 tests). The `web/discovery.py` change in the diff range was confirmed to be unrelated parallel work (commit `c765813`, dotted-store-root watch fix), not part of this feature. Disposition of the five items:
+
+- **Deferred — unclosed nested `<section>` robustness.** The parser could run to EOF on a malformed unclosed nested section. Deferred: the corpus is agent-generated from templates and well-formed, and `WalkSummary.unparsed` already surfaces un-parseable docs. Revisit if/when less-trusted input arrives via `agent-submission-api`.
+- **Fixed — backfill `synthesis_responses` survivor-wins now tested.** The only backfill branch touching user-submitted answers (documented-loss policy) was untested; added a test asserting per-`item_num` conflicts keep the survivor and non-conflicting answers merge.
+- **Fixed — backfill `comments` repoint now tested.** Added a test that a comment on the losing row is repointed to the survivor, not cascade-deleted.
+- **Fixed — `content_html`-stays-NULL now asserted.** Added a walk test guarding the decision-6 render-source trap directly, rather than relying only on the pre-existing `doc_view` tests staying green.
+- **Fixed — test import hygiene.** Replaced `__import__("datetime")` / inline `import os` in `walker_test.py` with top-of-file imports.
