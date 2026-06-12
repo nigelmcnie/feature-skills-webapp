@@ -4,12 +4,12 @@
 
 | Feature | Owner | Notes |
 |---|---|---|
+| [server-rendered-docs](docs/features/server-rendered-docs/context.md) | Nigel | F2 of the structured-content arc — render docs server-side from the DB, drop the iframe, re-home comments & synthesis as native UI. F1 (versioned-content-store) shipped. |
 
 ## Available
 
 | Feature | Notes |
 |---|---|
-| [server-rendered-docs](docs/features/server-rendered-docs/context.md) | Render docs from the DB and drop the iframe (F2, needs F1) — re-homes comments & synthesis as native UI instead of scraping the frame. |
 | [agent-submission-api](docs/features/agent-submission-api/context.md) | Post-F2 cross-agent write contract — Claude & Codex submit structured doc updates by logical key (HTTP core + MCP facade) instead of writing files. |
 
 ## Suggested order
