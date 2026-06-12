@@ -1198,3 +1198,180 @@ def test_current_version_via_walk(tmp_path: Path):
     assert content.shape == "sections"
     assert len(content.sections) == 1
     assert "original body" in content.sections[0].body
+
+
+# --- Phase 3: Tracker dual-representation + cutover proof ---
+
+
+def test_features_html_version_is_opaque(tmp_path: Path) -> None:
+    """features.html is versioned as shape='opaque' (entire HTML), never section-parsed."""
+    docs_root = tmp_path / "docs"
+    (docs_root / "proj1").mkdir(parents=True)
+    (docs_root / "proj1" / "features.html").write_text(FEATURES_HTML)
+
+    conn = temp_conn(tmp_path)
+    walk(conn, docs_root, reconcile=False)
+
+    doc_id = conn.execute("SELECT id FROM documents WHERE type='features'").fetchone()["id"]
+    content = current_content(conn, doc_id)
+    assert content is not None
+    assert content.shape == "opaque"
+    assert len(content.sections) == 1
+    assert content.sections[0].key == ""
+    # The opaque body is the full HTML source
+    assert "feat-done" in content.sections[0].body
+
+
+def test_feedback_version_is_opaque(tmp_path: Path) -> None:
+    """Feedback docs are always versioned as shape='opaque', never section-parsed."""
+    docs_root = tmp_path / "docs"
+    (docs_root / "proj1" / "feat-a").mkdir(parents=True)
+    (docs_root / "proj1" / "feat-a" / "requirements-feedback-1.html").write_text(
+        HTML_FEEDBACK_NO_META
+    )
+
+    conn = temp_conn(tmp_path)
+    walk(conn, docs_root, reconcile=False)
+
+    doc_id = conn.execute("SELECT id FROM documents").fetchone()["id"]
+    content = current_content(conn, doc_id)
+    assert content is not None
+    assert content.shape == "opaque"
+    assert len(content.sections) == 1
+    assert content.sections[0].key == ""
+
+
+def test_features_html_dual_representation(tmp_path: Path) -> None:
+    """features.html is simultaneously opaque-versioned AND row-extracted.
+
+    Phase 2 content versioning and the Phase 3 tracker extraction coexist: a single
+    walk populates both document_versions (opaque shape) and the features rows.
+    """
+    docs_root = tmp_path / "docs"
+    (docs_root / "proj1").mkdir(parents=True)
+    (docs_root / "proj1" / "features.html").write_text(FEATURES_HTML)
+
+    conn = temp_conn(tmp_path)
+    walk(conn, docs_root, reconcile=False)
+
+    # Version exists with opaque shape
+    doc_id = conn.execute("SELECT id FROM documents WHERE type='features'").fetchone()["id"]
+    content = current_content(conn, doc_id)
+    assert content is not None
+    assert content.shape == "opaque"
+
+    # Tracker rows are still populated
+    features = conn.execute("SELECT slug, status FROM features ORDER BY slug").fetchall()
+    by_slug = {r["slug"]: r["status"] for r in features}
+    assert by_slug["feat-active"] == "in_progress"
+    assert by_slug["feat-queued"] == "available"
+    assert by_slug["feat-done"] == "done"
+
+    # Shipped event fires for the feature first seen as 'done'
+    shipped = conn.execute("SELECT payload_json FROM events WHERE event_type='shipped'").fetchall()
+    assert len(shipped) == 1
+    assert json.loads(shipped[0]["payload_json"])["slug"] == "feat-done"
+
+
+def test_features_html_shipped_event_intact_after_content_change(tmp_path: Path) -> None:
+    """Opaque versioning doesn't break the shipped event on done-transition."""
+    docs_root = tmp_path / "docs"
+    (docs_root / "proj1").mkdir(parents=True)
+    features_file = docs_root / "proj1" / "features.html"
+    features_file.write_text(FEATURES_HTML_AVAILABLE)
+
+    conn = temp_conn(tmp_path)
+    walk(conn, docs_root, reconcile=False)
+
+    assert (
+        conn.execute("SELECT COUNT(*) AS n FROM events WHERE event_type='shipped'").fetchone()["n"]
+        == 0
+    )
+    assert conn.execute("SELECT COUNT(*) AS n FROM document_versions").fetchone()["n"] == 1
+
+    time.sleep(0.01)
+    features_file.write_text(FEATURES_HTML_DONE)
+    walk(conn, docs_root, reconcile=False)
+
+    # Shipped event fired
+    assert (
+        conn.execute("SELECT COUNT(*) AS n FROM events WHERE event_type='shipped'").fetchone()["n"]
+        == 1
+    )
+    # New content version recorded (v2)
+    ver_count = conn.execute(
+        "SELECT COUNT(*) AS n FROM document_versions WHERE document_id=?",
+        (conn.execute("SELECT id FROM documents").fetchone()["id"],),
+    ).fetchone()["n"]
+    assert ver_count == 2
+
+
+def test_single_change_isolation(tmp_path: Path) -> None:
+    """Modifying one doc cuts exactly one new version; all other doc version counts stay at 1."""
+    docs_root = tmp_path / "docs"
+    _make_tree(docs_root)
+    conn = temp_conn(tmp_path)
+
+    walk(conn, docs_root, reconcile=False)
+
+    # All 3 docs seeded with v1
+    assert conn.execute("SELECT COUNT(*) AS n FROM document_versions").fetchone()["n"] == 3
+
+    target = docs_root / "proj1" / "feat-a" / "context.html"
+    time.sleep(0.01)
+    target.write_text(make_html("context", "Changed"))
+
+    walk(conn, docs_root, reconcile=False)
+
+    # Total versions: 3 original + 1 new = 4
+    assert conn.execute("SELECT COUNT(*) AS n FROM document_versions").fetchone()["n"] == 4
+
+    # Only the changed doc has 2 versions; others still at 1
+    doc_versions = conn.execute(
+        "SELECT d.source_path, COUNT(*) AS vn FROM document_versions dv "
+        "JOIN documents d ON dv.document_id = d.id GROUP BY d.id"
+    ).fetchall()
+    by_path = {r["source_path"]: r["vn"] for r in doc_versions}
+    changed_path = str(target)
+    for path, ver_num in by_path.items():
+        if path == changed_path:
+            assert ver_num == 2, f"expected 2 versions for changed doc, got {ver_num}"
+        else:
+            assert ver_num == 1, f"expected 1 version for unchanged doc {path}, got {ver_num}"
+
+
+def test_full_corpus_idempotent_reimport(tmp_path: Path) -> None:
+    """A corpus with regular + feedback + archived docs: second walk cuts no new versions or events."""
+    docs_root = tmp_path / "docs"
+    (docs_root / "proj1" / "feat-a").mkdir(parents=True)
+    (docs_root / "proj1" / "feat-a" / ".feedback-archive").mkdir()
+
+    # Regular doc
+    (docs_root / "proj1" / "feat-a" / "requirements.html").write_text(
+        make_html("requirements", "req doc")
+    )
+    # Active feedback
+    (docs_root / "proj1" / "feat-a" / "requirements-feedback-1.html").write_text(
+        HTML_FEEDBACK_NO_META
+    )
+    # Archived feedback
+    (
+        docs_root / "proj1" / "feat-a" / ".feedback-archive" / "requirements-feedback-2.html"
+    ).write_text(HTML_FEEDBACK_NO_META)
+    # Project-level tracker
+    (docs_root / "proj1").mkdir(exist_ok=True)
+    (docs_root / "proj1" / "features.html").write_text(FEATURES_HTML_EMPTY_SECTION)
+
+    conn = temp_conn(tmp_path)
+    walk(conn, docs_root, reconcile=True)
+
+    ver_count_1 = conn.execute("SELECT COUNT(*) AS n FROM document_versions").fetchone()["n"]
+    event_count_1 = conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
+
+    # Second walk — nothing changed
+    walk(conn, docs_root, reconcile=True)
+
+    assert (
+        conn.execute("SELECT COUNT(*) AS n FROM document_versions").fetchone()["n"] == ver_count_1
+    )
+    assert conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"] == event_count_1
