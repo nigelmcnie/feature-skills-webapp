@@ -44,10 +44,12 @@ def create_app(db_path: Path | None, docs_root: Path | None = None) -> Starlette
 
         if db_path is not None:
             from feature_skills_webapp.storage.db import connect, migrate
+            from feature_skills_webapp.storage.versions import backfill_logical_keys
 
             db_path.parent.mkdir(parents=True, exist_ok=True)
             conn = connect(db_path)
             migrate(conn)
+            backfill_logical_keys(conn)
             conn.close()
 
         worker = watch = None
