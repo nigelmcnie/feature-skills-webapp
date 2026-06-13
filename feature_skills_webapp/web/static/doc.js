@@ -192,11 +192,58 @@
     });
   }
 
+  // ---- Synthesis submit ----
+  function initSynthesisSubmit() {
+    if (!window.__synthesisMode) return;
+    var btn = document.getElementById('synthesis-submit-btn');
+    if (!btn || !window.__synthesisPostUrl) return;
+
+    // Routine flag toggle
+    document.querySelectorAll('.flag-check').forEach(function (cb) {
+      cb.addEventListener('change', function () {
+        var detail = cb.closest('.syn-routine-item').querySelector('.flag-detail');
+        if (detail) detail.hidden = !cb.checked;
+      });
+    });
+
+    btn.addEventListener('click', async function () {
+      var responses = {};
+      document.querySelectorAll('.response-ta').forEach(function (ta) {
+        responses[ta.dataset.item] = ta.value.trim();
+      });
+      var routine_flags = {};
+      document.querySelectorAll('.flag-check:checked').forEach(function (cb) {
+        var ta = cb.closest('.syn-routine-item').querySelector('.flag-ta');
+        if (ta) routine_flags[cb.dataset.item] = ta.value.trim();
+      });
+      btn.disabled = true;
+      btn.textContent = 'Submitting…';
+      try {
+        var resp = await fetch(window.__synthesisPostUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ responses: responses, routine_flags: routine_flags }),
+        });
+        if (resp.ok) {
+          btn.textContent = 'Submitted ✓';
+          btn.classList.add('btn-success');
+        } else {
+          btn.disabled = false;
+          btn.textContent = 'Submit failed — try again';
+        }
+      } catch (e) {
+        btn.disabled = false;
+        btn.textContent = 'Submit failed — try again';
+      }
+    });
+  }
+
   // ---- Init ----
   document.addEventListener('DOMContentLoaded', function () {
     buildToc();
     loadPrefill();
     initClickToComment();
     initSubmit();
+    initSynthesisSubmit();
   });
 })();

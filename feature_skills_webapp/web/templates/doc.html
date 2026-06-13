@@ -2,7 +2,7 @@
 <html lang="en"><head>
 <meta charset="UTF-8"><meta name="color-scheme" content="dark">
 <title>{{ crumbs[-1][0] }} — feature-skills-webapp</title>
-{% if mode == "native" %}
+{% if mode in ("native", "synthesis-native") %}
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11/build/styles/atom-one-dark.min.css">
 <link rel="stylesheet" href="/static/doc.css?v={{ css_v }}">
 {% else %}
@@ -23,7 +23,6 @@
   .sibling-nav .sep { color:var(--text-faint); }
   .view-source { color:var(--text-faint); font-size:0.85rem; text-decoration:none; white-space:nowrap; }
   .doc-frame { width:100%; height:calc(100vh - var(--bar-h)); border:0; display:block; }
-  body.has-actionbar .doc-frame { height:calc(100vh - var(--bar-h) - 60px); }
   .unavailable { padding:48px; text-align:center; color:var(--text-faint); }
   .doc-actionbar { position:fixed; bottom:0; left:0; right:0; background:var(--surface);
     border-top:1px solid var(--border); padding:14px 32px; display:flex; align-items:center;
@@ -36,7 +35,7 @@
 </style>
 {% endif %}
 </head>
-<body{% if mode != "native" and available and is_synthesis %} class="has-actionbar"{% endif %}>
+<body>
 
 <header class="doc-bar">
   <nav class="crumbs">
@@ -104,57 +103,86 @@
 <script>document.addEventListener('DOMContentLoaded', function(){ if(window.hljs) hljs.highlightAll(); });</script>
 <script src="/static/doc.js?v={{ js_v }}"></script>
 
-{% elif mode == "framed" %}
+{% elif mode == "synthesis-native" %}
 
-<iframe class="doc-frame" src="{{ raw_url }}" title="document"></iframe>
+{% set tiers = [("needs-input", "Needs your input"), ("feedback", "Feedback"), ("routine", "Routine")] %}
+
+<div class="layout" id="layout">
+  <nav class="toc" aria-label="Document sections">
+    <h3>Contents</h3>
+    <ul id="toc-list">
+      {% for tier_key, tier_label in tiers %}
+        {% if feedback_items | selectattr("tier", "equalto", tier_key) | list %}
+        <li><a href="#tier-{{ tier_key }}" data-toc-id="tier-{{ tier_key }}">{{ tier_label }}</a></li>
+        {% endif %}
+      {% endfor %}
+    </ul>
+  </nav>
+
+  <main class="document synthesis-doc" id="doc-main">
+    {% for tier_key, tier_label in tiers %}
+      {% set tier_items = feedback_items | selectattr("tier", "equalto", tier_key) | list %}
+      {% if tier_items %}
+      <section id="tier-{{ tier_key }}">
+        <h2>{{ tier_label }}</h2>
+        {% if tier_key == "routine" %}
+          <ul class="routine-list">
+            {% for item in tier_items %}
+            <li class="routine-item syn-routine-item" data-item="{{ item.item_num }}">
+              <span class="item-num">{{ item.item_num }}.</span>
+              <span class="body">{{ item.title_html | safe }}</span>
+              <label class="flag-label">
+                <input type="checkbox" class="flag-check" data-item="{{ item.item_num }}"{% if item.item_num in synthesis_flags %} checked{% endif %}>
+                Flag
+              </label>
+              <div class="flag-detail"{% if item.item_num not in synthesis_flags %} hidden{% endif %}>
+                <textarea class="flag-ta" data-item="{{ item.item_num }}" placeholder="Why flagging?">{{ synthesis_flags.get(item.item_num, '') }}</textarea>
+              </div>
+            </li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          {% for item in tier_items %}
+          <article class="feedback-item" data-item="{{ item.item_num }}">
+            <header>
+              <span class="item-num">{{ item.item_num }}.</span>
+              <h3>{{ item.title_html | safe }}</h3>
+            </header>
+            {% if item.detail_html %}
+            <div class="detail">{{ item.detail_html | safe }}</div>
+            {% endif %}
+            {% if item.my_take_html %}
+            <div class="my-take">{{ item.my_take_html | safe }}</div>
+            {% endif %}
+            <div class="your-thoughts">
+              <label>Your thoughts</label>
+              <textarea class="response-ta" data-item="{{ item.item_num }}" placeholder="Leave blank to agree with my take">{{ synthesis_responses.get(item.item_num, '') }}</textarea>
+            </div>
+          </article>
+          {% endfor %}
+        {% endif %}
+      </section>
+      {% endif %}
+    {% endfor %}
+  </main>
+
+  <aside class="comments-rail" id="comments-rail" aria-label="Comments"></aside>
+</div>
+
 <footer class="doc-actionbar">
-  <span class="action-hint">Answer in the doc above, then submit →</span>
-  <button id="submit-btn" class="submit-cta" disabled>Submit response</button>
+  <span class="action-hint" id="synthesis-hint">Fill in your responses above, then submit.</span>
+  <button id="synthesis-submit-btn" class="submit-cta">Submit response</button>
 </footer>
+
 <script>
-(function() {
-  var submitBtn = document.getElementById('submit-btn');
-  var frame = document.querySelector('.doc-frame');
-  if (!submitBtn || !frame) return;
-  frame.addEventListener('load', function() { submitBtn.disabled = false; });
-  submitBtn.addEventListener('click', async function() {
-    var fdoc = frame.contentDocument;
-    var textareas = fdoc ? fdoc.querySelectorAll('.your-thoughts textarea') : [];
-    if (!textareas.length) {
-      submitBtn.disabled = true;
-      submitBtn.textContent = "Couldn't read this doc";
-      return;
-    }
-    var responses = {};
-    textareas.forEach(function(ta) { responses[ta.dataset.item] = ta.value.trim(); });
-    var routine_flags = {};
-    fdoc.querySelectorAll('.tier-routine .flag-btn.active').forEach(function(el) {
-      var item = el.dataset.item;
-      var ta = fdoc.querySelector('.tier-routine li[data-item="' + item + '"] .flag-input textarea');
-      if (ta) routine_flags[item] = ta.value.trim();
-    });
-    submitBtn.disabled = true;
-    submitBtn.textContent = 'Submitting…';
-    try {
-      var resp = await fetch('{{ synthesis_post_url }}', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({responses: responses, routine_flags: routine_flags}),
-      });
-      if (resp.ok) {
-        submitBtn.textContent = 'Submitted ✓';
-        submitBtn.classList.add('btn-success');
-      } else {
-        submitBtn.disabled = false;
-        submitBtn.textContent = 'Submit failed — try again';
-      }
-    } catch (e) {
-      submitBtn.disabled = false;
-      submitBtn.textContent = 'Submit failed — try again';
-    }
-  });
-})();
+  window.__synthesisMode = true;
+  window.__synthesisPostUrl = "{{ synthesis_post_url }}";
 </script>
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11/build/highlight.min.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11/build/languages/python.min.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11/build/languages/bash.min.js"></script>
+<script>document.addEventListener('DOMContentLoaded', function(){ if(window.hljs) hljs.highlightAll(); });</script>
+<script src="/static/doc.js?v={{ js_v }}"></script>
 
 {% else %}{# unavailable or raw-fallback #}
 

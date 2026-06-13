@@ -5,7 +5,11 @@ from __future__ import annotations
 from markupsafe import Markup
 
 from feature_skills_webapp.storage.doc_content import ManifestSpec, ParsedContent, Section
-from feature_skills_webapp.storage.doc_render import extract_safe_inner, render_section_doc
+from feature_skills_webapp.storage.doc_render import (
+    extract_safe_inner,
+    parse_feedback_items,
+    render_section_doc,
+)
 
 # ---------------------------------------------------------------------------
 # render_section_doc
@@ -160,3 +164,172 @@ def test_extract_safe_inner_preserves_entities() -> None:
     result = extract_safe_inner(html)
     assert "&amp;" in result
     assert "&#160;" in result
+
+
+# ---------------------------------------------------------------------------
+# parse_feedback_items
+# ---------------------------------------------------------------------------
+
+_NEEDS_INPUT_ARTICLE = """\
+<article class="item" data-item="1">
+  <header><span class="item-num">1.</span><h3>Title one</h3></header>
+  <div class="detail"><p>Detail paragraph.</p></div>
+  <div class="my-take"><span class="label">My take:</span> Take text.</div>
+  <div class="your-thoughts"><label for="t-1">Your thoughts</label>
+    <textarea id="t-1" data-item="1"></textarea>
+  </div>
+</article>"""
+
+_FEEDBACK_ARTICLE = """\
+<article class="item" data-item="4">
+  <header><span class="item-num">4.</span><h3>Title four</h3></header>
+  <div class="detail"><p>Detail four.</p></div>
+  <div class="my-take"><span class="label">My take:</span> Take four.</div>
+  <div class="your-thoughts"><textarea data-item="4"></textarea></div>
+</article>"""
+
+_ROUTINE_LI = """\
+<li class="routine-item" data-item="9">
+  <span class="item-num">9.</span>
+  <span class="body">Routine body text with <em>emphasis</em>.</span>
+  <button class="flag-btn" data-item="9">Flag</button>
+  <div class="flag-input"><textarea data-item="9"></textarea></div>
+</li>"""
+
+_FULL_FEEDBACK_HTML = f"""\
+<!DOCTYPE html>
+<html><head><style>body {{ color: red; }}</style></head>
+<body>
+<section class="tier tier-needs-input">
+<h2>Needs your input</h2>
+{_NEEDS_INPUT_ARTICLE}
+</section>
+<section class="tier tier-feedback">
+<h2>Feedback</h2>
+{_FEEDBACK_ARTICLE}
+</section>
+<section class="tier tier-routine">
+<h2>Routine</h2>
+<ul class="routine-list">
+{_ROUTINE_LI}
+</ul>
+</section>
+<script>var x = 1;</script>
+</body></html>"""
+
+
+def test_parse_feedback_items_empty_html_returns_empty() -> None:
+    assert parse_feedback_items("") == []
+
+
+def test_parse_feedback_items_no_tier_sections_returns_empty() -> None:
+    html = "<html><body><p>No tiers here.</p></body></html>"
+    assert parse_feedback_items(html) == []
+
+
+def test_parse_feedback_items_sorted_by_item_num() -> None:
+    items = parse_feedback_items(_FULL_FEEDBACK_HTML)
+    nums = [i.item_num for i in items]
+    assert nums == sorted(nums)
+
+
+def test_parse_feedback_items_needs_input_tier() -> None:
+    items = parse_feedback_items(_FULL_FEEDBACK_HTML)
+    item = next(i for i in items if i.item_num == 1)
+    assert item.tier == "needs-input"
+    assert item.kind == "response"
+    assert "Title one" in item.title_html
+    assert "<h3>" not in item.title_html
+    assert "Detail paragraph" in item.detail_html
+    assert "Take text" in item.my_take_html
+
+
+def test_parse_feedback_items_feedback_tier() -> None:
+    items = parse_feedback_items(_FULL_FEEDBACK_HTML)
+    item = next(i for i in items if i.item_num == 4)
+    assert item.tier == "feedback"
+    assert item.kind == "response"
+    assert "Title four" in item.title_html
+
+
+def test_parse_feedback_items_routine_tier() -> None:
+    items = parse_feedback_items(_FULL_FEEDBACK_HTML)
+    item = next(i for i in items if i.item_num == 9)
+    assert item.tier == "routine"
+    assert item.kind == "routine"
+    assert "Routine body text" in item.title_html
+    assert "<em>emphasis</em>" in item.title_html
+    assert item.detail_html == ""
+    assert item.my_take_html == ""
+
+
+def test_parse_feedback_items_title_has_no_outer_tag() -> None:
+    items = parse_feedback_items(_FULL_FEEDBACK_HTML)
+    article_item = next(i for i in items if i.item_num == 1)
+    assert "<h3>" not in article_item.title_html
+    assert "</h3>" not in article_item.title_html
+    routine_item = next(i for i in items if i.item_num == 9)
+    assert "<span" not in routine_item.title_html or "body" not in routine_item.title_html
+
+
+def test_parse_feedback_items_detail_has_no_outer_div() -> None:
+    items = parse_feedback_items(_FULL_FEEDBACK_HTML)
+    item = next(i for i in items if i.item_num == 1)
+    assert '<div class="detail">' not in item.detail_html
+    assert "Detail paragraph" in item.detail_html
+
+
+def test_parse_feedback_items_strips_script_and_style() -> None:
+    items = parse_feedback_items(_FULL_FEEDBACK_HTML)
+    for item in items:
+        assert "<script" not in item.title_html
+        assert "<style" not in item.title_html
+
+
+def test_parse_feedback_items_nested_html_in_title() -> None:
+    html = """\
+<html><body>
+<section class="tier tier-needs-input">
+<article class="item" data-item="2">
+  <header><h3>Title with <code>code</code> and <em>em</em></h3></header>
+  <div class="detail"><p>Some detail.</p></div>
+  <div class="my-take">My take text.</div>
+  <div class="your-thoughts"><textarea data-item="2"></textarea></div>
+</article>
+</section>
+</body></html>"""
+    items = parse_feedback_items(html)
+    assert len(items) == 1
+    assert "<code>code</code>" in items[0].title_html
+    assert "<em>em</em>" in items[0].title_html
+
+
+def test_parse_feedback_items_all_three_tiers_count() -> None:
+    items = parse_feedback_items(_FULL_FEEDBACK_HTML)
+    assert len(items) == 3
+    tiers = {i.tier for i in items}
+    assert tiers == {"needs-input", "feedback", "routine"}
+
+
+def test_parse_feedback_items_malformed_returns_empty_or_partial() -> None:
+    result = parse_feedback_items("not html at all <><>")
+    assert isinstance(result, list)
+
+
+def test_parse_feedback_items_void_elements_in_body() -> None:
+    html = """\
+<html><body>
+<section class="tier tier-needs-input">
+<article class="item" data-item="3">
+  <header><h3>With br tag</h3></header>
+  <div class="detail"><p>Line one.<br>Line two.</p></div>
+  <div class="my-take">Take.<br>More take.</div>
+  <div class="your-thoughts"><textarea data-item="3"></textarea></div>
+</article>
+</section>
+</body></html>"""
+    items = parse_feedback_items(html)
+    assert len(items) == 1
+    assert items[0].item_num == 3
+    assert "Line one." in items[0].detail_html
+    assert "Line two." in items[0].detail_html
