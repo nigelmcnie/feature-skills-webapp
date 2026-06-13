@@ -463,6 +463,32 @@ HTML_FEEDBACK_NO_META = """\
 <html><head><title>Feedback</title></head><body><p>feedback content</p></body></html>
 """
 
+HTML_FEEDBACK_WITH_TIERS = """\
+<!DOCTYPE html>
+<html><head><title>Feedback</title></head><body>
+<section class="tier tier-needs-input">
+<h2>Needs your input</h2>
+<article class="item" data-item="1">
+  <header><span class="item-num">1.</span><h3>Item one title</h3></header>
+  <div class="detail"><p>Detail one.</p></div>
+  <div class="my-take"><span class="label">My take:</span> Take one.</div>
+  <div class="your-thoughts"><textarea data-item="1"></textarea></div>
+</article>
+</section>
+<section class="tier tier-routine">
+<h2>Routine</h2>
+<ul class="routine-list">
+<li class="routine-item" data-item="5">
+  <span class="item-num">5.</span>
+  <span class="body">Routine item five.</span>
+  <button class="flag-btn" data-item="5">Flag</button>
+  <div class="flag-input"><textarea data-item="5"></textarea></div>
+</li>
+</ul>
+</section>
+</body></html>
+"""
+
 
 def make_docs_root_with_feedback(tmp_path: Path) -> Path:
     """Docs root with context, plan, and an active feedback doc under feat-a."""
@@ -500,7 +526,7 @@ def test_submit_button_shown_for_active_feedback_doc(temp_db: Path, tmp_path: Pa
         doc_id = _doc_id_by_type(temp_db, "requirements-feedback")
         response = client.get(f"/doc/{doc_id}")
     assert response.status_code == 200
-    assert 'id="submit-btn"' in response.text
+    assert 'id="synthesis-submit-btn"' in response.text
     assert f"/doc/{doc_id}/synthesis-response" in response.text
 
 
@@ -748,15 +774,16 @@ def test_doc_shell_references_static_assets(temp_db: Path, tmp_path: Path) -> No
     assert "/static/doc.js" in response.text
 
 
-def test_feedback_doc_still_uses_framed_render(temp_db: Path, tmp_path: Path) -> None:
+def test_feedback_doc_renders_natively_no_iframe(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_docs_root_with_feedback(tmp_path)
     with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
         client.post("/admin/discover")
         doc_id = _doc_id_by_type(temp_db, "requirements-feedback")
         response = client.get(f"/doc/{doc_id}")
     assert response.status_code == 200
-    assert "<iframe" in response.text
-    assert f'src="/doc/{doc_id}/raw"' in response.text
+    assert "<iframe" not in response.text
+    assert 'id="synthesis-submit-btn"' in response.text
+    assert f'href="/doc/{doc_id}/raw"' in response.text
 
 
 def _insert_doc_no_version(db: Path, doc_type: str = "plan") -> int:
@@ -815,3 +842,87 @@ def test_comment_prefill_in_native_render(temp_db: Path, tmp_path: Path) -> None
     # Prefill JSON is embedded in the page
     assert "My comment here" in response.text
     assert "__prefillComments" in response.text
+
+
+# ---- Phase 2: native synthesis ----
+
+
+def _make_feedback_docs_root_with_tiers(tmp_path: Path) -> Path:
+    docs_root = tmp_path / "docs"
+    (docs_root / "proj1" / "feat-a").mkdir(parents=True)
+    (docs_root / "proj1" / "feat-a" / "requirements-feedback-1.html").write_text(
+        HTML_FEEDBACK_WITH_TIERS
+    )
+    return docs_root
+
+
+def test_feedback_native_renders_feedback_items(temp_db: Path, tmp_path: Path) -> None:
+    docs_root = _make_feedback_docs_root_with_tiers(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        doc_id = _doc_id_by_type(temp_db, "requirements-feedback")
+        response = client.get(f"/doc/{doc_id}")
+    assert response.status_code == 200
+    assert "<iframe" not in response.text
+    assert "Item one title" in response.text
+    assert "Routine item five" in response.text
+    assert 'data-item="1"' in response.text
+    assert 'data-item="5"' in response.text
+    assert 'id="synthesis-submit-btn"' in response.text
+
+
+def test_feedback_native_prefill_responses(temp_db: Path, tmp_path: Path) -> None:
+    docs_root = _make_feedback_docs_root_with_tiers(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        doc_id = _doc_id_by_type(temp_db, "requirements-feedback")
+        # Submit synthesis responses first
+        client.post(
+            f"/doc/{doc_id}/synthesis-response",
+            json={"responses": {"1": "My stored response"}, "routine_flags": {}},
+        )
+        response = client.get(f"/doc/{doc_id}")
+    assert response.status_code == 200
+    assert "My stored response" in response.text
+
+
+def test_feedback_native_prefill_routine_flags(temp_db: Path, tmp_path: Path) -> None:
+    docs_root = _make_feedback_docs_root_with_tiers(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        doc_id = _doc_id_by_type(temp_db, "requirements-feedback")
+        client.post(
+            f"/doc/{doc_id}/synthesis-response",
+            json={"responses": {}, "routine_flags": {"5": "Disagree with this"}},
+        )
+        response = client.get(f"/doc/{doc_id}")
+    assert response.status_code == 200
+    assert "Disagree with this" in response.text
+    # Checkbox should be pre-checked
+    assert 'class="flag-check" data-item="5" checked' in response.text
+
+
+def test_no_iframe_for_doc_with_stored_content(temp_db: Path, tmp_path: Path) -> None:
+    """Guard: no doc with stored content (non-raw-fallback) should emit an iframe."""
+    docs_root = _make_feedback_docs_root_with_tiers(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        from feature_skills_webapp.storage.db import connect
+
+        conn = connect(temp_db)
+        doc_ids = [
+            r["id"]
+            for r in conn.execute("SELECT id FROM documents WHERE status='active'").fetchall()
+        ]
+        conn.close()
+        for doc_id in doc_ids:
+            response = client.get(f"/doc/{doc_id}")
+            assert response.status_code == 200
+            # Raw-fallback is allowed to use iframe; check for stored content first
+            has_content = (
+                'id="doc-main"' in response.text or 'id="synthesis-submit-btn"' in response.text
+            )
+            if has_content:
+                assert "<iframe" not in response.text, (
+                    f"doc {doc_id} has stored content but emits iframe"
+                )

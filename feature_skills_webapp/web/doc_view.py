@@ -10,7 +10,12 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 
 from feature_skills_webapp.storage.doc_content import manifest_for
-from feature_skills_webapp.storage.doc_render import extract_safe_inner, render_section_doc
+from feature_skills_webapp.storage.doc_render import (
+    FeedbackItem,
+    extract_safe_inner,
+    parse_feedback_items,
+    render_section_doc,
+)
 from feature_skills_webapp.storage.inbox import doc_type_rank, humanise_type
 from feature_skills_webapp.storage.read_state import mark_read
 from feature_skills_webapp.storage.versions import current_content
@@ -94,10 +99,28 @@ async def doc_shell(request: Request) -> Response:
         # Determine render mode and build body_html
         body_html: Markup = Markup("")
         mode: str
+        feedback_items: list[FeedbackItem] = []
+        synthesis_responses: dict[int, str] = {}
+        synthesis_flags: dict[int, str] = {}
         if not available:
             mode = "unavailable"
         elif is_synthesis:
-            mode = "framed"
+            content = current_content(conn, doc_id)
+            if content is not None and content.shape == "opaque":
+                feedback_items = parse_feedback_items(content.sections[0].body)
+                synth_rows = conn.execute(
+                    "SELECT item_num, response, routine_flag FROM synthesis_responses "
+                    "WHERE document_id = ?",
+                    (doc_id,),
+                ).fetchall()
+                for r in synth_rows:
+                    if r["routine_flag"] is not None:
+                        synthesis_flags[r["item_num"]] = r["routine_flag"]
+                    else:
+                        synthesis_responses[r["item_num"]] = r["response"] or ""
+                mode = "synthesis-native"
+            else:
+                mode = "raw-fallback"
         else:
             content = current_content(conn, doc_id)
             if content is None:
@@ -134,6 +157,9 @@ async def doc_shell(request: Request) -> Response:
             "raw_url": f"/doc/{doc_id}/raw",
             "mode": mode,
             "body_html": body_html,
+            "feedback_items": feedback_items,
+            "synthesis_responses": synthesis_responses,
+            "synthesis_flags": synthesis_flags,
             "is_synthesis": is_synthesis,
             "synthesis_post_url": f"/doc/{doc_id}/synthesis-response",
             "is_commentable": is_commentable,
