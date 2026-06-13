@@ -16,6 +16,41 @@ HTML_TEMPLATE = """\
 </html>
 """
 
+# HTML with a proper <main class="document"><section> structure for native-render tests.
+PLAN_HTML_WITH_SECTIONS = """\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="feature-doc-type" content="plan">
+<title>feat-a plan</title>
+</head>
+<body>
+<main class="document">
+<section id="overview"><h2>Overview</h2><p>Overview content here.</p></section>
+<section id="key-decisions"><h2>Key technical decisions</h2><p>Decisions here.</p></section>
+</main>
+</body>
+</html>
+"""
+
+REQUIREMENTS_HTML_WITH_SECTIONS = """\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="feature-doc-type" content="requirements">
+<title>feat-a requirements</title>
+</head>
+<body>
+<main class="document">
+<section id="problem"><h2>Problem</h2><p>The problem description.</p></section>
+<section id="vision"><h2>Vision</h2><p>The vision statement.</p></section>
+</main>
+</body>
+</html>
+"""
+
 FEATURES_HTML = """\
 <!DOCTYPE html>
 <html lang="en">
@@ -79,7 +114,7 @@ def make_docs_root_with_archived(tmp_path: Path) -> Path:
 # ---- shell 200 and breadcrumbs ----
 
 
-def test_doc_shell_200_with_breadcrumbs_and_iframe(temp_db: Path, tmp_path: Path) -> None:
+def test_doc_shell_200_with_breadcrumbs(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_docs_root(tmp_path)
     with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
         client.post("/admin/discover")
@@ -93,7 +128,9 @@ def test_doc_shell_200_with_breadcrumbs_and_iframe(temp_db: Path, tmp_path: Path
     assert "proj1" in response.text
     assert "feat-a" in response.text
     assert "Plan" in response.text
-    assert f'src="/doc/{doc_id}/raw"' in response.text
+    # Native render: no iframe, view source is a link not an embed
+    assert "<iframe" not in response.text
+    assert f'href="/doc/{doc_id}/raw"' in response.text
 
 
 # ---- viewing clears unread ----
@@ -234,8 +271,8 @@ def test_tracker_doc_renders_tracker_crumb(temp_db: Path, tmp_path: Path) -> Non
         response = client.get(f"/doc/{row['id']}")
     assert response.status_code == 200
     assert "Tracker" in response.text
-    # feature crumb should not appear (tracker has no feature)
-    assert "feat-a" not in response.text
+    # No feature breadcrumb link — tracker is project-level, no feature crumb
+    assert 'href="/project/proj1/feature/' not in response.text
 
 
 # ---- archived doc label ----
@@ -639,3 +676,142 @@ def test_tracker_project_crumb_carries_project_page_href(temp_db: Path, tmp_path
         response = client.get(f"/doc/{row['id']}")
     assert response.status_code == 200
     assert 'href="/project/proj1"' in response.text
+
+
+# ---- native render (server-rendered-docs) ----
+
+
+def make_docs_root_with_sectioned_plan(tmp_path: Path) -> Path:
+    docs_root = tmp_path / "docs"
+    (docs_root / "proj1" / "feat-a").mkdir(parents=True)
+    (docs_root / "proj1" / "feat-a" / "plan.html").write_text(PLAN_HTML_WITH_SECTIONS)
+    return docs_root
+
+
+def make_docs_root_with_sectioned_requirements(tmp_path: Path) -> Path:
+    docs_root = tmp_path / "docs"
+    (docs_root / "proj1" / "feat-a").mkdir(parents=True)
+    (docs_root / "proj1" / "feat-a" / "requirements.html").write_text(
+        REQUIREMENTS_HTML_WITH_SECTIONS
+    )
+    return docs_root
+
+
+def test_plan_renders_natively_no_iframe(temp_db: Path, tmp_path: Path) -> None:
+    docs_root = make_docs_root_with_sectioned_plan(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        doc_id = _doc_id_by_type(temp_db, "plan")
+        response = client.get(f"/doc/{doc_id}")
+    assert response.status_code == 200
+    assert "<iframe" not in response.text
+    # Section content renders as actual HTML tags, not escaped
+    assert "<h2>Overview</h2>" in response.text
+    assert "&lt;h2&gt;" not in response.text
+
+
+def test_requirements_renders_natively_no_iframe(temp_db: Path, tmp_path: Path) -> None:
+    docs_root = make_docs_root_with_sectioned_requirements(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        doc_id = _doc_id_by_type(temp_db, "requirements")
+        response = client.get(f"/doc/{doc_id}")
+    assert response.status_code == 200
+    assert "<iframe" not in response.text
+    assert "<h2>Problem</h2>" in response.text
+
+
+def test_tracker_doc_renders_natively_no_iframe(temp_db: Path, tmp_path: Path) -> None:
+    docs_root = make_docs_root_with_tracker(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        from feature_skills_webapp.storage.db import connect
+
+        conn = connect(temp_db)
+        row = conn.execute("SELECT id FROM documents WHERE type='features' LIMIT 1").fetchone()
+        conn.close()
+        response = client.get(f"/doc/{row['id']}")
+    assert response.status_code == 200
+    assert "<iframe" not in response.text
+    # Tracker content is rendered (extract_safe_inner returns the body content)
+    assert "in-progress" in response.text
+
+
+def test_doc_shell_references_static_assets(temp_db: Path, tmp_path: Path) -> None:
+    docs_root = make_docs_root_with_sectioned_plan(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        doc_id = _doc_id_by_type(temp_db, "plan")
+        response = client.get(f"/doc/{doc_id}")
+    assert response.status_code == 200
+    assert "/static/doc.css" in response.text
+    assert "/static/doc.js" in response.text
+
+
+def test_feedback_doc_still_uses_framed_render(temp_db: Path, tmp_path: Path) -> None:
+    docs_root = make_docs_root_with_feedback(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        doc_id = _doc_id_by_type(temp_db, "requirements-feedback")
+        response = client.get(f"/doc/{doc_id}")
+    assert response.status_code == 200
+    assert "<iframe" in response.text
+    assert f'src="/doc/{doc_id}/raw"' in response.text
+
+
+def _insert_doc_no_version(db: Path, doc_type: str = "plan") -> int:
+    """Insert an active document directly without recording a version (simulates pre-F1 doc)."""
+    from feature_skills_webapp.storage.db import connect
+
+    conn = connect(db)
+    conn.execute("INSERT OR IGNORE INTO projects (name, created_at) VALUES ('nv-proj', 'n')")
+    conn.commit()
+    proj_id = conn.execute("SELECT id FROM projects WHERE name='nv-proj'").fetchone()["id"]
+    conn.execute(
+        "INSERT OR IGNORE INTO features (project_id, slug, created_at, updated_at) "
+        "VALUES (?, 'nv-feat', 'n', 'n')",
+        (proj_id,),
+    )
+    conn.commit()
+    feat_id = conn.execute("SELECT id FROM features WHERE slug='nv-feat'").fetchone()["id"]
+    cursor = conn.execute(
+        "INSERT INTO documents "
+        "(project_id, feature_id, type, status, source_path, logical_key, instance, "
+        "metadata_json, source_mtime, created_at, updated_at) "
+        "VALUES (?, ?, ?, 'active', '/no/such/file.html', ?, 1, '{}', 0, 'n', 'n')",
+        (proj_id, feat_id, doc_type, f"nv-proj/nv-feat/{doc_type}/1"),
+    )
+    conn.commit()
+    doc_id = cursor.lastrowid
+    conn.close()
+    assert doc_id is not None
+    return int(doc_id)
+
+
+def test_raw_fallback_when_no_version_row(temp_db: Path) -> None:
+    doc_id = _insert_doc_no_version(temp_db)
+    with TestClient(create_app(db_path=temp_db)) as client:
+        response = client.get(f"/doc/{doc_id}")
+    assert response.status_code == 200
+    # Raw-fallback: shows iframe pointing to raw URL
+    assert "<iframe" in response.text
+    assert f'src="/doc/{doc_id}/raw"' in response.text
+    # No static doc assets in raw-fallback mode
+    assert "/static/doc.css" not in response.text
+
+
+def test_comment_prefill_in_native_render(temp_db: Path, tmp_path: Path) -> None:
+    docs_root = make_docs_root_with_sectioned_requirements(tmp_path)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        doc_id = _doc_id_by_type(temp_db, "requirements")
+        # Submit two comments
+        client.post(
+            f"/doc/{doc_id}/comments",
+            json={"comments": [{"excerpt": "some text", "text": "My comment here"}]},
+        )
+        response = client.get(f"/doc/{doc_id}")
+    assert response.status_code == 200
+    # Prefill JSON is embedded in the page
+    assert "My comment here" in response.text
+    assert "__prefillComments" in response.text

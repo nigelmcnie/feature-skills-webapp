@@ -6,7 +6,7 @@ No DB dependency — safe to import and unit-test without any schema.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from html.parser import HTMLParser
 from typing import Literal
 
@@ -48,43 +48,53 @@ class ParsedContent:
 @dataclass(frozen=True)
 class ManifestSpec:
     shape: Literal["sections", "opaque"]
-    expected_keys: tuple[str, ...] = field(default_factory=tuple)
-    repeated_prefixes: tuple[str, ...] = field(default_factory=tuple)
+    section_labels: tuple[tuple[str, str], ...] = ()  # ordered (key, label) pairs
+    repeated_prefixes: tuple[str, ...] = ()
+
+    @property
+    def expected_keys(self) -> tuple[str, ...]:
+        return tuple(k for k, _ in self.section_labels)
 
 
 # Manifests for the three section-parsed doc types.
 _MANIFESTS: dict[str, ManifestSpec] = {
     "context": ManifestSpec(
         shape="sections",
-        expected_keys=(
-            "problem-space",
-            "related-work",
-            "constraints",
-            "links",
-            "open-questions",
+        section_labels=(
+            ("problem-space", "Problem space"),
+            ("related-work", "Related work"),
+            ("constraints", "Constraints"),
+            ("links", "Links"),
+            ("open-questions", "Open questions"),
         ),
     ),
     "requirements": ManifestSpec(
         shape="sections",
-        expected_keys=(
-            "problem",
-            "vision",
-            "non-goals",
-            "user-stories",
-            "categories",
-            "data-model",
-            "technical-approach",
-            "testing",
-            "alternatives",
-            "delivery-phases",
-            "indicative-notes",
-            "design-notes",
-            "review-decisions",
+        section_labels=(
+            ("problem", "Problem"),
+            ("vision", "Vision"),
+            ("non-goals", "Non-goals"),
+            ("user-stories", "User stories"),
+            ("categories", "Categories"),
+            ("data-model", "Data model"),
+            ("technical-approach", "Technical approach"),
+            ("testing", "Testing"),
+            ("alternatives", "Alternatives"),
+            ("delivery-phases", "Delivery phases"),
+            ("indicative-notes", "Indicative notes"),
+            ("design-notes", "Design notes"),
+            ("review-decisions", "Review decisions"),
         ),
     ),
     "plan": ManifestSpec(
         shape="sections",
-        expected_keys=("overview", "key-decisions", "file-structure", "qc", "checklist"),
+        section_labels=(
+            ("overview", "Overview"),
+            ("key-decisions", "Key technical decisions"),
+            ("file-structure", "File structure"),
+            ("qc", "QC"),
+            ("checklist", "Checklist"),
+        ),
         repeated_prefixes=("phase-",),
     ),
 }

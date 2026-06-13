@@ -169,11 +169,32 @@ def test_manifest_for_context() -> None:
     assert "open-questions" in spec.expected_keys
 
 
+def test_manifest_for_context_section_labels_ordered() -> None:
+    spec = manifest_for("context")
+    keys = [k for k, _ in spec.section_labels]
+    assert keys[0] == "problem-space"
+    assert "open-questions" in keys
+    # Each entry is a (key, label) pair with a non-empty label
+    for key, label in spec.section_labels:
+        assert key
+        assert label
+
+
 def test_manifest_for_requirements() -> None:
     spec = manifest_for("requirements")
     assert spec.shape == "sections"
     assert "problem" in spec.expected_keys
     assert "delivery-phases" in spec.expected_keys
+
+
+def test_manifest_for_requirements_section_labels_ordered() -> None:
+    spec = manifest_for("requirements")
+    keys = [k for k, _ in spec.section_labels]
+    assert keys[0] == "problem"
+    assert "delivery-phases" in keys
+    for key, label in spec.section_labels:
+        assert key
+        assert label
 
 
 def test_manifest_for_plan() -> None:
@@ -182,6 +203,26 @@ def test_manifest_for_plan() -> None:
     assert "phase-" in spec.repeated_prefixes
     assert "overview" in spec.expected_keys
     assert "checklist" in spec.expected_keys
+
+
+def test_manifest_for_plan_section_labels_ordered() -> None:
+    spec = manifest_for("plan")
+    keys = [k for k, _ in spec.section_labels]
+    assert keys[0] == "overview"
+    assert "checklist" in keys
+    for key, label in spec.section_labels:
+        assert key
+        assert label
+
+
+def test_manifest_expected_keys_derives_from_section_labels() -> None:
+    from feature_skills_webapp.storage.doc_content import ManifestSpec
+
+    spec = ManifestSpec(
+        shape="sections",
+        section_labels=(("alpha", "Alpha"), ("beta", "Beta"), ("gamma", "Gamma")),
+    )
+    assert spec.expected_keys == ("alpha", "beta", "gamma")
 
 
 def test_manifest_for_features_is_opaque() -> None:
