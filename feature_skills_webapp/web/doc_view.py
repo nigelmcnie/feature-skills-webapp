@@ -1,16 +1,32 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 from urllib.parse import quote
 
+from markupsafe import Markup
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 
+from feature_skills_webapp.storage.doc_content import manifest_for
+from feature_skills_webapp.storage.doc_render import extract_safe_inner, render_section_doc
 from feature_skills_webapp.storage.inbox import doc_type_rank, humanise_type
 from feature_skills_webapp.storage.read_state import mark_read
+from feature_skills_webapp.storage.versions import current_content
 from feature_skills_webapp.storage.walker import FEEDBACK_SUFFIX
 from feature_skills_webapp.web.db_dep import request_conn
+
+_STATIC_DIR = Path(__file__).parent / "static"
+
+
+def _static_v(filename: str) -> str:
+    """Return the mtime of a static file as a cache-buster version string."""
+    try:
+        return str(int((_STATIC_DIR / filename).stat().st_mtime))
+    except OSError:
+        return "0"
+
 
 ROW_SQL = (
     "SELECT d.id, d.type, d.status, d.source_path, d.content_html, "
@@ -74,7 +90,39 @@ async def doc_shell(request: Request) -> Response:
         nav: tuple[sqlite3.Row | None, sqlite3.Row | None] = (None, None)
         if row["feature"] is not None and row["status"] == "active":
             nav = siblings(conn, row["feature_id"], doc_id)
+
+        # Determine render mode and build body_html
+        body_html: Markup = Markup("")
+        mode: str
+        if not available:
+            mode = "unavailable"
+        elif is_synthesis:
+            mode = "framed"
+        else:
+            content = current_content(conn, doc_id)
+            if content is None:
+                mode = "raw-fallback"
+            elif content.shape == "opaque":
+                body_html = extract_safe_inner(content.sections[0].body)
+                mode = "native"
+            else:
+                manifest = manifest_for(row["type"])
+                body_html = render_section_doc(content, manifest)
+                mode = "native"
+
+        comments_prefill: list[dict[str, object]] = []
+        if mode == "native" and is_commentable:
+            rows = conn.execute(
+                "SELECT id, excerpt, text FROM comments "
+                "WHERE document_id = ? AND status = 'active' ORDER BY id",
+                (doc_id,),
+            ).fetchall()
+            comments_prefill = [
+                {"id": r["id"], "excerpt": r["excerpt"] or "", "text": r["text"]} for r in rows
+            ]
+
         mark_read(conn, doc_id)  # own transaction; after the read
+
     prev, nxt = nav
     return app.state.templates.TemplateResponse(
         request,
@@ -84,10 +132,15 @@ async def doc_shell(request: Request) -> Response:
             "crumbs": crumbs,
             "available": available,
             "raw_url": f"/doc/{doc_id}/raw",
+            "mode": mode,
+            "body_html": body_html,
             "is_synthesis": is_synthesis,
             "synthesis_post_url": f"/doc/{doc_id}/synthesis-response",
             "is_commentable": is_commentable,
             "comment_post_url": f"/doc/{doc_id}/comments",
+            "comments_prefill_json": Markup(json.dumps(comments_prefill)),
+            "css_v": _static_v("doc.css"),
+            "js_v": _static_v("doc.js"),
             "prev": {"id": prev["id"], "label": humanise_type(prev["type"])} if prev else None,
             "next": {"id": nxt["id"], "label": humanise_type(nxt["type"])} if nxt else None,
         },

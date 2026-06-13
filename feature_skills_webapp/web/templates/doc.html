@@ -2,36 +2,42 @@
 <html lang="en"><head>
 <meta charset="UTF-8"><meta name="color-scheme" content="dark">
 <title>{{ crumbs[-1][0] }} — feature-skills-webapp</title>
+{% if mode == "native" %}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11/build/styles/atom-one-dark.min.css">
+<link rel="stylesheet" href="/static/doc.css?v={{ css_v }}">
+{% else %}
 <style>
-  :root { --bar-h: 48px; --action-h: 60px; --bg:#1c1917; --surface:#292524; --border:#44403c;
+  :root { --bar-h: 48px; --bg:#1c1917; --surface:#292524; --border:#44403c;
           --text:#fafaf9; --text-faint:#a8a29e; --accent:#f59e0b; }
   * { box-sizing: border-box; }
   html, body { margin:0; padding:0; height:100%; background:var(--bg); color:var(--text);
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
-  .doc-bar { height:var(--bar-h); display:flex; align-items:center;
-    justify-content:space-between; gap:16px; padding:0 16px;
-    border-bottom:1px solid var(--border); background:var(--surface); }
+  .doc-bar { height:var(--bar-h); display:flex; align-items:center; justify-content:space-between;
+    gap:16px; padding:0 16px; border-bottom:1px solid var(--border); background:var(--surface); }
   .crumbs { display:flex; align-items:center; gap:8px; font-size:0.9rem; min-width:0; }
   .crumbs .sep { color:var(--text-faint); }
   .crumbs a { color:var(--accent); text-decoration:none; }
-  .view-source { color:var(--text-faint); font-size:0.85rem; text-decoration:none; white-space:nowrap; }
-  .doc-frame { width:100%; height:calc(100vh - var(--bar-h)); border:0; display:block; }
-  body.has-actionbar .doc-frame { height:calc(100vh - var(--bar-h) - var(--action-h)); }
-  .unavailable { padding:48px; text-align:center; color:var(--text-faint); }
   .bar-right { display:flex; align-items:center; gap:16px; flex-shrink:0; }
   .sibling-nav { display:flex; align-items:center; gap:8px; font-size:0.85rem; }
   .sibling-nav a { color:var(--accent); text-decoration:none; white-space:nowrap; }
-  .sibling-nav a:hover { text-decoration:underline; }
   .sibling-nav .sep { color:var(--text-faint); }
-  .doc-actionbar { height:var(--action-h); display:flex; align-items:center;
-    justify-content:flex-end; gap:16px; padding:0 24px;
-    border-top:1px solid var(--border); background:var(--surface); }
+  .view-source { color:var(--text-faint); font-size:0.85rem; text-decoration:none; white-space:nowrap; }
+  .doc-frame { width:100%; height:calc(100vh - var(--bar-h)); border:0; display:block; }
+  body.has-actionbar .doc-frame { height:calc(100vh - var(--bar-h) - 60px); }
+  .unavailable { padding:48px; text-align:center; color:var(--text-faint); }
+  .doc-actionbar { position:fixed; bottom:0; left:0; right:0; background:var(--surface);
+    border-top:1px solid var(--border); padding:14px 32px; display:flex; align-items:center;
+    justify-content:flex-end; gap:16px; z-index:20; }
   .action-hint { color:var(--text-faint); font-size:0.85rem; }
   .submit-cta { background:var(--accent); color:var(--bg); border:none; padding:11px 28px;
     border-radius:6px; font-size:1rem; font-weight:700; cursor:pointer; white-space:nowrap; }
   .submit-cta:disabled { opacity:0.5; cursor:not-allowed; }
   .submit-cta.btn-success { background:#4ade80; cursor:not-allowed; }
-</style></head><body class="{% if available and (is_synthesis or is_commentable) %}has-actionbar{% endif %}">
+</style>
+{% endif %}
+</head>
+<body{% if mode != "native" and available and is_synthesis %} class="has-actionbar"{% endif %}>
+
 <header class="doc-bar">
   <nav class="crumbs">
     {% for label, href in crumbs %}
@@ -50,57 +56,61 @@
     {% if available %}<a class="view-source" href="{{ raw_url }}" target="_blank">View source file</a>{% endif %}
   </div>
 </header>
-{% if available %}
-  <iframe class="doc-frame" src="{{ raw_url }}" title="document"></iframe>
-{% else %}
-  <div class="unavailable">This document is no longer available.</div>
+
+{% if mode == "native" %}
+
+<div class="layout" id="layout">
+  <nav class="toc" aria-label="Document sections">
+    <h3>Contents</h3>
+    <ul id="toc-list"></ul>
+  </nav>
+
+  <main class="document" id="doc-main">
+    {{ body_html }}
+  </main>
+
+  <aside class="comments-rail" id="comments-rail" aria-label="Comments">
+    <h3>Comments (<span id="rail-count">0</span>)</h3>
+    <div id="rail-list"></div>
+  </aside>
+</div>
+
+{% if is_commentable %}
+<div class="comment-trigger" id="comment-trigger" role="button" tabindex="0" aria-label="Add comment">💬 Comment</div>
+<div class="comment-popover" id="comment-popover" role="dialog" aria-modal="true" aria-label="Add comment">
+  <div class="context-excerpt" id="popover-excerpt"></div>
+  <textarea id="popover-textarea" placeholder="Note about this passage…" aria-label="Comment text"></textarea>
+  <div class="actions">
+    <button id="popover-cancel">Cancel</button>
+    <button id="popover-save" class="primary">Save</button>
+  </div>
+</div>
+<footer class="doc-actionbar">
+  <div class="status"><span class="count" id="rail-count-footer">0</span> comments</div>
+  <button id="comment-submit-btn" class="submit-cta" disabled>Submit comments</button>
+</footer>
 {% endif %}
-{% if available and is_synthesis %}
+
+<script>
+  window.__commentable = {{ 'true' if is_commentable else 'false' }};
+  {% if is_commentable %}
+  window.__commentPostUrl = "{{ comment_post_url }}";
+  window.__prefillComments = {{ comments_prefill_json }};
+  {% endif %}
+</script>
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11/build/highlight.min.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11/build/languages/python.min.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11/build/languages/bash.min.js"></script>
+<script>document.addEventListener('DOMContentLoaded', function(){ if(window.hljs) hljs.highlightAll(); });</script>
+<script src="/static/doc.js?v={{ js_v }}"></script>
+
+{% elif mode == "framed" %}
+
+<iframe class="doc-frame" src="{{ raw_url }}" title="document"></iframe>
 <footer class="doc-actionbar">
   <span class="action-hint">Answer in the doc above, then submit →</span>
   <button id="submit-btn" class="submit-cta" disabled>Submit response</button>
 </footer>
-{% endif %}
-{% if available and is_commentable %}
-<footer class="doc-actionbar">
-  <span class="action-hint">Leave comments in the doc above, then submit →</span>
-  <button id="comment-submit-btn" class="submit-cta" disabled>Submit comments</button>
-</footer>
-{% endif %}
-{% if is_commentable %}
-<script>
-(function() {
-  var commentBtn = document.getElementById('comment-submit-btn');
-  var frame = document.querySelector('.doc-frame');
-  if (!commentBtn || !frame) return;
-  frame.addEventListener('load', function() { commentBtn.disabled = false; });
-  commentBtn.addEventListener('click', async function() {
-    var data = (frame.contentWindow && frame.contentWindow.__fsComments) || [];
-    var payload = data.map(function(c) { return { excerpt: c.excerpt, text: c.text }; });
-    commentBtn.disabled = true;
-    commentBtn.textContent = 'Submitting…';
-    try {
-      var resp = await fetch('{{ comment_post_url }}', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({comments: payload}),
-      });
-      if (resp.ok) {
-        commentBtn.textContent = 'Submitted ✓';
-        commentBtn.classList.add('btn-success');
-      } else {
-        commentBtn.disabled = false;
-        commentBtn.textContent = 'Submit failed — try again';
-      }
-    } catch (e) {
-      commentBtn.disabled = false;
-      commentBtn.textContent = 'Submit failed — try again';
-    }
-  });
-})();
-</script>
-{% endif %}
-{% if is_synthesis %}
 <script>
 (function() {
   var submitBtn = document.getElementById('submit-btn');
@@ -112,7 +122,7 @@
     var textareas = fdoc ? fdoc.querySelectorAll('.your-thoughts textarea') : [];
     if (!textareas.length) {
       submitBtn.disabled = true;
-      submitBtn.textContent = "Couldn’t read this doc";
+      submitBtn.textContent = "Couldn't read this doc";
       return;
     }
     var responses = {};
@@ -145,5 +155,15 @@
   });
 })();
 </script>
+
+{% else %}{# unavailable or raw-fallback #}
+
+{% if available %}
+  <iframe class="doc-frame" src="{{ raw_url }}" title="document"></iframe>
+{% else %}
+  <div class="unavailable">This document is no longer available.</div>
 {% endif %}
+
+{% endif %}
+
 </body></html>
