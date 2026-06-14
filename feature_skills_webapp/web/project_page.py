@@ -5,6 +5,7 @@ import sqlite3
 from starlette.requests import Request
 from starlette.responses import JSONResponse, PlainTextResponse, Response
 
+from feature_skills_webapp.storage.retro_findings import list_findings
 from feature_skills_webapp.web.db_dep import request_conn
 
 
@@ -30,6 +31,7 @@ async def project_page(request: Request) -> Response:
             "WHERE project_id = ? AND feature_id IS NULL AND status = 'active'",
             (proj["id"],),
         ).fetchone()
+        findings = list_findings(conn, proj["id"])
 
     in_progress = [f for f in feats if f["status"] == "in_progress"]
     available = [f for f in feats if f["status"] == "available"]
@@ -51,5 +53,6 @@ async def project_page(request: Request) -> Response:
             "available": [_feat(f) for f in available],
             "done": [_feat(f) for f in done],
             "tracker_id": tracker["id"] if tracker else None,
+            "findings": findings,
         },
     )

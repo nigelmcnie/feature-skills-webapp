@@ -78,6 +78,40 @@
   /* Done group de-emphasised */
   .feat-group.done-group { opacity: 0.65; }
   .feat-group.done-group h2 { color: var(--text-faint); }
+
+  /* Process findings panel */
+  .findings-panel { margin-top: 40px; padding-top: 24px; border-top: 1px solid var(--border); }
+  .findings-panel h2 {
+    font-size: 0.78rem; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.07em; color: var(--text-faint); margin: 0 0 14px;
+  }
+  .finding-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 6px; padding: 12px 14px; margin-bottom: 8px;
+  }
+  .finding-card.terminal { opacity: 0.5; }
+  .finding-header { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+  .finding-title { font-weight: 500; color: var(--text); flex: 1; font-size: 0.95rem; }
+  .finding-badge {
+    font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.05em; padding: 2px 7px; border-radius: 3px;
+    background: var(--accent-soft); color: var(--accent); white-space: nowrap;
+  }
+  .finding-feature { font-size: 0.75rem; color: var(--text-faint); white-space: nowrap; }
+  .finding-body { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 8px; }
+  .finding-body p { margin: 0 0 4px; }
+  .finding-body p:last-child { margin-bottom: 0; }
+  .status-buttons { display: flex; gap: 6px; flex-wrap: wrap; }
+  .status-btn {
+    padding: 4px 10px; border-radius: 4px; border: 1px solid var(--border);
+    background: transparent; color: var(--text-muted); cursor: pointer;
+    font-size: 0.78rem; font-family: inherit;
+  }
+  .status-btn:hover { border-color: var(--accent); color: var(--text); }
+  .status-btn.active {
+    background: var(--accent-soft); border-color: var(--accent);
+    color: var(--accent); font-weight: 600;
+  }
 </style>
 </head>
 <body>
@@ -154,6 +188,39 @@
   <p style="color: var(--text-faint); font-size: 0.9rem;">No features yet.</p>
   {% endif %}
 
+  {% if findings %}
+  <section class="findings-panel">
+    <h2>Process findings</h2>
+    {% for f in findings %}
+    <div class="finding-card{% if f.status in ('actioned', 'rejected') %} terminal{% endif %}"
+         data-finding-id="{{ f.id }}">
+      <div class="finding-header">
+        <span class="finding-title">{{ f.title }}</span>
+        {% if f.recurrence_count > 0 %}
+        <span class="finding-badge">↺ {{ f.recurrence_count }}×</span>
+        {% endif %}
+        {% if f.feature %}
+        <span class="finding-feature">{{ f.feature }}</span>
+        {% endif %}
+      </div>
+      {% if f.evidence or f.change %}
+      <div class="finding-body">
+        {% if f.evidence %}<p>{{ f.evidence }}</p>{% endif %}
+        {% if f.change %}<p><em>→ {{ f.change }}</em></p>{% endif %}
+      </div>
+      {% endif %}
+      <div class="status-buttons">
+        {% for s in ('open', 'deferred', 'actioned', 'rejected') %}
+        <button class="status-btn{% if f.status == s %} active{% endif %}"
+                data-status="{{ s }}"
+                aria-label="Set status to {{ s }}">{{ s }}</button>
+        {% endfor %}
+      </div>
+    </div>
+    {% endfor %}
+  </section>
+  {% endif %}
+
 </div>
 <script>
   const es = new EventSource('/events');
@@ -164,6 +231,20 @@
   };
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) location.reload();
+  });
+
+  document.querySelectorAll('.finding-card').forEach(card => {
+    const findingId = card.dataset.findingId;
+    card.querySelectorAll('.status-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        fetch(`/retro-findings/${findingId}/status`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({status: btn.dataset.status}),
+        });
+        // Rely on the SSE broadcast from the server to reload the page.
+      });
+    });
   });
 </script>
 </body>

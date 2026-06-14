@@ -15,7 +15,11 @@ from feature_skills_webapp.web.doc_view import doc_raw, doc_shell
 from feature_skills_webapp.web.events import events
 from feature_skills_webapp.web.feature_page import feature_page
 from feature_skills_webapp.web.project_page import project_page
-from feature_skills_webapp.web.retro_findings import get_retro_findings, post_retro_findings
+from feature_skills_webapp.web.retro_findings import (
+    get_retro_findings,
+    post_retro_finding_status,
+    post_retro_findings,
+)
 from feature_skills_webapp.web.routes import (
     admin_discover,
     admin_mark_new_since_read,
@@ -93,6 +97,11 @@ def create_app(db_path: Path | None, docs_root: Path | None = None) -> Starlette
             Route("/comments/integrate", post_comments_integrate, methods=["POST"]),
             Route("/retro-findings", post_retro_findings, methods=["POST"]),
             Route("/retro-findings", get_retro_findings),
+            Route(
+                "/retro-findings/{finding_id:int}/status",
+                post_retro_finding_status,
+                methods=["POST"],
+            ),
             Mount("/static", StaticFiles(directory=STATIC_DIR)),
         ],
         lifespan=lifespan,

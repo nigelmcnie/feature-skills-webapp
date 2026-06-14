@@ -390,3 +390,209 @@ def test_recurs_from_nonexistent_finding_rejected(temp_db: Path) -> None:
         },
     )
     assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# POST /retro-findings/{id}/status  (Phase 2)
+# ---------------------------------------------------------------------------
+
+
+def _seed_finding(db_path: Path, proj_id: int, *, status: str = "open") -> int:
+    """Directly insert a run + finding; return the finding id."""
+    conn = connect(db_path)
+    now = "2026-06-14T00:00:00+00:00"
+    with transaction(conn):
+        conn.execute(
+            "INSERT INTO retro_runs (project_id, run_key, created_at) VALUES (?, 'seed-run', ?)",
+            (proj_id, now),
+        )
+        run_id: int = conn.execute(
+            "SELECT id FROM retro_runs WHERE run_key='seed-run' AND project_id=?", (proj_id,)
+        ).fetchone()["id"]
+        conn.execute(
+            "INSERT INTO retro_findings "
+            "(run_id, project_id, title, status, created_at, updated_at) "
+            "VALUES (?, ?, 'Seeded finding', ?, ?, ?)",
+            (run_id, proj_id, status, now, now),
+        )
+        fid: int = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+    conn.close()
+    return fid
+
+
+def test_status_update_happy_path(temp_db: Path) -> None:
+    proj_id = _seed_project(temp_db)
+    fid = _seed_finding(temp_db, proj_id)
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post(f"/retro-findings/{fid}/status", json={"status": "actioned"})
+    assert resp.status_code == 200
+    assert resp.json() == {"id": fid, "status": "actioned"}
+
+
+def test_status_update_excluded_from_get_filter(temp_db: Path) -> None:
+    proj_id = _seed_project(temp_db)
+    fid = _seed_finding(temp_db, proj_id)
+    with TestClient(create_app(db_path=temp_db)) as client:
+        client.post(f"/retro-findings/{fid}/status", json={"status": "actioned"})
+        findings = client.get("/retro-findings?project=proj").json()["findings"]
+    assert not any(f["id"] == fid for f in findings)
+
+
+def test_status_update_writes_events_row(temp_db: Path) -> None:
+    proj_id = _seed_project(temp_db)
+    fid = _seed_finding(temp_db, proj_id, status="open")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        client.post(f"/retro-findings/{fid}/status", json={"status": "deferred"})
+
+    conn = connect(temp_db)
+    row = conn.execute(
+        "SELECT event_type, payload_json FROM events "
+        "WHERE event_type = 'retro_finding_status_changed' LIMIT 1"
+    ).fetchone()
+    conn.close()
+    assert row is not None
+    import json as _json
+
+    payload = _json.loads(row["payload_json"])
+    assert payload["finding_id"] == fid
+    assert payload["old_status"] == "open"
+    assert payload["new_status"] == "deferred"
+
+
+def test_status_noop_writes_no_event(temp_db: Path) -> None:
+    proj_id = _seed_project(temp_db)
+    fid = _seed_finding(temp_db, proj_id, status="open")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post(f"/retro-findings/{fid}/status", json={"status": "open"})
+    assert resp.status_code == 200
+
+    conn = connect(temp_db)
+    count = conn.execute(
+        "SELECT COUNT(*) AS n FROM events WHERE event_type='retro_finding_status_changed'"
+    ).fetchone()["n"]
+    conn.close()
+    assert count == 0
+
+
+def test_status_404_unknown_finding(temp_db: Path) -> None:
+    client = TestClient(create_app(db_path=temp_db))
+    resp = client.post("/retro-findings/99999/status", json={"status": "open"})
+    assert resp.status_code == 404
+
+
+def test_status_400_invalid_status(temp_db: Path) -> None:
+    client = TestClient(create_app(db_path=temp_db))
+    resp = client.post("/retro-findings/1/status", json={"status": "invalid"})
+    assert resp.status_code == 400
+
+
+def test_status_503_db_not_configured() -> None:
+    client = TestClient(create_app(db_path=None))
+    resp = client.post("/retro-findings/1/status", json={"status": "open"})
+    assert resp.status_code == 503
+
+
+def test_status_broadcasts_on_real_change(temp_db: Path) -> None:
+    proj_id = _seed_project(temp_db)
+    fid = _seed_finding(temp_db, proj_id)
+    with TestClient(create_app(db_path=temp_db)) as client:
+        app = cast(Starlette, client.app)
+        q = app.state.broadcaster.register()
+        client.post(f"/retro-findings/{fid}/status", json={"status": "actioned"})
+        assert not q.empty()
+        app.state.broadcaster.unregister(q)
+
+
+def test_status_does_not_broadcast_on_noop(temp_db: Path) -> None:
+    proj_id = _seed_project(temp_db)
+    fid = _seed_finding(temp_db, proj_id, status="open")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        app = cast(Starlette, client.app)
+        q = app.state.broadcaster.register()
+        client.post(f"/retro-findings/{fid}/status", json={"status": "open"})
+        assert q.empty()
+        app.state.broadcaster.unregister(q)
+
+
+# ---------------------------------------------------------------------------
+# Project page — Process findings panel  (Phase 2)
+# ---------------------------------------------------------------------------
+
+
+def test_project_page_shows_finding_title(temp_db: Path, tmp_path: Path) -> None:
+    from feature_skills_webapp.storage.db import connect as db_connect
+
+    docs_root = tmp_path / "docs"
+    (docs_root / "proj" / "feat-a").mkdir(parents=True)
+    (docs_root / "proj" / "feat-a" / "context.html").write_text(
+        '<!DOCTYPE html><html><head><meta charset="UTF-8">'
+        '<meta name="feature-doc-type" content="context"><title>ctx</title>'
+        "</head><body>ctx</body></html>"
+    )
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        conn = db_connect(temp_db)
+        proj_id = conn.execute("SELECT id FROM projects WHERE name='proj'").fetchone()["id"]
+        now = "2026-01-01T00:00:00+00:00"
+        with transaction(conn):
+            conn.execute(
+                "INSERT INTO retro_runs (project_id, run_key, created_at) VALUES (?, 'r', ?)",
+                (proj_id, now),
+            )
+            run_id = conn.execute("SELECT id FROM retro_runs WHERE run_key='r'").fetchone()["id"]
+            conn.execute(
+                "INSERT INTO retro_findings "
+                "(run_id, project_id, title, status, created_at, updated_at) "
+                "VALUES (?, ?, 'My important finding', 'open', ?, ?)",
+                (run_id, proj_id, now, now),
+            )
+        conn.close()
+        resp = client.get("/project/proj")
+    assert resp.status_code == 200
+    assert "My important finding" in resp.text
+    assert "Process findings" in resp.text
+
+
+def test_project_page_shows_recurrence_badge(temp_db: Path, tmp_path: Path) -> None:
+    from feature_skills_webapp.storage.db import connect as db_connect
+
+    docs_root = tmp_path / "docs"
+    (docs_root / "proj" / "feat-a").mkdir(parents=True)
+    (docs_root / "proj" / "feat-a" / "context.html").write_text(
+        '<!DOCTYPE html><html><head><meta charset="UTF-8">'
+        '<meta name="feature-doc-type" content="context"><title>ctx</title>'
+        "</head><body>ctx</body></html>"
+    )
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        conn = db_connect(temp_db)
+        proj_id = conn.execute("SELECT id FROM projects WHERE name='proj'").fetchone()["id"]
+        now = "2026-01-01T00:00:00+00:00"
+        with transaction(conn):
+            conn.execute(
+                "INSERT INTO retro_runs (project_id, run_key, created_at) VALUES (?, 'r1', ?)",
+                (proj_id, now),
+            )
+            run1_id = conn.execute("SELECT id FROM retro_runs WHERE run_key='r1'").fetchone()["id"]
+            conn.execute(
+                "INSERT INTO retro_findings "
+                "(run_id, project_id, title, status, created_at, updated_at) "
+                "VALUES (?, ?, 'Original', 'open', ?, ?)",
+                (run1_id, proj_id, now, now),
+            )
+            parent_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute(
+                "INSERT INTO retro_runs (project_id, run_key, created_at) VALUES (?, 'r2', ?)",
+                (proj_id, now),
+            )
+            run2_id = conn.execute("SELECT id FROM retro_runs WHERE run_key='r2'").fetchone()["id"]
+            conn.execute(
+                "INSERT INTO retro_findings "
+                "(run_id, project_id, title, status, recurs_from, created_at, updated_at) "
+                "VALUES (?, ?, 'Recurring', 'open', ?, ?, ?)",
+                (run2_id, proj_id, parent_id, now, now),
+            )
+        conn.close()
+        resp = client.get("/project/proj")
+    assert resp.status_code == 200
+    assert "finding-badge" in resp.text
