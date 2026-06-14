@@ -12,6 +12,7 @@
 | Feature | Notes |
 |---|---|
 | [agent-submission-api](docs/features/agent-submission-api/context.md) | Post-F2 cross-agent write contract — Claude & Codex submit structured doc updates by logical key (HTTP core + MCP facade) instead of writing files. |
+| retro-recurrence-trend | Split from retro-findings-capture: surface a finding's recurrence depth ("raised in N retros") as an explicit trend and feed it back into the `/feature-retro` prompt to nudge persistent findings toward becoming tracked features. Design once retro-findings-capture has run in anger. |
 
 ## Suggested order
 
