@@ -200,3 +200,10 @@ Decisions captured during review iteration:
 - **Round 1 — recurrence surfaced in-session.** The highest- leverage moment to note "this was flagged before" is during the retro, not only later in the inbox.
 - **Round 1 — Phase 3 (recurrence trend) split out** to a separate tracked feature; its right design depends on data Phases 1–2 will produce.
 - **Round 1 — trust boundary stated.** Localhost-only and unauthenticated, as today; multi-machine auth is a named follow-up.
+
+## Review decisions
+
+**Round 1 (post-merge review).** The merged implementation matched the plan and requirements with no correctness issues — the migration, the idempotent replace-by-run capture, the `recurs_from` self-run/cross-project guards (correctly returning 400, not 500), the no-op status audit suppression, template escaping, and the localhost trust boundary all verified. QC clean on main (ruff, ty, 452 tests).
+
+- **Fixed:** the one gap — decision 6's "original re-posted later" branch (a child's `recurs_from` dropping to NULL when the original's run is replaced) had no direct test. Added `test_reposting_original_run_nulls_child_recurs_from` pinning the `ON DELETE SET NULL` behaviour (child survives with a null link, re-post returns 200 not a FK 500).
+- **Declined:** factoring the duplicated `recurrence_count` COUNT subquery into a shared helper between the GET endpoint and the read model — the plan called this refactor optional and it isn't worth the churn.

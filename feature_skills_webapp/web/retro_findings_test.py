@@ -155,6 +155,54 @@ def test_recurrence_round_trip(temp_db: Path) -> None:
         assert original["recurrence_count"] == 1
 
 
+def test_reposting_original_run_nulls_child_recurs_from(temp_db: Path) -> None:
+    """Re-posting the original's run drops a child's recurs_from to NULL, not a 500.
+
+    Decision 6's "original re-posted later" branch: the original finding's run is
+    re-posted, deleting and recreating that finding with a new id. The child in a
+    *different* run that pointed at it must have its recurs_from set to NULL
+    (ON DELETE SET NULL) rather than dangling or raising on the FK.
+    """
+    _seed_project(temp_db)
+    with TestClient(create_app(db_path=temp_db)) as client:
+        # Run A: the original finding.
+        client.post(
+            "/retro-findings",
+            json={
+                "project": "proj",
+                "run": {"key": "run-a"},
+                "findings": [{"title": "Original finding"}],
+            },
+        )
+        original_id = client.get("/retro-findings?project=proj").json()["findings"][0]["id"]
+
+        # Run B (a different run): a recurrence citing the original.
+        client.post(
+            "/retro-findings",
+            json={
+                "project": "proj",
+                "run": {"key": "run-b"},
+                "findings": [{"title": "Recurrence", "recurs_from": original_id}],
+            },
+        )
+
+        # Re-post run A — deletes the original (cascade) and recreates it.
+        resp = client.post(
+            "/retro-findings",
+            json={
+                "project": "proj",
+                "run": {"key": "run-a"},
+                "findings": [{"title": "Original finding, reworded"}],
+            },
+        )
+        assert resp.status_code == 200  # not a 500 on the FK
+
+        # The child survives with its link nulled (SET NULL), not dangling.
+        findings = client.get("/retro-findings?project=proj").json()["findings"]
+        child = next(f for f in findings if f["title"] == "Recurrence")
+        assert child["recurs_from"] is None
+
+
 def test_self_run_recurs_from_rejected(temp_db: Path) -> None:
     """A finding citing recurs_from belonging to the run being replaced → 400."""
     _seed_project(temp_db)
