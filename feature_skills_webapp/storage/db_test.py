@@ -21,6 +21,8 @@ EXPECTED_TABLES = {
     "comments",
     "events",
     "schema_version",
+    "retro_runs",
+    "retro_findings",
 }
 
 
@@ -38,10 +40,10 @@ def test_connect_foreign_keys(tmp_path: Path) -> None:
     conn.close()
 
 
-def test_migrate_fresh_returns_version_3(tmp_path: Path) -> None:
+def test_migrate_fresh_returns_version_4(tmp_path: Path) -> None:
     conn = connect(tmp_path / "test.db")
     version = migrate(conn)
-    assert version == 3
+    assert version == 4
     conn.close()
 
 
@@ -53,7 +55,7 @@ def test_migrate_idempotent(tmp_path: Path) -> None:
 
     conn = connect(db)
     version = migrate(conn)
-    assert version == 3
+    assert version == 4
     conn.close()
 
 
@@ -61,7 +63,7 @@ def test_schema_version_after_migrate(tmp_path: Path) -> None:
     conn = connect(tmp_path / "test.db")
     migrate(conn)
     v = current_version(conn)
-    assert v == 3
+    assert v == 4
     conn.close()
 
 
@@ -233,12 +235,29 @@ def test_migrate_v1_to_v2_upgrade_path(tmp_path: Path) -> None:
     assert "status" not in cols_v1
     assert "project_id" not in cols_v1
 
-    # Run the real migration set: upgrades 1 -> 3 in place.
-    assert migrate(conn) == 3
-    assert current_version(conn) == 3
+    # Run the real migration set: upgrades 1 -> 4 in place.
+    assert migrate(conn) == 4
+    assert current_version(conn) == 4
     cols_v2 = {r["name"] for r in conn.execute("PRAGMA table_info(documents)").fetchall()}
     assert "status" in cols_v2
     assert "project_id" in cols_v2
+    conn.close()
+
+
+def test_migration_0004_retro_tables_and_indexes(tmp_path: Path) -> None:
+    conn = connect(tmp_path / "test.db")
+    migrate(conn)
+    rows = conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+    tables = {r["name"] for r in rows}
+    assert "retro_runs" in tables
+    assert "retro_findings" in tables
+
+    idx_rows = conn.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall()
+    indexes = {r["name"] for r in idx_rows}
+    assert "idx_retro_runs_project" in indexes
+    assert "idx_retro_findings_project" in indexes
+    assert "idx_retro_findings_run" in indexes
+    assert "idx_retro_findings_recurs_from" in indexes
     conn.close()
 
 
