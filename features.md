@@ -5,6 +5,7 @@
 | Feature | Owner | Notes |
 |---|---|---|
 | [server-rendered-docs](docs/features/server-rendered-docs/context.md) | Nigel | F2 of the structured-content arc — render docs server-side from the DB, drop the iframe, re-home comments & synthesis as native UI. F1 (versioned-content-store) shipped. |
+| [retro-findings-capture](docs/features/retro-findings-capture/context.md) | Nigel | Persist `/feature-retro` findings (incl. the surfacing-calibration pass) so the continuous-refinement loop compounds — track which recur and which were actioned, instead of re-discovering each session. |
 
 ## Available
 
