@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any, cast
 
 from starlette.requests import Request
@@ -11,6 +12,7 @@ from feature_skills_webapp.storage.db import now_iso, transaction
 from feature_skills_webapp.web.db_dep import request_conn
 
 _MAX_VALUE_BYTES = 1024 * 1024  # 1 MB
+_ALLOWED_STATUS = {"open", "actioned", "deferred", "rejected"}
 
 
 def _check_optional_str(value: Any, field: str) -> str | None:
@@ -211,3 +213,60 @@ async def get_retro_findings(request: Request) -> JSONResponse:
         for r in rows
     ]
     return JSONResponse({"project": project, "findings": findings})
+
+
+async def post_retro_finding_status(request: Request) -> JSONResponse:
+    if request.app.state.db_path is None:
+        return JSONResponse({"error": "db not configured"}, status_code=503)
+
+    finding_id: int = request.path_params["finding_id"]
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid JSON"}, status_code=400)
+
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "body must be a JSON object"}, status_code=400)
+
+    new_status = body.get("status")
+    if new_status not in _ALLOWED_STATUS:
+        return JSONResponse(
+            {"error": f"status must be one of: {', '.join(sorted(_ALLOWED_STATUS))}"},
+            status_code=400,
+        )
+
+    with request_conn(request.app) as conn:
+        row = conn.execute(
+            "SELECT id, status FROM retro_findings WHERE id = ?", (finding_id,)
+        ).fetchone()
+        if row is None:
+            return JSONResponse({"error": "finding not found"}, status_code=404)
+
+        old_status: str = row["status"]
+        if new_status == old_status:
+            return JSONResponse({"id": finding_id, "status": old_status})
+
+        now = now_iso()
+        with transaction(conn):
+            conn.execute(
+                "UPDATE retro_findings SET status = ?, updated_at = ? WHERE id = ?",
+                (new_status, now, finding_id),
+            )
+            conn.execute(
+                "INSERT INTO events (document_id, event_type, payload_json, created_at) "
+                "VALUES (NULL, 'retro_finding_status_changed', ?, ?)",
+                (
+                    json.dumps(
+                        {
+                            "finding_id": finding_id,
+                            "old_status": old_status,
+                            "new_status": new_status,
+                        }
+                    ),
+                    now,
+                ),
+            )
+
+    request.app.state.broadcaster.broadcast()
+    return JSONResponse({"id": finding_id, "status": new_status})
