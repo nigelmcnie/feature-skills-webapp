@@ -13,6 +13,7 @@
 | [agent-submission-api](docs/features/agent-submission-api/context.md) | Post-F2 cross-agent write contract — Claude & Codex submit structured doc updates by logical key (HTTP core + MCP facade) instead of writing files. |
 | retro-recurrence-trend | Split from retro-findings-capture: surface a finding's recurrence depth ("raised in N retros") as an explicit trend and feed it back into the `/feature-retro` prompt to nudge persistent findings toward becoming tracked features. Design once retro-findings-capture has run in anger. |
 | [event-driven-synthesis-wait](docs/features/event-driven-synthesis-wait/context.md) | Replace the skills' 5s busy-poll of `GET /synthesis-response` with an event-driven wait (blocking long-poll backed by the existing broadcaster/SSE), so the agent makes one call, idles silently, and wakes on submission — killing the hourly "still polling" re-announce on long waits. |
+| [flagged-inbox-diff](docs/features/flagged-inbox-diff/context.md) | The arc's payoff (needs F1+F2, both shipped): flag *why* a doc re-surfaced in the inbox and show a section-aware diff defaulting on for content changes — the original "haven't we done this already?" fix. |
 
 ## Suggested order
 
