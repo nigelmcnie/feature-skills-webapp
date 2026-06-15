@@ -207,3 +207,7 @@ Decisions captured during review iteration:
 
 - **Fixed:** the one gap — decision 6's "original re-posted later" branch (a child's `recurs_from` dropping to NULL when the original's run is replaced) had no direct test. Added `test_reposting_original_run_nulls_child_recurs_from` pinning the `ON DELETE SET NULL` behaviour (child survives with a null link, re-post returns 200 not a FK 500).
 - **Declined:** factoring the duplicated `recurrence_count` COUNT subquery into a shared helper between the GET endpoint and the read model — the plan called this refactor optional and it isn't worth the churn.
+
+**Round 2 (producer-side wiring).** Reviewing the `feature-skills` producer changes that close the contract.
+
+- **Reversed:** the run-key obligation. The plan's HTTP contract specified a key *stable across re-posts of the same retro* (so a re-run replaces). The shipped producer instead mints a fresh key per `/feature-retro` invocation, and that's the chosen behaviour: it keeps the planner's and implementer's retros on one feature as distinct runs. Consequence (accepted): the webapp's replace-by-run-key idempotency only catches an in-session retry that reuses the key, never a genuine re-run — a re-roll appends a new run rather than replacing. Per-invocation keys judged the better trade-off than conflating distinct retros.
