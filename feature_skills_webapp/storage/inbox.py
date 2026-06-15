@@ -5,8 +5,12 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 
-from feature_skills_webapp.storage.read_state import mark_documents_read
+from feature_skills_webapp.storage.doc_content import manifest_for
+from feature_skills_webapp.storage.doc_diff import diff_contents
+from feature_skills_webapp.storage.read_state import last_read_at, mark_documents_read
+from feature_skills_webapp.storage.versions import content_at_or_before, current_content
 from feature_skills_webapp.storage.walker import FEEDBACK_SUFFIX
 
 SHIPPED_RECENT_DAYS = 30
@@ -43,6 +47,14 @@ def doc_type_rank(doc_type: str) -> int:
 
 
 @dataclass(frozen=True)
+class InboxReason:
+    kind: Literal["new", "content", "comments"]
+    label: str
+    changed_count: int = 0
+    has_diff: bool = False
+
+
+@dataclass(frozen=True)
 class InboxCard:
     project: str
     feature: str | None
@@ -50,6 +62,8 @@ class InboxCard:
     last_activity: str | None
     document_id: int | None = None
     badge: str = "context"
+    reason: InboxReason | None = None
+    href: str | None = None
 
 
 @dataclass(frozen=True)
@@ -98,6 +112,62 @@ def _shipped_card(r: sqlite3.Row) -> InboxCard:
     )
 
 
+_CONTENT_EVENTS = frozenset({"created", "updated", "reactivated"})
+_COMMENT_EVENTS = frozenset({"comment_submitted", "comment_integrated"})
+
+
+def _humanise_section_key(key: str, labels_map: dict[str, str]) -> str:
+    if key in labels_map:
+        return labels_map[key]
+    return key.replace("-", " ").replace("_", " ").capitalize()
+
+
+def classify_reason(
+    conn: sqlite3.Connection, document_id: int, doc_type: str, last_read: str | None
+) -> InboxReason | None:
+    """Classify why a doc re-surfaced in the inbox.
+
+    Returns the reason, or None if no qualifying events exist beyond the baseline.
+    """
+    baseline = last_read or ""
+    rows = conn.execute(
+        "SELECT event_type FROM events WHERE document_id = ? AND created_at > ?",
+        (document_id, baseline),
+    ).fetchall()
+    if not rows:
+        return None
+
+    event_types = {r["event_type"] for r in rows}
+
+    if event_types & _CONTENT_EVENTS:
+        prior = content_at_or_before(conn, document_id, baseline)
+        if prior is None:
+            return InboxReason(kind="new", label="New")
+        curr = current_content(conn, document_id)
+        if curr is None:
+            return InboxReason(kind="new", label="New")
+        doc_diff = diff_contents(prior, curr)
+        if doc_diff.changed_count == 0:
+            return InboxReason(
+                kind="content", label="Updated (formatting only)", changed_count=0, has_diff=False
+            )
+        manifest = manifest_for(doc_type)
+        labels_map = dict(manifest.section_labels)
+        changed = doc_diff.changed_keys
+        n = len(changed)
+        names = [_humanise_section_key(k, labels_map) for k in changed[:2]]
+        if n <= 2:
+            label = "Updated — " + ", ".join(names)
+        else:
+            label = "Updated — " + ", ".join(names) + f" +{n - 2} more"
+        return InboxReason(kind="content", label=label, changed_count=n, has_diff=True)
+
+    if event_types & _COMMENT_EVENTS:
+        return InboxReason(kind="comments", label="Comments added")
+
+    return None
+
+
 def new_since_last_visit(
     conn: sqlite3.Connection, project_id: int | None = None
 ) -> list[InboxCard]:
@@ -121,7 +191,23 @@ def new_since_last_visit(
         params.append(project_id)
     # document_id is a stable secondary key so ties on last_activity have a deterministic order.
     sql += " ORDER BY last_activity DESC, document_id DESC"
-    return [_doc_card(r) for r in conn.execute(sql, params).fetchall()]
+    cards = []
+    for r in conn.execute(sql, params).fetchall():
+        card = _doc_card(r)
+        if card.document_id is not None:
+            read_ts = last_read_at(conn, card.document_id)
+            reason = classify_reason(conn, card.document_id, r["doc_type"], read_ts)
+            card = InboxCard(
+                project=card.project,
+                feature=card.feature,
+                label=card.label,
+                last_activity=card.last_activity,
+                document_id=card.document_id,
+                badge=card.badge,
+                reason=reason,
+            )
+        cards.append(card)
+    return cards
 
 
 def in_progress(conn: sqlite3.Connection, project_id: int | None = None) -> list[InboxCard]:
