@@ -46,6 +46,14 @@ def mark_documents_read(conn: sqlite3.Connection, document_ids: list[int]) -> in
     return len(document_ids)
 
 
+def last_read_at(conn: sqlite3.Connection, document_id: int) -> str | None:
+    """The doc's last_read_at, or None if never read."""
+    row = conn.execute(
+        "SELECT last_read_at FROM read_state WHERE document_id = ?", (document_id,)
+    ).fetchone()
+    return row["last_read_at"] if row is not None else None
+
+
 def unread_document_ids(conn: sqlite3.Connection, project_id: int | None = None) -> list[int]:
     sql = (
         "SELECT d.id FROM documents d "

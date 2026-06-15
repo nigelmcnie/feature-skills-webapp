@@ -9,6 +9,7 @@ from feature_skills_webapp.storage.db import connect, migrate, now_iso
 from feature_skills_webapp.storage.doc_content import ParsedContent, Section
 from feature_skills_webapp.storage.versions import (
     backfill_logical_keys,
+    content_at_or_before,
     current_content,
     record_version,
 )
@@ -134,6 +135,57 @@ def test_current_content_returns_latest(tmp_path: Path) -> None:
     got = current_content(conn, doc_id)
     assert got is not None
     assert got.sections[0].body == "<p>v2</p>"
+
+
+def test_content_at_or_before_none_for_no_versions(tmp_path: Path) -> None:
+    conn = _temp_conn(tmp_path)
+    doc_id = _seed_doc(conn)
+    assert content_at_or_before(conn, doc_id, "2025-01-01T00:00:00+00:00") is None
+
+
+def test_content_at_or_before_empty_string_baseline_returns_none(tmp_path: Path) -> None:
+    conn = _temp_conn(tmp_path)
+    doc_id = _seed_doc(conn)
+    record_version(conn, doc_id, _make_content("v1"), actor="test", now="2025-06-01T10:00:00+00:00")
+    assert content_at_or_before(conn, doc_id, "") is None
+
+
+def test_content_at_or_before_exact_timestamp(tmp_path: Path) -> None:
+    conn = _temp_conn(tmp_path)
+    doc_id = _seed_doc(conn)
+    ts = "2025-06-01T10:00:00+00:00"
+    record_version(conn, doc_id, _make_content("at-ts"), actor="test", now=ts)
+    got = content_at_or_before(conn, doc_id, ts)
+    assert got is not None
+    assert got.sections[0].body == "<p>at-ts</p>"
+
+
+def test_content_at_or_before_picks_latest_at_or_before(tmp_path: Path) -> None:
+    conn = _temp_conn(tmp_path)
+    doc_id = _seed_doc(conn)
+    record_version(conn, doc_id, _make_content("v1"), actor="test", now="2025-01-01T00:00:00+00:00")
+    record_version(conn, doc_id, _make_content("v2"), actor="test", now="2025-06-01T00:00:00+00:00")
+    # Query at a timestamp between v1 and v2
+    got = content_at_or_before(conn, doc_id, "2025-03-01T00:00:00+00:00")
+    assert got is not None
+    assert got.sections[0].body == "<p>v1</p>"
+
+
+def test_content_at_or_before_returns_latest_when_ts_after_all(tmp_path: Path) -> None:
+    conn = _temp_conn(tmp_path)
+    doc_id = _seed_doc(conn)
+    record_version(conn, doc_id, _make_content("v1"), actor="test", now="2025-01-01T00:00:00+00:00")
+    record_version(conn, doc_id, _make_content("v2"), actor="test", now="2025-06-01T00:00:00+00:00")
+    got = content_at_or_before(conn, doc_id, "2099-01-01T00:00:00+00:00")
+    assert got is not None
+    assert got.sections[0].body == "<p>v2</p>"
+
+
+def test_content_at_or_before_none_when_baseline_before_all_versions(tmp_path: Path) -> None:
+    conn = _temp_conn(tmp_path)
+    doc_id = _seed_doc(conn)
+    record_version(conn, doc_id, _make_content("v1"), actor="test", now="2025-06-01T00:00:00+00:00")
+    assert content_at_or_before(conn, doc_id, "2025-01-01T00:00:00+00:00") is None
 
 
 def test_current_content_round_trips_opaque(tmp_path: Path) -> None:

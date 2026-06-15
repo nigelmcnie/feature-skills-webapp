@@ -7,17 +7,20 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from feature_skills_webapp.storage.db import connect, migrate, transaction
+from feature_skills_webapp.storage.doc_content import ParsedContent, Section
 from feature_skills_webapp.storage.inbox import (
     Inbox,
     awaiting_input,
     badge_kind,
     build_inbox,
+    classify_reason,
     humanise_type,
     in_progress,
     mark_new_since_read,
     new_since_last_visit,
     recently_shipped,
 )
+from feature_skills_webapp.storage.versions import record_version
 
 
 def temp_conn(tmp_path: Path) -> sqlite3.Connection:
@@ -697,3 +700,287 @@ def test_mark_new_since_read_project_scope(tmp_path: Path) -> None:
     assert count == 2
     # proj-b's doc is already read (doc_active_b1 has read_state in _seed); still no new-since from b
     assert new_since_last_visit(conn, project_id=ids["proj_b"]) == []
+
+
+# --- classify_reason helpers ---
+
+
+def _seed_reason_doc(
+    conn: sqlite3.Connection,
+    doc_type: str = "context",
+    ts: str = "2020-01-01T00:00:00+00:00",
+) -> int:
+    """Seed a minimal project/feature/document; returns the document_id."""
+    conn.execute(
+        "INSERT INTO projects (name, created_at) VALUES ('proj', ?) ON CONFLICT(name) DO NOTHING",
+        (ts,),
+    )
+    proj_id = conn.execute("SELECT id FROM projects WHERE name='proj'").fetchone()["id"]
+    conn.execute(
+        "INSERT INTO features (project_id, slug, created_at, updated_at) "
+        "VALUES (?, 'feat', ?, ?) ON CONFLICT(project_id, slug) DO NOTHING",
+        (proj_id, ts, ts),
+    )
+    feat_id = conn.execute(
+        "SELECT id FROM features WHERE project_id=? AND slug='feat'", (proj_id,)
+    ).fetchone()["id"]
+    conn.execute(
+        "INSERT INTO documents (project_id, feature_id, type, status, source_path, "
+        "metadata_json, source_mtime, created_at, updated_at) "
+        "VALUES (?, ?, ?, 'active', '/docs/proj/feat/doc.html', '{}', ?, ?, ?)",
+        (proj_id, feat_id, doc_type, ts, ts, ts),
+    )
+    return conn.execute(
+        "SELECT id FROM documents WHERE source_path='/docs/proj/feat/doc.html'"
+    ).fetchone()["id"]
+
+
+def _add_event(conn: sqlite3.Connection, doc_id: int, event_type: str, ts: str) -> None:
+    conn.execute(
+        "INSERT INTO events (document_id, event_type, payload_json, created_at) "
+        "VALUES (?, ?, '{}', ?)",
+        (doc_id, event_type, ts),
+    )
+
+
+def _make_sections_content(*sections: tuple[str, str]) -> ParsedContent:
+    return ParsedContent(
+        shape="sections",
+        sections=tuple(Section(key=k, body=b) for k, b in sections),
+    )
+
+
+# --- classify_reason ---
+
+
+def test_classify_reason_new_doc_no_prior_version(tmp_path: Path) -> None:
+    """A content event with no prior version → kind='new', label='New'."""
+    conn = temp_conn(tmp_path)
+    with transaction(conn):
+        doc_id = _seed_reason_doc(conn)
+        _add_event(conn, doc_id, "created", "2020-06-01T00:00:00+00:00")
+
+    reason = classify_reason(conn, doc_id, "context", last_read=None)
+    assert reason is not None
+    assert reason.kind == "new"
+    assert reason.label == "New"
+
+
+def test_classify_reason_content_change_with_sections(tmp_path: Path) -> None:
+    """Updated doc with changed sections → kind='content', label names the changed sections."""
+    conn = temp_conn(tmp_path)
+    T_v1 = "2020-04-01T00:00:00+00:00"
+    T_read = "2020-05-01T00:00:00+00:00"
+    T_event = "2020-06-01T00:00:00+00:00"
+    with transaction(conn):
+        doc_id = _seed_reason_doc(conn, doc_type="context")
+        record_version(
+            conn,
+            doc_id,
+            _make_sections_content(
+                ("problem-space", "<p>old</p>"), ("related-work", "<p>same</p>")
+            ),
+            actor="test",
+            now=T_v1,
+        )
+        record_version(
+            conn,
+            doc_id,
+            _make_sections_content(
+                ("problem-space", "<p>new text here</p>"), ("related-work", "<p>same</p>")
+            ),
+            actor="test",
+            now=T_event,
+        )
+        _add_event(conn, doc_id, "updated", T_event)
+
+    reason = classify_reason(conn, doc_id, "context", last_read=T_read)
+    assert reason is not None
+    assert reason.kind == "content"
+    assert reason.changed_count == 1
+    assert reason.has_diff is True
+    assert "Problem space" in reason.label
+    assert reason.label.startswith("Updated — ")
+
+
+def test_classify_reason_formatting_only(tmp_path: Path) -> None:
+    """Updated doc where text is unchanged (markup-only diff) → formatting-only label."""
+    conn = temp_conn(tmp_path)
+    T_v1 = "2020-04-01T00:00:00+00:00"
+    T_read = "2020-05-01T00:00:00+00:00"
+    T_event = "2020-06-01T00:00:00+00:00"
+    with transaction(conn):
+        doc_id = _seed_reason_doc(conn, doc_type="context")
+        record_version(
+            conn,
+            doc_id,
+            _make_sections_content(("problem-space", "<p>same text</p>")),
+            actor="test",
+            now=T_v1,
+        )
+        record_version(
+            conn,
+            doc_id,
+            _make_sections_content(("problem-space", "<div>same text</div>")),
+            actor="test",
+            now=T_event,
+        )
+        _add_event(conn, doc_id, "updated", T_event)
+
+    reason = classify_reason(conn, doc_id, "context", last_read=T_read)
+    assert reason is not None
+    assert reason.kind == "content"
+    assert reason.label == "Updated (formatting only)"
+    assert reason.has_diff is False
+    assert reason.changed_count == 0
+
+
+def test_classify_reason_comment_only(tmp_path: Path) -> None:
+    """Only comment events → kind='comments', label='Comments added'."""
+    conn = temp_conn(tmp_path)
+    T_read = "2020-05-01T00:00:00+00:00"
+    T_event = "2020-06-01T00:00:00+00:00"
+    with transaction(conn):
+        doc_id = _seed_reason_doc(conn)
+        _add_event(conn, doc_id, "comment_submitted", T_event)
+
+    reason = classify_reason(conn, doc_id, "context", last_read=T_read)
+    assert reason is not None
+    assert reason.kind == "comments"
+    assert reason.label == "Comments added"
+
+
+def test_classify_reason_reactivated_treated_as_content(tmp_path: Path) -> None:
+    """'reactivated' event counts as a content event."""
+    conn = temp_conn(tmp_path)
+    T_v1 = "2020-04-01T00:00:00+00:00"
+    T_read = "2020-05-01T00:00:00+00:00"
+    T_event = "2020-06-01T00:00:00+00:00"
+    with transaction(conn):
+        doc_id = _seed_reason_doc(conn, doc_type="context")
+        record_version(
+            conn,
+            doc_id,
+            _make_sections_content(("problem-space", "<p>old</p>")),
+            actor="test",
+            now=T_v1,
+        )
+        record_version(
+            conn,
+            doc_id,
+            _make_sections_content(("problem-space", "<p>new</p>")),
+            actor="test",
+            now=T_event,
+        )
+        _add_event(conn, doc_id, "reactivated", T_event)
+
+    reason = classify_reason(conn, doc_id, "context", last_read=T_read)
+    assert reason is not None
+    assert reason.kind == "content"
+    assert reason.has_diff is True
+
+
+def test_classify_reason_never_read_already_versioned_returns_new(tmp_path: Path) -> None:
+    """Never-read doc (last_read=None → baseline='') with versions → 'New'
+    because content_at_or_before('') returns None."""
+    conn = temp_conn(tmp_path)
+    T_v1 = "2020-04-01T00:00:00+00:00"
+    with transaction(conn):
+        doc_id = _seed_reason_doc(conn)
+        record_version(
+            conn,
+            doc_id,
+            _make_sections_content(("problem-space", "<p>content</p>")),
+            actor="test",
+            now=T_v1,
+        )
+        _add_event(conn, doc_id, "created", T_v1)
+
+    reason = classify_reason(conn, doc_id, "context", last_read=None)
+    assert reason is not None
+    assert reason.kind == "new"
+    assert reason.label == "New"
+
+
+def test_classify_reason_label_overflow_three_sections(tmp_path: Path) -> None:
+    """3+ changed sections → 'Updated — Name1, Name2 +N more'."""
+    conn = temp_conn(tmp_path)
+    T_v1 = "2020-04-01T00:00:00+00:00"
+    T_read = "2020-05-01T00:00:00+00:00"
+    T_event = "2020-06-01T00:00:00+00:00"
+    with transaction(conn):
+        doc_id = _seed_reason_doc(conn, doc_type="context")
+        record_version(
+            conn,
+            doc_id,
+            _make_sections_content(
+                ("problem-space", "<p>a</p>"),
+                ("related-work", "<p>b</p>"),
+                ("constraints", "<p>c</p>"),
+            ),
+            actor="test",
+            now=T_v1,
+        )
+        record_version(
+            conn,
+            doc_id,
+            _make_sections_content(
+                ("problem-space", "<p>a new</p>"),
+                ("related-work", "<p>b new</p>"),
+                ("constraints", "<p>c new</p>"),
+            ),
+            actor="test",
+            now=T_event,
+        )
+        _add_event(conn, doc_id, "updated", T_event)
+
+    reason = classify_reason(conn, doc_id, "context", last_read=T_read)
+    assert reason is not None
+    assert reason.changed_count == 3
+    assert "+1 more" in reason.label
+    assert reason.label.startswith("Updated — ")
+
+
+def test_classify_reason_plan_phase_key_prettified_fallback(tmp_path: Path) -> None:
+    """A 'phase-2' section key (not in section_labels) humanises as 'Phase 2'."""
+    conn = temp_conn(tmp_path)
+    T_v1 = "2020-04-01T00:00:00+00:00"
+    T_read = "2020-05-01T00:00:00+00:00"
+    T_event = "2020-06-01T00:00:00+00:00"
+    with transaction(conn):
+        doc_id = _seed_reason_doc(conn, doc_type="plan")
+        conn.execute(
+            "UPDATE documents SET source_path='/docs/proj/feat/plan.html' WHERE id=?", (doc_id,)
+        )
+        record_version(
+            conn,
+            doc_id,
+            _make_sections_content(("phase-2", "<p>old plan</p>")),
+            actor="test",
+            now=T_v1,
+        )
+        record_version(
+            conn,
+            doc_id,
+            _make_sections_content(("phase-2", "<p>new plan text</p>")),
+            actor="test",
+            now=T_event,
+        )
+        _add_event(conn, doc_id, "updated", T_event)
+
+    reason = classify_reason(conn, doc_id, "plan", last_read=T_read)
+    assert reason is not None
+    assert "Phase 2" in reason.label
+
+
+def test_classify_reason_no_qualifying_events_returns_none(tmp_path: Path) -> None:
+    """No events newer than the baseline → None."""
+    conn = temp_conn(tmp_path)
+    T_event = "2020-04-01T00:00:00+00:00"
+    T_read = "2020-05-01T00:00:00+00:00"  # read AFTER the event
+    with transaction(conn):
+        doc_id = _seed_reason_doc(conn)
+        _add_event(conn, doc_id, "created", T_event)
+
+    reason = classify_reason(conn, doc_id, "context", last_read=T_read)
+    assert reason is None
