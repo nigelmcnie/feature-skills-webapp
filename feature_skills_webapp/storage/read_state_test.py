@@ -8,6 +8,7 @@ from pathlib import Path
 
 from feature_skills_webapp.storage.db import connect, migrate, now_iso
 from feature_skills_webapp.storage.read_state import (
+    last_read_at,
     mark_all_read,
     mark_documents_read,
     mark_read,
@@ -269,3 +270,36 @@ def test_mark_all_read_ignores_archived_and_missing(tmp_path: Path) -> None:
     ).fetchone()
     assert archived_row is None
     assert missing_row is None
+
+
+# --- last_read_at ---
+
+
+def test_last_read_at_returns_none_for_never_read(tmp_path: Path) -> None:
+    conn = temp_conn(tmp_path)
+    with conn:
+        ids = _seed(conn)
+    assert last_read_at(conn, ids["doc_a"]) is None
+
+
+def test_last_read_at_returns_stamp_after_mark_read(tmp_path: Path) -> None:
+    conn = temp_conn(tmp_path)
+    with conn:
+        ids = _seed(conn)
+    mark_read(conn, ids["doc_a"])
+    result = last_read_at(conn, ids["doc_a"])
+    assert result is not None
+    assert result.endswith("+00:00")
+
+
+def test_last_read_at_reflects_latest_after_double_mark(tmp_path: Path) -> None:
+    conn = temp_conn(tmp_path)
+    with conn:
+        ids = _seed(conn)
+    mark_read(conn, ids["doc_a"])
+    first = last_read_at(conn, ids["doc_a"])
+    mark_read(conn, ids["doc_a"])
+    second = last_read_at(conn, ids["doc_a"])
+    assert first is not None
+    assert second is not None
+    assert second >= first

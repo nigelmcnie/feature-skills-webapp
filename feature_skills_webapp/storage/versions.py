@@ -52,6 +52,28 @@ def current_content(conn: sqlite3.Connection, document_id: int) -> ParsedContent
     )
 
 
+def content_at_or_before(
+    conn: sqlite3.Connection, document_id: int, ts: str
+) -> ParsedContent | None:
+    """Latest version with created_at <= ts, decoded; None if no such version.
+
+    Passing the empty string as ts (the never-read sentinel) returns None since
+    no real ISO timestamp satisfies created_at <= ''.
+    """
+    row = conn.execute(
+        "SELECT content_json FROM document_versions "
+        "WHERE document_id=? AND created_at <= ? ORDER BY version_num DESC LIMIT 1",
+        (document_id, ts),
+    ).fetchone()
+    if row is None:
+        return None
+    data = json.loads(row["content_json"])
+    return ParsedContent(
+        shape=data["shape"],
+        sections=tuple(Section(key=s["key"], body=s["body"]) for s in data["sections"]),
+    )
+
+
 def backfill_logical_keys(conn: sqlite3.Connection) -> None:
     """Idempotent startup migration.
 
