@@ -2,7 +2,7 @@
 <html lang="en"><head>
 <meta charset="UTF-8"><meta name="color-scheme" content="dark">
 <title>{{ crumbs[-1][0] }} — feature-skills-webapp</title>
-{% if mode in ("native", "synthesis-native") %}
+{% if mode in ("native", "synthesis-native", "diff") %}
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11/build/styles/atom-one-dark.min.css">
 <link rel="stylesheet" href="/static/doc.css?v={{ css_v }}">
 {% else %}
@@ -53,10 +53,17 @@
     </nav>
     {% endif %}
     {% if available %}<a class="view-source" href="{{ raw_url }}" target="_blank">View source file</a>{% endif %}
+    {% if has_diff_toggle %}
+      {% if view == "diff" %}
+        <a class="diff-toggle" href="/doc/{{ doc_id }}">Full view</a>
+      {% else %}
+        <a class="diff-toggle" href="/doc/{{ doc_id }}?view=diff">View changes</a>
+      {% endif %}
+    {% endif %}
   </div>
 </header>
 
-{% if mode == "native" %}
+{% if mode == "diff" %}
 
 <div class="layout" id="layout">
   <nav class="toc" aria-label="Document sections">
@@ -65,6 +72,25 @@
   </nav>
 
   <main class="document" id="doc-main">
+    {{ body_html }}
+  </main>
+
+  <aside class="comments-rail" id="comments-rail" aria-label="Comments"></aside>
+</div>
+
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11/build/highlight.min.js"></script>
+<script src="/static/doc.js?v={{ js_v }}"></script>
+
+{% elif mode == "native" %}
+
+<div class="layout" id="layout">
+  <nav class="toc" aria-label="Document sections">
+    <h3>Contents</h3>
+    <ul id="toc-list"></ul>
+  </nav>
+
+  <main class="document" id="doc-main">
+    {% if no_diff_note %}<p class="diff-note">{{ no_diff_note }}</p>{% endif %}
     {{ body_html }}
   </main>
 

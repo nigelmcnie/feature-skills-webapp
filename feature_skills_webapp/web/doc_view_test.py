@@ -902,6 +902,154 @@ def test_feedback_native_prefill_routine_flags(temp_db: Path, tmp_path: Path) ->
     assert 'class="flag-check" data-item="5" checked' in response.text
 
 
+# ---- diff view (?view=diff) ----
+
+_PLAN_V1 = """\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="feature-doc-type" content="plan">
+<title>plan v1</title>
+</head>
+<body>
+<main class="document">
+<section id="overview"><h2>Overview</h2><p>This is the original overview.</p></section>
+<section id="key-decisions"><h2>Key decisions</h2><p>No changes here.</p></section>
+</main>
+</body>
+</html>
+"""
+
+_PLAN_V2 = """\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="feature-doc-type" content="plan">
+<title>plan v2</title>
+</head>
+<body>
+<main class="document">
+<section id="overview"><h2>Overview</h2><p>This is the updated overview.</p></section>
+<section id="key-decisions"><h2>Key decisions</h2><p>No changes here.</p></section>
+</main>
+</body>
+</html>
+"""
+
+_PLAN_V2_FORMATTING_ONLY = """\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="feature-doc-type" content="plan">
+<title>plan v2 formatting only</title>
+</head>
+<body>
+<main class="document">
+<section id="overview"><h2>Overview</h2><div>This is the original overview.</div></section>
+<section id="key-decisions"><h2>Key decisions</h2><p>No changes here.</p></section>
+</main>
+</body>
+</html>
+"""
+
+
+def _make_plan_root(tmp_path: Path, html: str) -> Path:
+    docs_root = tmp_path / "docs"
+    (docs_root / "proj1" / "feat-a").mkdir(parents=True)
+    (docs_root / "proj1" / "feat-a" / "plan.html").write_text(html)
+    return docs_root
+
+
+def test_diff_view_shows_diff_for_changed_doc(temp_db: Path, tmp_path: Path) -> None:
+    docs_root = _make_plan_root(tmp_path, _PLAN_V1)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        doc_id = _doc_id_by_type(temp_db, "plan")
+        client.get(f"/doc/{doc_id}")  # marks as read
+        # Update file and re-index
+        (tmp_path / "docs" / "proj1" / "feat-a" / "plan.html").write_text(_PLAN_V2)
+        client.post("/admin/discover")
+        response = client.get(f"/doc/{doc_id}?view=diff")
+    assert response.status_code == 200
+    assert 'class="diff-changed"' in response.text
+    assert "<ins>" in response.text
+    assert "<del>" in response.text
+
+
+def test_diff_view_note_when_no_prior_version(temp_db: Path, tmp_path: Path) -> None:
+    docs_root = _make_plan_root(tmp_path, _PLAN_V1)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        doc_id = _doc_id_by_type(temp_db, "plan")
+        # Do NOT read the doc first — no prior version
+        response = client.get(f"/doc/{doc_id}?view=diff")
+    assert response.status_code == 200
+    assert "diff-note" in response.text
+    assert "No earlier version" in response.text
+    # Falls back to native render — the full doc content is still present
+    assert "original overview" in response.text
+
+
+def test_diff_view_note_when_formatting_only(temp_db: Path, tmp_path: Path) -> None:
+    docs_root = _make_plan_root(tmp_path, _PLAN_V1)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        doc_id = _doc_id_by_type(temp_db, "plan")
+        client.get(f"/doc/{doc_id}")  # marks as read
+        (tmp_path / "docs" / "proj1" / "feat-a" / "plan.html").write_text(_PLAN_V2_FORMATTING_ONLY)
+        client.post("/admin/discover")
+        response = client.get(f"/doc/{doc_id}?view=diff")
+    assert response.status_code == 200
+    assert "diff-note" in response.text
+    assert "No text changes" in response.text
+
+
+def test_diff_view_mark_read_stamped(temp_db: Path, tmp_path: Path) -> None:
+    from feature_skills_webapp.storage.db import connect
+    from feature_skills_webapp.storage.read_state import unread_document_ids
+
+    docs_root = _make_plan_root(tmp_path, _PLAN_V1)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        doc_id = _doc_id_by_type(temp_db, "plan")
+        conn = connect(temp_db)
+        assert doc_id in unread_document_ids(conn)
+        conn.close()
+        client.get(f"/doc/{doc_id}?view=diff")
+        conn = connect(temp_db)
+        after = unread_document_ids(conn)
+        conn.close()
+    assert doc_id not in after
+
+
+def test_diff_toggle_shown_for_section_doc(temp_db: Path, tmp_path: Path) -> None:
+    docs_root = _make_plan_root(tmp_path, _PLAN_V1)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        doc_id = _doc_id_by_type(temp_db, "plan")
+        response = client.get(f"/doc/{doc_id}")
+    assert response.status_code == 200
+    assert "View changes" in response.text
+    assert f'href="/doc/{doc_id}?view=diff"' in response.text
+
+
+def test_diff_toggle_shows_full_view_when_in_diff_mode(temp_db: Path, tmp_path: Path) -> None:
+    docs_root = _make_plan_root(tmp_path, _PLAN_V1)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        doc_id = _doc_id_by_type(temp_db, "plan")
+        client.get(f"/doc/{doc_id}")  # marks as read
+        (tmp_path / "docs" / "proj1" / "feat-a" / "plan.html").write_text(_PLAN_V2)
+        client.post("/admin/discover")
+        response = client.get(f"/doc/{doc_id}?view=diff")
+    assert response.status_code == 200
+    assert "Full view" in response.text
+    assert f'href="/doc/{doc_id}"' in response.text
+
+
 def test_no_iframe_for_doc_with_stored_content(temp_db: Path, tmp_path: Path) -> None:
     """Guard: no doc with stored content (non-raw-fallback) should emit an iframe."""
     docs_root = _make_feedback_docs_root_with_tiers(tmp_path)

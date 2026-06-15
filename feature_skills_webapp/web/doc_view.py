@@ -10,15 +10,17 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 
 from feature_skills_webapp.storage.doc_content import manifest_for
+from feature_skills_webapp.storage.doc_diff import diff_contents
 from feature_skills_webapp.storage.doc_render import (
     FeedbackItem,
     extract_safe_inner,
     parse_feedback_items,
+    render_diff,
     render_section_doc,
 )
 from feature_skills_webapp.storage.inbox import doc_type_rank, humanise_type
-from feature_skills_webapp.storage.read_state import mark_read
-from feature_skills_webapp.storage.versions import current_content
+from feature_skills_webapp.storage.read_state import last_read_at, mark_read
+from feature_skills_webapp.storage.versions import content_at_or_before, current_content
 from feature_skills_webapp.storage.walker import FEEDBACK_SUFFIX
 from feature_skills_webapp.web.db_dep import request_conn
 
@@ -102,6 +104,9 @@ async def doc_shell(request: Request) -> Response:
         feedback_items: list[FeedbackItem] = []
         synthesis_responses: dict[int, str] = {}
         synthesis_flags: dict[int, str] = {}
+        has_diff_toggle: bool = False
+        view: str = request.query_params.get("view") or ""
+        no_diff_note: str | None = None
         if not available:
             mode = "unavailable"
         elif is_synthesis:
@@ -130,8 +135,26 @@ async def doc_shell(request: Request) -> Response:
                 mode = "native"
             else:
                 manifest = manifest_for(row["type"])
-                body_html = render_section_doc(content, manifest)
-                mode = "native"
+                has_diff_toggle = True
+                if view == "diff":
+                    read_ts = last_read_at(conn, doc_id)
+                    prior = content_at_or_before(conn, doc_id, read_ts or "")
+                    if prior is None:
+                        no_diff_note = "No earlier version found — nothing to compare."
+                        body_html = render_section_doc(content, manifest)
+                        mode = "native"
+                    else:
+                        diff_result = diff_contents(prior, content)
+                        if not diff_result.has_textual_change:
+                            no_diff_note = "No text changes since you last read this document."
+                            body_html = render_section_doc(content, manifest)
+                            mode = "native"
+                        else:
+                            body_html = render_diff(diff_result, manifest)
+                            mode = "diff"
+                else:
+                    body_html = render_section_doc(content, manifest)
+                    mode = "native"
 
         comments_prefill: list[dict[str, object]] = []
         if mode == "native" and is_commentable:
@@ -156,6 +179,7 @@ async def doc_shell(request: Request) -> Response:
             "available": available,
             "raw_url": f"/doc/{doc_id}/raw",
             "mode": mode,
+            "view": view,
             "body_html": body_html,
             "feedback_items": feedback_items,
             "synthesis_responses": synthesis_responses,
@@ -165,6 +189,8 @@ async def doc_shell(request: Request) -> Response:
             "is_commentable": is_commentable,
             "comment_post_url": f"/doc/{doc_id}/comments",
             "comments_prefill_json": Markup(json.dumps(comments_prefill)),
+            "has_diff_toggle": has_diff_toggle,
+            "no_diff_note": no_diff_note,
             "css_v": _static_v("doc.css"),
             "js_v": _static_v("doc.js"),
             "prev": {"id": prev["id"], "label": humanise_type(prev["type"])} if prev else None,

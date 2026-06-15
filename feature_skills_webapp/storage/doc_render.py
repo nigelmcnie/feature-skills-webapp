@@ -8,9 +8,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from html.parser import HTMLParser
 
-from markupsafe import Markup
+from markupsafe import Markup, escape
 
 from feature_skills_webapp.storage.doc_content import ManifestSpec, ParsedContent
+from feature_skills_webapp.storage.doc_diff import DiffSegment, DocDiff
 
 
 def render_section_doc(content: ParsedContent, manifest: ManifestSpec) -> Markup:
@@ -41,6 +42,67 @@ def render_section_doc(content: ParsedContent, manifest: ManifestSpec) -> Markup
     for key in ordered:
         section = sections_by_key[key]
         parts.append(f'<section id="{key}">{section.body}</section>')
+
+    return Markup("".join(parts))
+
+
+def _render_diff_segments(segments: tuple[DiffSegment, ...]) -> str:
+    """Render word-level diff segments as HTML with escaped text in ins/del."""
+    pieces: list[str] = []
+    for seg in segments:
+        text = str(escape(seg.text))
+        if seg.kind == "equal":
+            pieces.append(text)
+        elif seg.kind == "insert":
+            pieces.append(f"<ins>{text}</ins>")
+        elif seg.kind == "delete":
+            pieces.append(f"<del>{text}</del>")
+    return " ".join(pieces)
+
+
+def render_diff(doc_diff: DocDiff, manifest: ManifestSpec) -> Markup:
+    """Return inner HTML for <main> showing a section-level and word-level diff.
+
+    Changed sections render their word-level segments with ins/del tags.
+    Added/removed sections render their full body HTML with a status class.
+    Unchanged sections render their full body HTML with a muted class.
+    Section order follows the manifest (as in render_section_doc).
+    """
+    sections_by_key = {s.key: s for s in doc_diff.sections}
+    manifest_keys = [k for k, _ in manifest.section_labels]
+    label_map = dict(manifest.section_labels)
+
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for key in manifest_keys:
+        if key in sections_by_key:
+            ordered.append(key)
+            seen.add(key)
+    for sd in doc_diff.sections:
+        if sd.key not in seen:
+            ordered.append(sd.key)
+
+    parts: list[str] = []
+    for key in ordered:
+        sd = sections_by_key[key]
+        safe_key = str(escape(key))
+        if sd.status == "unchanged":
+            parts.append(
+                f'<section id="{safe_key}" class="diff-unchanged">{sd.current_body}</section>'
+            )
+        elif sd.status == "added":
+            parts.append(f'<section id="{safe_key}" class="diff-added">{sd.current_body}</section>')
+        elif sd.status == "removed":
+            parts.append(f'<section id="{safe_key}" class="diff-removed">{sd.prior_body}</section>')
+        elif sd.status == "changed":
+            label = str(escape(label_map.get(key) or key.replace("-", " ").title()))
+            seg_html = _render_diff_segments(sd.segments)
+            parts.append(
+                f'<section id="{safe_key}" class="diff-changed">'
+                f"<h2>{label}</h2>"
+                f'<div class="diff-text">{seg_html}</div>'
+                f"</section>"
+            )
 
     return Markup("".join(parts))
 
