@@ -50,7 +50,7 @@
           <a class="card-project" href="/project/{{ card.project | urlencode }}"
              aria-label="{{ card.project }}">{{ card.project }}</a>
           {% if card.feature %}
-          <a class="card-feature" href="/doc/{{ card.document_id }}"
+          <a class="card-feature" href="{{ card.href if card.href else '/doc/' ~ card.document_id }}"
              aria-label="Open {{ card.feature }} {{ card.label }}">{{ card.feature }}</a>
           {% endif %}
           <span class="card-label badge-{{ card.badge }}">{{ card.label }}</span>

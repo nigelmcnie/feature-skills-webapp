@@ -554,3 +554,78 @@ def test_inbox_card_project_name_links_to_project_page(temp_db: Path, tmp_path: 
         resp = client.get("/")
     assert resp.status_code == 200
     assert 'href="/project/proj1"' in resp.text
+
+
+# --- flagged-inbox-diff Phase 3: diff-view deep link ---
+
+_PLAN_SECTIONS_V1 = """\
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="feature-doc-type" content="plan">
+<title>Plan v1</title>
+</head>
+<body>
+<main class="document">
+<section id="overview"><h2>Overview</h2><p>Initial plan overview.</p></section>
+</main>
+</body>
+</html>
+"""
+
+_PLAN_SECTIONS_V2 = """\
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="feature-doc-type" content="plan">
+<title>Plan v2</title>
+</head>
+<body>
+<main class="document">
+<section id="overview"><h2>Overview</h2><p>Updated plan overview with new details.</p></section>
+</main>
+</body>
+</html>
+"""
+
+
+def test_inbox_content_change_card_links_to_diff_view(temp_db: Path, tmp_path: Path) -> None:
+    """A re-surfaced card with textual content changes links to /doc/{id}?view=diff.
+
+    The link is clickable and the diff page returns 200 with ins/del markup.
+    """
+    import os
+    import time
+
+    docs_root = tmp_path / "docs"
+    plan_dir = docs_root / "proj1" / "feat-a"
+    plan_dir.mkdir(parents=True)
+    plan_file = plan_dir / "plan.html"
+
+    plan_file.write_text(_PLAN_SECTIONS_V1)
+    # Force a past mtime so the v2 write is guaranteed to have a newer mtime.
+    past = time.time() - 10
+    os.utime(plan_file, (past, past))
+
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        client.post("/admin/projects/proj1/mark-read")
+
+        plan_file.write_text(_PLAN_SECTIONS_V2)
+        client.post("/admin/discover")
+
+        from feature_skills_webapp.storage.db import connect
+
+        conn = connect(temp_db)
+        doc_id = conn.execute("SELECT id FROM documents WHERE type='plan'").fetchone()["id"]
+        conn.close()
+
+        inbox_resp = client.get("/")
+        assert inbox_resp.status_code == 200
+        assert f'href="/doc/{doc_id}?view=diff"' in inbox_resp.text
+
+        diff_resp = client.get(f"/doc/{doc_id}?view=diff")
+    assert diff_resp.status_code == 200
+    assert "<ins>" in diff_resp.text or "<del>" in diff_resp.text

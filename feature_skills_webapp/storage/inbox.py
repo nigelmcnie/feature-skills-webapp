@@ -197,6 +197,11 @@ def new_since_last_visit(
         if card.document_id is not None:
             read_ts = last_read_at(conn, card.document_id)
             reason = classify_reason(conn, card.document_id, r["doc_type"], read_ts)
+            href = (
+                f"/doc/{card.document_id}?view=diff"
+                if reason is not None and reason.has_diff
+                else f"/doc/{card.document_id}"
+            )
             card = InboxCard(
                 project=card.project,
                 feature=card.feature,
@@ -205,6 +210,7 @@ def new_since_last_visit(
                 document_id=card.document_id,
                 badge=card.badge,
                 reason=reason,
+                href=href,
             )
         cards.append(card)
     return cards
