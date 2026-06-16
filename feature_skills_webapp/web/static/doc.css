@@ -506,3 +506,43 @@ aside.comments-rail h3 {
 
 /* Synthesis doc bottom padding to clear the action bar */
 .synthesis-doc { padding-bottom: 80px; }
+
+/* Diff view */
+ins {
+  background: rgba(74, 222, 128, 0.18);
+  color: #4ade80;
+  text-decoration: none;
+  padding: 0.05em 0.2em;
+  border-radius: 2px;
+}
+del {
+  background: rgba(248, 113, 113, 0.18);
+  color: #f87171;
+  text-decoration: line-through;
+  padding: 0.05em 0.2em;
+  border-radius: 2px;
+}
+.diff-changed { border-left: 3px solid var(--accent); padding-left: 14px; }
+.diff-added { border-left: 3px solid #4ade80; padding-left: 14px; }
+.diff-removed { border-left: 3px solid #f87171; padding-left: 14px; opacity: 0.65; }
+.diff-unchanged { opacity: 0.45; }
+.diff-text { font-size: 0.95rem; line-height: 1.75; }
+.diff-toggle {
+  color: var(--accent);
+  font-size: 0.85rem;
+  text-decoration: none;
+  white-space: nowrap;
+  border: 1px solid var(--accent-soft);
+  padding: 3px 10px;
+  border-radius: 4px;
+}
+.diff-toggle:hover { background: var(--accent-soft); text-decoration: none; }
+.diff-note {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 14px 18px;
+  color: var(--text-faint);
+  font-size: 0.9rem;
+  margin-bottom: 24px;
+}

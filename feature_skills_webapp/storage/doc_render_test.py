@@ -5,9 +5,11 @@ from __future__ import annotations
 from markupsafe import Markup
 
 from feature_skills_webapp.storage.doc_content import ManifestSpec, ParsedContent, Section
+from feature_skills_webapp.storage.doc_diff import DiffSegment, DocDiff, SectionDiff
 from feature_skills_webapp.storage.doc_render import (
     extract_safe_inner,
     parse_feedback_items,
+    render_diff,
     render_section_doc,
 )
 
@@ -333,3 +335,102 @@ def test_parse_feedback_items_void_elements_in_body() -> None:
     assert items[0].item_num == 3
     assert "Line one." in items[0].detail_html
     assert "Line two." in items[0].detail_html
+
+
+# ---------------------------------------------------------------------------
+# render_diff
+# ---------------------------------------------------------------------------
+
+_DIFF_MANIFEST = ManifestSpec(
+    shape="sections",
+    section_labels=(
+        ("alpha", "Alpha"),
+        ("beta", "Beta"),
+    ),
+)
+
+
+def _make_diff(sections: list[SectionDiff]) -> DocDiff:
+    return DocDiff(sections=tuple(sections))
+
+
+def test_render_diff_returns_markup() -> None:
+    doc_diff = _make_diff(
+        [SectionDiff(key="alpha", status="unchanged", current_body="<h2>Alpha</h2><p>text</p>")]
+    )
+    result = render_diff(doc_diff, _DIFF_MANIFEST)
+    assert isinstance(result, Markup)
+
+
+def test_render_diff_unchanged_section_uses_current_body() -> None:
+    doc_diff = _make_diff(
+        [SectionDiff(key="alpha", status="unchanged", current_body="<h2>Alpha</h2><p>body</p>")]
+    )
+    result = render_diff(doc_diff, _DIFF_MANIFEST)
+    assert '<section id="alpha" class="diff-unchanged">' in result
+    assert "<p>body</p>" in result
+
+
+def test_render_diff_added_section_uses_current_body() -> None:
+    doc_diff = _make_diff(
+        [SectionDiff(key="beta", status="added", current_body="<h2>Beta</h2><p>new</p>")]
+    )
+    result = render_diff(doc_diff, _DIFF_MANIFEST)
+    assert '<section id="beta" class="diff-added">' in result
+    assert "<p>new</p>" in result
+
+
+def test_render_diff_removed_section_uses_prior_body() -> None:
+    doc_diff = _make_diff(
+        [SectionDiff(key="alpha", status="removed", prior_body="<h2>Alpha</h2><p>old</p>")]
+    )
+    result = render_diff(doc_diff, _DIFF_MANIFEST)
+    assert '<section id="alpha" class="diff-removed">' in result
+    assert "<p>old</p>" in result
+
+
+def test_render_diff_changed_section_shows_ins_del() -> None:
+    segments = (
+        DiffSegment(kind="equal", text="hello"),
+        DiffSegment(kind="delete", text="old"),
+        DiffSegment(kind="insert", text="new"),
+    )
+    doc_diff = _make_diff(
+        [SectionDiff(key="alpha", status="changed", segments=segments, current_body="")]
+    )
+    result = render_diff(doc_diff, _DIFF_MANIFEST)
+    assert '<section id="alpha" class="diff-changed">' in result
+    assert "<del>old</del>" in result
+    assert "<ins>new</ins>" in result
+    assert "hello" in result
+
+
+def test_render_diff_changed_section_uses_manifest_label_as_heading() -> None:
+    doc_diff = _make_diff(
+        [SectionDiff(key="alpha", status="changed", segments=(), current_body="")]
+    )
+    result = render_diff(doc_diff, _DIFF_MANIFEST)
+    assert "<h2>Alpha</h2>" in result
+
+
+def test_render_diff_escapes_segment_text() -> None:
+    segments = (DiffSegment(kind="insert", text="<script>alert(1)</script>"),)
+    doc_diff = _make_diff(
+        [SectionDiff(key="alpha", status="changed", segments=segments, current_body="")]
+    )
+    result = render_diff(doc_diff, _DIFF_MANIFEST)
+    assert "<script>" not in result
+    assert "&lt;script&gt;" in result
+
+
+def test_render_diff_manifest_ordering() -> None:
+    doc_diff = _make_diff(
+        [
+            SectionDiff(key="beta", status="unchanged", current_body="<p>B</p>"),
+            SectionDiff(key="alpha", status="unchanged", current_body="<p>A</p>"),
+        ]
+    )
+    result = render_diff(doc_diff, _DIFF_MANIFEST)
+    alpha_pos = result.index('id="alpha"')
+    beta_pos = result.index('id="beta"')
+    assert alpha_pos < beta_pos
