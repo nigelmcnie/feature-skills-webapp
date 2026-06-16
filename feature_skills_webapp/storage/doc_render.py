@@ -235,52 +235,46 @@ class FeedbackItem:
     kind: str  # "response" | "routine"
 
 
-# HTML5 void elements — no matching end tag, so excluded from depth tracking.
-_VOID_TAGS = frozenset(
-    {
-        "area",
-        "base",
-        "br",
-        "col",
-        "embed",
-        "hr",
-        "img",
-        "input",
-        "link",
-        "meta",
-        "param",
-        "source",
-        "track",
-        "wbr",
-    }
-)
-
-
 class _FeedbackParser(HTMLParser):
     """Extract FeedbackItems from a feedback doc's HTML.
 
     Recognises tier sections (tier-needs-input, tier-feedback, tier-routine),
-    article.item elements, and li.routine-item elements. Uses depth tracking
-    with void-element exclusion so nested HTML content is captured correctly.
+    article.item elements, and li.routine-item elements.
+
+    Boundaries are tracked by counting only the *relevant* element's own tag
+    nesting — the tier by <section>, the item by <article>/<li>, each captured
+    field by its own wrapper tag — never a single global tag depth. Authored
+    feedback bodies routinely carry imbalanced inline markup (a stray </p>, a
+    <div> a browser would auto-close); a global depth counter desyncs on the
+    first such imbalance and then silently drops every later sibling item in the
+    tier. Counting per-element makes boundary detection immune to body markup,
+    mirroring _SectionParser in doc_content.py.
     """
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=False)
-        self._depth = 0
         self._tier: str | None = None
-        self._tier_entry_depth = 0
+        self._section_depth = 0  # <section> nesting since entering the tier
         self._item_num: int | None = None
         self._item_kind: str | None = None  # "response" | "routine"
-        self._item_entry_depth = 0
+        self._item_tag: str | None = None  # "article" | "li" — bounds the item
+        self._item_depth = 0
         self._capture: str | None = None  # "h3" | "detail" | "my-take" | "body-span"
-        self._capture_entry_depth = 0
+        self._capture_tag: str | None = None  # wrapper tag whose nesting bounds the capture
+        self._capture_depth = 0
         self._buf: list[str] = []
         self._title_html = ""
         self._detail_html = ""
         self._my_take_html = ""
-        self._skip_tag: str | None = None
-        self._skip_entry_depth = 0
+        self._skip_tag: str | None = None  # script/style/head subtree being dropped
+        self._skip_depth = 0
         self.items: list[FeedbackItem] = []
+
+    def _begin_capture(self, field: str, tag: str) -> None:
+        self._capture = field
+        self._capture_tag = tag
+        self._capture_depth = 1  # the wrapper's own start tag
+        self._buf = []
 
     def _flush_capture(self) -> None:
         captured = "".join(self._buf).strip()
@@ -293,7 +287,17 @@ class _FeedbackParser(HTMLParser):
         elif self._capture == "body-span":
             self._title_html = captured
         self._capture = None
+        self._capture_tag = None
+        self._capture_depth = 0
         self._buf = []
+
+    def _open_item(self, attr_dict: dict[str, str | None], tag: str, kind: str) -> None:
+        data_item = attr_dict.get("data-item")
+        if data_item and data_item.isdigit():
+            self._item_num = int(data_item)
+            self._item_kind = kind
+            self._item_tag = tag
+            self._item_depth = 1  # the item element's own start tag
 
     def _flush_item(self) -> None:
         if self._item_num is None:
@@ -310,68 +314,65 @@ class _FeedbackParser(HTMLParser):
         )
         self._item_num = None
         self._item_kind = None
+        self._item_tag = None
+        self._item_depth = 0
         self._title_html = ""
         self._detail_html = ""
         self._my_take_html = ""
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if self._skip_tag is not None:
-            if tag not in _VOID_TAGS:
-                self._depth += 1
+            if tag == self._skip_tag:
+                self._skip_depth += 1
             return
 
         if tag in ("script", "style", "head"):
-            self._depth += 1
             self._skip_tag = tag
-            self._skip_entry_depth = self._depth
+            self._skip_depth = 1
             return
-
-        if tag not in _VOID_TAGS:
-            self._depth += 1
 
         if self._capture is not None:
             self._buf.append(self.get_starttag_text() or "")
+            if tag == self._capture_tag:
+                self._capture_depth += 1
             return
 
         attr_dict = dict(attrs)
         classes = set((attr_dict.get("class") or "").split())
 
         if self._item_num is not None:
+            # Inside an item: start capturing a known field, else just track item nesting.
             if self._item_kind == "response":
                 if tag == "h3" and not self._title_html:
-                    self._capture = "h3"
-                    self._capture_entry_depth = self._depth
-                elif tag == "div" and "detail" in classes:
-                    self._capture = "detail"
-                    self._capture_entry_depth = self._depth
-                elif tag == "div" and "my-take" in classes:
-                    self._capture = "my-take"
-                    self._capture_entry_depth = self._depth
+                    self._begin_capture("h3", tag)
+                    return
+                if tag == "div" and "detail" in classes:
+                    self._begin_capture("detail", tag)
+                    return
+                if tag == "div" and "my-take" in classes:
+                    self._begin_capture("my-take", tag)
+                    return
             elif self._item_kind == "routine" and tag == "span" and "body" in classes:
-                self._capture = "body-span"
-                self._capture_entry_depth = self._depth
+                self._begin_capture("body-span", tag)
+                return
+            if tag == self._item_tag:
+                self._item_depth += 1
             return
 
         if self._tier is not None:
-            if self._tier != "routine" and tag == "article" and "item" in classes:
-                data_item = attr_dict.get("data-item")
-                if data_item and data_item.isdigit():
-                    self._item_num = int(data_item)
-                    self._item_kind = "response"
-                    self._item_entry_depth = self._depth
+            if tag == "section":
+                self._section_depth += 1
+            elif self._tier != "routine" and tag == "article" and "item" in classes:
+                self._open_item(attr_dict, "article", "response")
             elif self._tier == "routine" and tag == "li" and "routine-item" in classes:
-                data_item = attr_dict.get("data-item")
-                if data_item and data_item.isdigit():
-                    self._item_num = int(data_item)
-                    self._item_kind = "routine"
-                    self._item_entry_depth = self._depth
+                self._open_item(attr_dict, "li", "routine")
             return
 
         if tag == "section" and "tier" in classes:
             for cls in classes:
                 if cls.startswith("tier-"):
                     self._tier = cls[len("tier-") :]
-                    self._tier_entry_depth = self._depth
+                    self._section_depth = 1
                     break
 
     def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
@@ -382,57 +383,46 @@ class _FeedbackParser(HTMLParser):
 
     def handle_endtag(self, tag: str) -> None:
         if self._skip_tag is not None:
-            if tag not in _VOID_TAGS:
-                self._depth -= 1
-                if tag == self._skip_tag and self._depth < self._skip_entry_depth:
+            if tag == self._skip_tag:
+                self._skip_depth -= 1
+                if self._skip_depth == 0:
                     self._skip_tag = None
             return
 
-        if tag in _VOID_TAGS:
-            return
-
         if self._capture is not None:
-            if self._depth == self._capture_entry_depth:
-                self._flush_capture()
-                self._depth -= 1
-                return
+            if tag == self._capture_tag:
+                self._capture_depth -= 1
+                if self._capture_depth == 0:
+                    self._flush_capture()  # wrapper closed; inner HTML committed
+                    return
             self._buf.append(f"</{tag}>")
-            self._depth -= 1
             return
 
-        if self._item_num is not None and self._depth == self._item_entry_depth:
-            self._flush_item()
-            self._depth -= 1
+        if self._item_num is not None:
+            if tag == self._item_tag:
+                self._item_depth -= 1
+                if self._item_depth == 0:
+                    self._flush_item()
             return
 
-        if self._tier is not None and self._depth == self._tier_entry_depth:
-            self._tier = None
-            self._depth -= 1
-            return
-
-        self._depth -= 1
+        if self._tier is not None and tag == "section":
+            self._section_depth -= 1
+            if self._section_depth == 0:
+                self._tier = None
 
     def handle_data(self, data: str) -> None:
-        if self._skip_tag is not None:
-            return
         if self._capture is not None:
             self._buf.append(data)
 
     def handle_entityref(self, name: str) -> None:
-        if self._skip_tag is not None:
-            return
         if self._capture is not None:
             self._buf.append(f"&{name};")
 
     def handle_charref(self, name: str) -> None:
-        if self._skip_tag is not None:
-            return
         if self._capture is not None:
             self._buf.append(f"&#{name};")
 
     def handle_comment(self, data: str) -> None:
-        if self._skip_tag is not None:
-            return
         if self._capture is not None:
             self._buf.append(f"<!--{data}-->")
 
