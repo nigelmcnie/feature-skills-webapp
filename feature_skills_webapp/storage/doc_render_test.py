@@ -337,6 +337,56 @@ def test_parse_feedback_items_void_elements_in_body() -> None:
     assert "Line two." in items[0].detail_html
 
 
+def test_parse_feedback_items_multiple_items_per_tier() -> None:
+    # Boundary detection must not stop at the first article in a tier.
+    html = """\
+<html><body>
+<section class="tier tier-needs-input">
+<article class="item" data-item="1"><header><h3>One</h3></header>
+  <div class="detail"><p>d1</p></div><div class="my-take">t1</div></article>
+<article class="item" data-item="2"><header><h3>Two</h3></header>
+  <div class="detail"><p>d2</p></div><div class="my-take">t2</div></article>
+<article class="item" data-item="3"><header><h3>Three</h3></header>
+  <div class="detail"><p>d3</p></div><div class="my-take">t3</div></article>
+</section>
+<section class="tier tier-feedback">
+<article class="item" data-item="4"><header><h3>Four</h3></header>
+  <div class="detail"><p>d4</p></div><div class="my-take">t4</div></article>
+<article class="item" data-item="5"><header><h3>Five</h3></header>
+  <div class="detail"><p>d5</p></div><div class="my-take">t5</div></article>
+</section>
+</body></html>"""
+    items = parse_feedback_items(html)
+    assert [i.item_num for i in items] == [1, 2, 3, 4, 5]
+    assert next(i for i in items if i.item_num == 3).title_html == "Three"
+
+
+def test_parse_feedback_items_survives_imbalanced_body_markup() -> None:
+    # An item body with a net tag imbalance (here a stray </p> with no <p> — the
+    # kind of markup a browser auto-corrects but html.parser reports verbatim)
+    # must NOT desync boundary detection and drop the following siblings. This is
+    # the bug that silently hid 6 of 8 synthesis items: a single -1 body delta
+    # made the tier appear to close at the first article's </article>.
+    html = """\
+<html><body>
+<section class="tier tier-needs-input">
+<article class="item" data-item="1">
+  <header><h3>One</h3></header>
+  <div class="detail">text without an opening p</p></div>
+  <div class="my-take">take one</div>
+</article>
+<article class="item" data-item="2">
+  <header><h3>Two</h3></header>
+  <div class="detail"><p>fine</p></div>
+  <div class="my-take">take two</div>
+</article>
+</section>
+</body></html>"""
+    items = parse_feedback_items(html)
+    assert [i.item_num for i in items] == [1, 2]
+    assert next(i for i in items if i.item_num == 2).title_html == "Two"
+
+
 # ---------------------------------------------------------------------------
 # render_diff
 # ---------------------------------------------------------------------------
