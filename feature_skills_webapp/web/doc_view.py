@@ -179,7 +179,6 @@ async def doc_shell(request: Request) -> Response:
             "available": available,
             "raw_url": f"/doc/{doc_id}/raw",
             "mode": mode,
-            "view": view,
             "body_html": body_html,
             "feedback_items": feedback_items,
             "synthesis_responses": synthesis_responses,
