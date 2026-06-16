@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 
-from feature_skills_webapp.storage.doc_content import manifest_for
+from feature_skills_webapp.storage.doc_content import humanise_section_key, manifest_for
 from feature_skills_webapp.storage.doc_diff import diff_contents
 from feature_skills_webapp.storage.read_state import last_read_at, mark_documents_read
 from feature_skills_webapp.storage.versions import content_at_or_before, current_content
@@ -116,12 +116,6 @@ _CONTENT_EVENTS = frozenset({"created", "updated", "reactivated"})
 _COMMENT_EVENTS = frozenset({"comment_submitted", "comment_integrated"})
 
 
-def _humanise_section_key(key: str, labels_map: dict[str, str]) -> str:
-    if key in labels_map:
-        return labels_map[key]
-    return key.replace("-", " ").replace("_", " ").capitalize()
-
-
 def classify_reason(
     conn: sqlite3.Connection, document_id: int, doc_type: str, last_read: str | None
 ) -> InboxReason | None:
@@ -155,7 +149,7 @@ def classify_reason(
         labels_map = dict(manifest.section_labels)
         changed = doc_diff.changed_keys
         n = len(changed)
-        names = [_humanise_section_key(k, labels_map) for k in changed[:2]]
+        names = [humanise_section_key(k, labels_map) for k in changed[:2]]
         if n <= 2:
             label = "Updated — " + ", ".join(names)
         else:

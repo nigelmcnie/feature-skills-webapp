@@ -12,6 +12,7 @@ from feature_skills_webapp.storage.doc_content import (
     ManifestSpec,
     ParsedContent,
     Section,
+    humanise_section_key,
     manifest_for,
     parse_content,
     serialise,
@@ -641,3 +642,18 @@ def test_corpus_determinism() -> None:
         s1 = serialise(parse_content(html, spec))
         s2 = serialise(parse_content(html, spec))
         assert s1 == s2, f"Non-deterministic serialisation for {html_path}"
+
+
+def test_humanise_section_key_known_label() -> None:
+    labels = dict(manifest_for("context").section_labels)
+    assert humanise_section_key("problem-space", labels) == "Problem space"
+
+
+def test_humanise_section_key_unknown_multiword_is_sentence_case() -> None:
+    # Unknown keys follow the manifest's sentence-case convention ("Open questions"),
+    # NOT Title Case — so the inbox card label and the diff heading can't drift apart.
+    assert humanise_section_key("open-questions", {}) == "Open questions"
+
+
+def test_humanise_section_key_handles_underscores() -> None:
+    assert humanise_section_key("key_decisions", {}) == "Key decisions"
