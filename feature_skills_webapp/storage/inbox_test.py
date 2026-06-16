@@ -984,3 +984,111 @@ def test_classify_reason_no_qualifying_events_returns_none(tmp_path: Path) -> No
 
     reason = classify_reason(conn, doc_id, "context", last_read=T_read)
     assert reason is None
+
+
+# --- new_since_last_visit: href ---
+
+
+def test_new_since_href_diff_when_has_diff(tmp_path: Path) -> None:
+    """A card with a textual content change points to the diff view."""
+    conn = temp_conn(tmp_path)
+    T_v1 = "2020-04-01T00:00:00+00:00"
+    T_read = "2020-05-01T00:00:00+00:00"
+    T_event = "2020-06-01T00:00:00+00:00"
+    with transaction(conn):
+        doc_id = _seed_reason_doc(conn, doc_type="context")
+        record_version(
+            conn,
+            doc_id,
+            _make_sections_content(("problem-space", "<p>old text</p>")),
+            actor="test",
+            now=T_v1,
+        )
+        record_version(
+            conn,
+            doc_id,
+            _make_sections_content(("problem-space", "<p>new text here</p>")),
+            actor="test",
+            now=T_event,
+        )
+        _add_event(conn, doc_id, "updated", T_event)
+        conn.execute(
+            "INSERT INTO read_state (document_id, last_read_at) VALUES (?, ?)",
+            (doc_id, T_read),
+        )
+
+    cards = new_since_last_visit(conn)
+    card = next(c for c in cards if c.document_id == doc_id)
+    assert card.href == f"/doc/{doc_id}?view=diff"
+
+
+def test_new_since_href_plain_for_new_doc(tmp_path: Path) -> None:
+    """A never-read 'new' doc links to the plain doc view (no prior version to diff)."""
+    conn = temp_conn(tmp_path)
+    T_event = "2020-06-01T00:00:00+00:00"
+    with transaction(conn):
+        doc_id = _seed_reason_doc(conn)
+        _add_event(conn, doc_id, "created", T_event)
+
+    cards = new_since_last_visit(conn)
+    card = next(c for c in cards if c.document_id == doc_id)
+    assert card.href == f"/doc/{doc_id}"
+
+
+def test_new_since_href_plain_for_comments_only(tmp_path: Path) -> None:
+    """A card triggered only by comment events links to the plain doc view."""
+    conn = temp_conn(tmp_path)
+    T_v1 = "2020-04-01T00:00:00+00:00"
+    T_read = "2020-05-01T00:00:00+00:00"
+    T_event = "2020-06-01T00:00:00+00:00"
+    with transaction(conn):
+        doc_id = _seed_reason_doc(conn)
+        record_version(
+            conn,
+            doc_id,
+            _make_sections_content(("problem-space", "<p>content</p>")),
+            actor="test",
+            now=T_v1,
+        )
+        _add_event(conn, doc_id, "comment_submitted", T_event)
+        conn.execute(
+            "INSERT INTO read_state (document_id, last_read_at) VALUES (?, ?)",
+            (doc_id, T_read),
+        )
+
+    cards = new_since_last_visit(conn)
+    card = next(c for c in cards if c.document_id == doc_id)
+    assert card.href == f"/doc/{doc_id}"
+
+
+def test_new_since_href_plain_for_formatting_only(tmp_path: Path) -> None:
+    """A formatting-only update (no textual diff) links to the plain doc view."""
+    conn = temp_conn(tmp_path)
+    T_v1 = "2020-04-01T00:00:00+00:00"
+    T_read = "2020-05-01T00:00:00+00:00"
+    T_event = "2020-06-01T00:00:00+00:00"
+    with transaction(conn):
+        doc_id = _seed_reason_doc(conn)
+        record_version(
+            conn,
+            doc_id,
+            _make_sections_content(("problem-space", "<p>same text</p>")),
+            actor="test",
+            now=T_v1,
+        )
+        record_version(
+            conn,
+            doc_id,
+            _make_sections_content(("problem-space", "<div>same text</div>")),
+            actor="test",
+            now=T_event,
+        )
+        _add_event(conn, doc_id, "updated", T_event)
+        conn.execute(
+            "INSERT INTO read_state (document_id, last_read_at) VALUES (?, ?)",
+            (doc_id, T_read),
+        )
+
+    cards = new_since_last_visit(conn)
+    card = next(c for c in cards if c.document_id == doc_id)
+    assert card.href == f"/doc/{doc_id}"
