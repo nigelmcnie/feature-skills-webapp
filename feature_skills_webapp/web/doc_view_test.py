@@ -1007,6 +1007,23 @@ def test_diff_view_note_when_formatting_only(temp_db: Path, tmp_path: Path) -> N
     assert "No text changes" in response.text
 
 
+def test_diff_view_fallback_toggle_offers_view_changes(temp_db: Path, tmp_path: Path) -> None:
+    # When ?view=diff falls back to native (formatting-only here), the toggle must reflect the
+    # resolved mode — offering "View changes", not a misleading "Full view" for a page that is
+    # already the full render.
+    docs_root = _make_plan_root(tmp_path, _PLAN_V1)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/admin/discover")
+        doc_id = _doc_id_by_type(temp_db, "plan")
+        client.get(f"/doc/{doc_id}")  # marks as read
+        (tmp_path / "docs" / "proj1" / "feat-a" / "plan.html").write_text(_PLAN_V2_FORMATTING_ONLY)
+        client.post("/admin/discover")
+        response = client.get(f"/doc/{doc_id}?view=diff")
+    assert response.status_code == 200
+    assert "View changes" in response.text
+    assert "Full view" not in response.text
+
+
 def test_diff_view_mark_read_stamped(temp_db: Path, tmp_path: Path) -> None:
     from feature_skills_webapp.storage.db import connect
     from feature_skills_webapp.storage.read_state import unread_document_ids

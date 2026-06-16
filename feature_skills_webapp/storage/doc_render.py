@@ -10,7 +10,11 @@ from html.parser import HTMLParser
 
 from markupsafe import Markup, escape
 
-from feature_skills_webapp.storage.doc_content import ManifestSpec, ParsedContent
+from feature_skills_webapp.storage.doc_content import (
+    ManifestSpec,
+    ParsedContent,
+    humanise_section_key,
+)
 from feature_skills_webapp.storage.doc_diff import DiffSegment, DocDiff
 
 
@@ -95,7 +99,7 @@ def render_diff(doc_diff: DocDiff, manifest: ManifestSpec) -> Markup:
         elif sd.status == "removed":
             parts.append(f'<section id="{safe_key}" class="diff-removed">{sd.prior_body}</section>')
         elif sd.status == "changed":
-            label = str(escape(label_map.get(key) or key.replace("-", " ").title()))
+            label = str(escape(humanise_section_key(key, label_map)))
             seg_html = _render_diff_segments(sd.segments)
             parts.append(
                 f'<section id="{safe_key}" class="diff-changed">'

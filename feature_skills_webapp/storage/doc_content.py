@@ -113,6 +113,18 @@ def manifest_for(doc_type: str) -> ManifestSpec:
     return _MANIFESTS.get(doc_type, ManifestSpec(shape="opaque"))
 
 
+def humanise_section_key(key: str, labels: dict[str, str]) -> str:
+    """Human label for a section key.
+
+    The manifest label if known, else a prettified key in the manifest's own
+    sentence-case convention ("Open questions", not "Open Questions") — the single
+    source of truth so the inbox card and the diff heading can't drift apart.
+    """
+    if key in labels:
+        return labels[key]
+    return key.replace("-", " ").replace("_", " ").capitalize()
+
+
 class _SectionParser(HTMLParser):
     """Extract direct <section id="..."> children of <main class="document">.
 

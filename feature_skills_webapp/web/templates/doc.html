@@ -54,7 +54,7 @@
     {% endif %}
     {% if available %}<a class="view-source" href="{{ raw_url }}" target="_blank">View source file</a>{% endif %}
     {% if has_diff_toggle %}
-      {% if view == "diff" %}
+      {% if mode == "diff" %}
         <a class="diff-toggle" href="/doc/{{ doc_id }}">Full view</a>
       {% else %}
         <a class="diff-toggle" href="/doc/{{ doc_id }}?view=diff">View changes</a>

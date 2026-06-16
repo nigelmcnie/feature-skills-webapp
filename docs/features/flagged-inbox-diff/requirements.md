@@ -127,3 +127,11 @@ Plan-level detail worth carrying forward — for `/feature-plan`, not constraint
 - **Read-state trust boundary (round 1).** `last_read_at` is the single source of truth for "what I've seen" and pins both the unread predicate and the diff baseline — the one hard-to-reverse signal here. We keep mark-read firing on every view (including the diff), and rely on the empty-diff fallback so a formatting-only re-bubble never stamps you read while showing a blank delta. We rejected making mark-read conditional on a non-empty delta: extra state for little gain on a single-user tool.
 - **A walk landing mid-request (round 1).** If the walker imports a new version between the version fetch and the read stamp, the baseline can advance past a version never shown, so it won't diff next time. Accepted as a low-probability edge on a single-user, timer-walked local app; the fix if it ever bites is to stamp the specific version seen rather than wall-clock time.
 - **Read-side derivation over event payload (round 1).** Chose to recompute the reason/changed-sections in the read model rather than persist it on the version event — see Alternatives. Revisit only if the inbox list shows real cost.
+
+## Review decisions
+
+### Round 1 (post-merge review)
+
+- **Unified section-key humanisation.** The card label and the diff heading had two separate fallbacks (sentence-case with `_` handling vs Title Case without), so a multi-word unknown key drifted ("Open questions" vs "Open Questions"). Extracted one shared `humanise_section_key` in `doc_content.py` on the manifest's sentence-case convention; both call sites use it, pinned by tests.
+- **Diff toggle reflects resolved mode.** When `?view=diff` falls back to the full render (no prior version, or formatting-only), the toggle keyed off the requested `view` and showed a misleading "Full view". It now keys off the resolved render `mode`, so the fallback offers "View changes".
+- The review otherwise confirmed escaping, the empty-baseline → "New" predicate, the read-state trust boundary, and the formatting-only fallback as correct and properly tested — no other changes.
