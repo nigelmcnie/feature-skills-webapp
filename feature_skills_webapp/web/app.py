@@ -27,7 +27,14 @@ from feature_skills_webapp.web.routes import (
     healthz,
     index,
 )
-from feature_skills_webapp.web.submit import put_document
+from feature_skills_webapp.web.submit import (
+    get_document,
+    get_document_comments,
+    get_document_synthesis,
+    get_manifest,
+    post_document_comments_integrate,
+    put_document,
+)
 from feature_skills_webapp.web.synthesis import get_synthesis_response, post_synthesis_response
 
 _HERE = Path(__file__).parent
@@ -101,6 +108,24 @@ def create_app(db_path: Path | None, docs_root: Path | None = None) -> Starlette
                 put_document,
                 methods=["PUT"],
             ),
+            Route(
+                "/api/documents/{project}/{feature}/{doc_type}/{instance:int}",
+                get_document,
+            ),
+            Route(
+                "/api/documents/{project}/{feature}/{doc_type}/{instance:int}/comments",
+                get_document_comments,
+            ),
+            Route(
+                "/api/documents/{project}/{feature}/{doc_type}/{instance:int}/comments/integrate",
+                post_document_comments_integrate,
+                methods=["POST"],
+            ),
+            Route(
+                "/api/documents/{project}/{feature}/{doc_type}/{instance:int}/synthesis",
+                get_document_synthesis,
+            ),
+            Route("/api/manifests/{doc_type}", get_manifest),
             Route("/retro-findings", post_retro_findings, methods=["POST"]),
             Route("/retro-findings", get_retro_findings),
             Route(
