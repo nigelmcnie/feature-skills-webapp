@@ -70,6 +70,15 @@ def test_put_custom_actor(temp_db: Path) -> None:
     assert resp.status_code == 200
 
 
+def test_put_400_non_string_actor(temp_db: Path) -> None:
+    # A non-string actor must be rejected, not silently coerced (every other
+    # body field here is type-validated).
+    client = TestClient(create_app(db_path=temp_db))
+    resp = client.put(_PUT_URL, json={**_VALID_BODY, "actor": 123})
+    assert resp.status_code == 400
+    assert "actor" in resp.json()["error"]
+
+
 # --- dry-run ---
 # dry_run returns before hitting broadcaster, so no lifespan needed
 
@@ -212,6 +221,61 @@ def test_get_document_503_db_not_configured() -> None:
     client = TestClient(create_app(db_path=None))
     resp = client.get(_GET_URL)
     assert resp.status_code == 503
+
+
+def test_put_get_round_trip_opaque_feedback(temp_db: Path) -> None:
+    # Feedback is opaque (single body) and the only type with instance > 1 —
+    # exercises both the opaque write path and the opaque GET branch end-to-end.
+    url = "/api/documents/proj/feat-a/requirements-feedback/2"
+    with TestClient(create_app(db_path=temp_db)) as client:
+        put_resp = client.put(url, json={"body": "<p>feedback body</p>"})
+        assert put_resp.status_code == 200
+        assert put_resp.json()["created"] is True
+        resp = client.get(url)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["doc_type"] == "requirements-feedback"
+    assert data["shape"] == "opaque"
+    assert len(data["sections"]) == 1
+    assert data["sections"][0]["body"] == "<p>feedback body</p>"
+
+
+def test_get_document_project_level_feature_dash(temp_db: Path) -> None:
+    # The '-' feature segment maps to None and resolves the project-level
+    # logical key 'proj/-/features/1'. Seed such a row directly (no API writer
+    # creates project-level docs) and confirm the read path returns it.
+    from feature_skills_webapp.storage.db import connect, now_iso
+    from feature_skills_webapp.storage.doc_content import ParsedContent, Section
+    from feature_skills_webapp.storage.versions import record_version
+
+    with TestClient(create_app(db_path=temp_db)) as client:
+        conn = connect(temp_db)
+        now = now_iso()
+        conn.execute("INSERT INTO projects (name, created_at) VALUES ('proj', ?)", (now,))
+        pid = conn.execute("SELECT id FROM projects WHERE name='proj'").fetchone()["id"]
+        cur = conn.execute(
+            "INSERT INTO documents (project_id, feature_id, type, status, logical_key, "
+            "instance, created_at, updated_at) "
+            "VALUES (?, NULL, 'features', 'active', 'proj/-/features/1', 1, ?, ?)",
+            (pid, now, now),
+        )
+        doc_id = cur.lastrowid
+        assert doc_id is not None
+        record_version(
+            conn,
+            doc_id,
+            ParsedContent(shape="opaque", sections=(Section(key="", body="<p>tracker</p>"),)),
+            actor="importer",
+            now=now,
+        )
+        conn.close()
+        resp = client.get("/api/documents/proj/-/features/1")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["logical_key"] == "proj/-/features/1"
+    assert data["doc_type"] == "features"
+    assert data["shape"] == "opaque"
+    assert data["sections"][0]["body"] == "<p>tracker</p>"
 
 
 # ---------------------------------------------------------------------------

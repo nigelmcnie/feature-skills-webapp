@@ -95,6 +95,7 @@ _MANIFESTS: dict[str, ManifestSpec] = {
             ("data-model", "Data model"),
             ("contract", "HTTP contract"),
             ("file-structure", "File structure"),
+            ("verification", "Verification"),
             ("qc", "QC"),
             ("checklist", "Checklist"),
         ),

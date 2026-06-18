@@ -157,3 +157,15 @@ Plan-level detail worth carrying forward — not requirements, but the seams are
 - **No auth in v1** (round 1): on the stated assumption of a single trusted local user with no hostile local processes; re-open if that changes.
 - **Server-derived title; content-equality change gate** (round 1): deriving the title from feature + doc type is fine; the API path gates on content equality rather than file size/mtime.
 - **Validate-only mode kept** (round 1): cheap, and de-risks the Codex wrapper finding its feet.
+
+## Review decisions
+
+### Round 1 (post-merge review)
+
+No correctness defects found in the feature code; all four keystone properties (shared-key convergence, three write states, reconcile-safety) verified and non-vacuously tested. Items actioned:
+
+- **Fixed — plan manifest missing `verification`:** the plan template ships a `verification` section but the `plan` manifest never listed the key, so the corpus test flagged this feature's own plan doc and the section rendered out of order. Added `("verification", "Verification")` to the manifest (after `file-structure`, before `qc`). Pre-existing F2 drift surfaced by this feature; one line, turns the suite green.
+- **Fixed — non-string `actor` silently coerced:** the PUT handler did `body.get("actor") or "agent"`, so a non-string actor was stored verbatim. Now rejected with 400, matching how every other body field is validated.
+- **Added tests:** an opaque `requirements-feedback` write→read round-trip (the opaque write path + GET branch + instance>1 were untested), and a project-level (`feature='-'`) read seeded directly (pins the `'-'`→None read mapping).
+- **Declined — empty-`ids` integrate still emits a `comment_integrated` event:** faithfully copied from the sibling `comments.py` handler, so it's consistent, not a regression; tightening one would mean tightening both — out of scope here.
+- **Declined (flagged for retro) — the corpus test reads out-of-repo dev-store state:** `test_corpus_section_keys_subset_of_manifest` scans `~/.claude/feature-docs` and `skipif`s when absent, so it's non-deterministic across machines/CI — a real F1 test-quality smell, but not this feature's to fix.
