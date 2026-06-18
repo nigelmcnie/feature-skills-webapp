@@ -55,7 +55,10 @@ async def put_document(request: Request) -> JSONResponse:
     if not isinstance(body, dict):
         return JSONResponse({"error": "body must be a JSON object"}, status_code=400)
 
-    actor: str = body.get("actor") or "agent"
+    actor_raw = body.get("actor")
+    if actor_raw is not None and not isinstance(actor_raw, str):
+        return JSONResponse({"error": "'actor' must be a string"}, status_code=400)
+    actor: str = actor_raw or "agent"
 
     try:
         validate_writable(doc_type, feat, instance)
