@@ -27,6 +27,7 @@ from feature_skills_webapp.web.routes import (
     healthz,
     index,
 )
+from feature_skills_webapp.web.submit import put_document
 from feature_skills_webapp.web.synthesis import get_synthesis_response, post_synthesis_response
 
 _HERE = Path(__file__).parent
@@ -95,6 +96,11 @@ def create_app(db_path: Path | None, docs_root: Path | None = None) -> Starlette
             Route("/doc/{document_id:int}/comments", post_comments, methods=["POST"]),
             Route("/comments", get_comments),
             Route("/comments/integrate", post_comments_integrate, methods=["POST"]),
+            Route(
+                "/api/documents/{project}/{feature}/{doc_type}/{instance:int}",
+                put_document,
+                methods=["PUT"],
+            ),
             Route("/retro-findings", post_retro_findings, methods=["POST"]),
             Route("/retro-findings", get_retro_findings),
             Route(

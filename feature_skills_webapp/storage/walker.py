@@ -265,7 +265,7 @@ def _apply_tracker_rows(
             summary.shipped += 1
 
 
-def _upsert_project(conn: sqlite3.Connection, name: str, now: str) -> int:
+def upsert_project(conn: sqlite3.Connection, name: str, now: str) -> int:
     conn.execute(
         "INSERT INTO projects (name, created_at) VALUES (?, ?) ON CONFLICT(name) DO NOTHING",
         (name, now),
@@ -273,7 +273,7 @@ def _upsert_project(conn: sqlite3.Connection, name: str, now: str) -> int:
     return conn.execute("SELECT id FROM projects WHERE name=?", (name,)).fetchone()["id"]
 
 
-def _upsert_feature(conn: sqlite3.Connection, project_id: int, slug: str, now: str) -> int:
+def upsert_feature(conn: sqlite3.Connection, project_id: int, slug: str, now: str) -> int:
     conn.execute(
         "INSERT INTO features (project_id, slug, created_at, updated_at) VALUES (?, ?, ?, ?) "
         "ON CONFLICT(project_id, slug) DO NOTHING",
@@ -362,9 +362,9 @@ def _process_file(
         log.warning("Section-parse failure (no main/zero sections): %s", abs_path)
         summary.unparsed += 1
 
-    project_id = _upsert_project(conn, identity.project, now)
+    project_id = upsert_project(conn, identity.project, now)
     feature_id = (
-        _upsert_feature(conn, project_id, identity.feature, now) if identity.feature else None
+        upsert_feature(conn, project_id, identity.feature, now) if identity.feature else None
     )
 
     meta = json.dumps({"title": parsed.title, "size": st.st_size})
