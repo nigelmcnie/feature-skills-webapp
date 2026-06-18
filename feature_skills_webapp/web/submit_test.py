@@ -1,4 +1,4 @@
-"""Tests for web/submit.py (Phase 1: PUT /api/documents endpoint)."""
+"""Tests for web/submit.py (PUT write path + read round-trips by logical identity)."""
 
 from __future__ import annotations
 
@@ -167,3 +167,217 @@ def test_put_broadcasts(temp_db: Path) -> None:
         client.put(_PUT_URL, json=_VALID_BODY)
         assert not q.empty()
         app.state.broadcaster.unregister(q)
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: GET /api/documents/{…}  — content read
+# ---------------------------------------------------------------------------
+
+_GET_URL = "/api/documents/proj/feat-a/requirements/1"
+
+
+def test_get_document_round_trips_content(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        client.put(_PUT_URL, json={"sections": {"scope": "<p>Sc.</p>", "problem": "<p>Pr.</p>"}})
+        resp = client.get(_GET_URL)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["logical_key"] == "proj/feat-a/requirements/1"
+    assert data["doc_type"] == "requirements"
+    assert data["shape"] == "sections"
+    assert data["version_num"] == 1
+    assert "document_id" in data
+    assert data["url"] == f"/doc/{data['document_id']}"
+    # sections returned in manifest order (problem before scope)
+    keys = [s["key"] for s in data["sections"]]
+    assert keys == ["problem", "scope"]
+
+
+def test_get_document_sections_in_manifest_order(temp_db: Path) -> None:
+    # Submit scope before problem; GET must return problem first (manifest order)
+    with TestClient(create_app(db_path=temp_db)) as client:
+        client.put(_PUT_URL, json={"sections": {"scope": "<p>S</p>", "problem": "<p>P</p>"}})
+        resp = client.get(_GET_URL)
+    keys = [s["key"] for s in resp.json()["sections"]]
+    assert keys.index("problem") < keys.index("scope")
+
+
+def test_get_document_404_unknown_key(temp_db: Path) -> None:
+    client = TestClient(create_app(db_path=temp_db))
+    resp = client.get(_GET_URL)
+    assert resp.status_code == 404
+
+
+def test_get_document_503_db_not_configured() -> None:
+    client = TestClient(create_app(db_path=None))
+    resp = client.get(_GET_URL)
+    assert resp.status_code == 503
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: GET /api/manifests/{doc_type}
+# ---------------------------------------------------------------------------
+
+
+def test_get_manifest_section_type() -> None:
+    client = TestClient(create_app(db_path=None))
+    resp = client.get("/api/manifests/plan")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["doc_type"] == "plan"
+    assert data["shape"] == "sections"
+    sections = data["sections"]
+    assert len(sections) > 0
+    assert all("key" in s and "label" in s for s in sections)
+    assert sections[0]["key"] == "overview"
+    assert data["repeated_prefixes"] == ["phase-"]
+
+
+def test_get_manifest_opaque_type() -> None:
+    client = TestClient(create_app(db_path=None))
+    resp = client.get("/api/manifests/requirements-feedback")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["doc_type"] == "requirements-feedback"
+    assert data["shape"] == "opaque"
+    assert data["sections"] == []
+    assert data["repeated_prefixes"] == []
+
+
+def test_get_manifest_requirements_has_expected_keys() -> None:
+    client = TestClient(create_app(db_path=None))
+    resp = client.get("/api/manifests/requirements")
+    data = resp.json()
+    keys = [s["key"] for s in data["sections"]]
+    assert "problem" in keys
+    assert "scope" in keys
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: GET /api/documents/{…}/comments + POST …/comments/integrate
+# ---------------------------------------------------------------------------
+
+_COMMENTS_URL = "/api/documents/proj/feat-a/requirements/1/comments"
+_INTEGRATE_URL = "/api/documents/proj/feat-a/requirements/1/comments/integrate"
+
+
+def _add_comments(client, doc_id: int, texts: list[str]) -> None:
+    client.post(
+        f"/doc/{doc_id}/comments",
+        json={"comments": [{"text": t} for t in texts]},
+    )
+
+
+def test_get_comments_by_logical_key(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        put_resp = client.put(_PUT_URL, json=_VALID_BODY)
+        doc_id = put_resp.json()["document_id"]
+        _add_comments(client, doc_id, ["Note A", "Note B"])
+        resp = client.get(_COMMENTS_URL)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["doc"] == "proj/feat-a/requirements/1"
+    assert data["submitted"] is True
+    assert len(data["comments"]) == 2
+    texts = [c["text"] for c in data["comments"]]
+    assert "Note A" in texts
+    assert "Note B" in texts
+
+
+def test_get_comments_empty_before_any_submitted(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        client.put(_PUT_URL, json=_VALID_BODY)
+        resp = client.get(_COMMENTS_URL)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["submitted"] is False
+    assert data["comments"] == []
+
+
+def test_integrate_drops_comments_from_active_set(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        put_resp = client.put(_PUT_URL, json=_VALID_BODY)
+        doc_id = put_resp.json()["document_id"]
+        _add_comments(client, doc_id, ["Keep", "Integrate me"])
+
+        comments = client.get(_COMMENTS_URL).json()["comments"]
+        integrate_id = next(c["id"] for c in comments if c["text"] == "Integrate me")
+
+        int_resp = client.post(_INTEGRATE_URL, json={"ids": [integrate_id]})
+        assert int_resp.status_code == 200
+        assert int_resp.json()["integrated"] == 1
+
+        remaining = client.get(_COMMENTS_URL).json()["comments"]
+    assert len(remaining) == 1
+    assert remaining[0]["text"] == "Keep"
+
+
+def test_get_comments_404_unknown_key(temp_db: Path) -> None:
+    client = TestClient(create_app(db_path=temp_db))
+    resp = client.get(_COMMENTS_URL)
+    assert resp.status_code == 404
+
+
+def test_integrate_404_unknown_key(temp_db: Path) -> None:
+    client = TestClient(create_app(db_path=temp_db))
+    resp = client.post(_INTEGRATE_URL, json={"ids": []})
+    assert resp.status_code == 404
+
+
+def test_get_comments_503_db_not_configured() -> None:
+    client = TestClient(create_app(db_path=None))
+    resp = client.get(_COMMENTS_URL)
+    assert resp.status_code == 503
+
+
+def test_integrate_503_db_not_configured() -> None:
+    client = TestClient(create_app(db_path=None))
+    resp = client.post(_INTEGRATE_URL, json={"ids": []})
+    assert resp.status_code == 503
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: GET /api/documents/{…}/synthesis
+# ---------------------------------------------------------------------------
+
+_SYNTHESIS_URL = "/api/documents/proj/feat-a/requirements/1/synthesis"
+
+
+def test_get_synthesis_submitted_false_for_fresh_doc(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        client.put(_PUT_URL, json=_VALID_BODY)
+        resp = client.get(_SYNTHESIS_URL)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["doc"] == "proj/feat-a/requirements/1"
+    assert data["submitted"] is False
+    assert data["responses"] == {}
+    assert data["routine_flags"] == {}
+
+
+def test_get_synthesis_populated_after_post(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        put_resp = client.put(_PUT_URL, json=_VALID_BODY)
+        doc_id = put_resp.json()["document_id"]
+        client.post(
+            f"/doc/{doc_id}/synthesis-response",
+            json={"responses": {"1": "my answer"}, "routine_flags": {"2": "routine"}},
+        )
+        resp = client.get(_SYNTHESIS_URL)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["submitted"] is True
+    assert data["responses"] == {"1": "my answer"}
+    assert data["routine_flags"] == {"2": "routine"}
+
+
+def test_get_synthesis_404_unknown_key(temp_db: Path) -> None:
+    client = TestClient(create_app(db_path=temp_db))
+    resp = client.get(_SYNTHESIS_URL)
+    assert resp.status_code == 404
+
+
+def test_get_synthesis_503_db_not_configured() -> None:
+    client = TestClient(create_app(db_path=None))
+    resp = client.get(_SYNTHESIS_URL)
+    assert resp.status_code == 503
