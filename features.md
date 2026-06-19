@@ -5,12 +5,12 @@
 | Feature | Owner | Notes |
 |---|---|---|
 | [skills-api-cutover](docs/features/skills-api-cutover/context.md) | Nigel | The arc's last mile: cut the feature-* skills over from writing dev-store HTML to `PUT /api/documents` + fetching `/api/manifests`, run one final import, then retire the dev-store and walker. Needs F1/F2/F3 (all shipped). |
+| [agent-submission-tracker-ops](docs/features/agent-submission-tracker-ops/requirements.md) | Nigel | Typed tracker mutations (claim/move/ship) and listing of projects/features/documents over the logical-key API. Resolves the deferred race by making the `features` table authoritative — the walker stops parsing `features.html` into the table, and the file/`features.md` become regenerated snapshots. Follow-up to agent-submission-api. |
 
 ## Available
 
 | Feature | Notes |
 |---|---|
-| agent-submission-tracker-ops | Split from agent-submission-api (F3, round-1 requirements review): typed tracker mutations (claim/move/ship a feature) and listing of projects/features/documents over the logical-key API. Deferred because writing feature rows directly would race the walker's parse of `features.html` — needs its own design (typed op rewrites the tracker doc body, or tracker-parsing stops being authoritative). Do after agent-submission-api lands. |
 | retro-recurrence-trend | Split from retro-findings-capture: surface a finding's recurrence depth ("raised in N retros") as an explicit trend and feed it back into the `/feature-retro` prompt to nudge persistent findings toward becoming tracked features. Design once retro-findings-capture has run in anger. |
 | [event-driven-synthesis-wait](docs/features/event-driven-synthesis-wait/context.md) | Replace the skills' 5s busy-poll of `GET /synthesis-response` with an event-driven wait (blocking long-poll backed by the existing broadcaster/SSE), so the agent makes one call, idles silently, and wakes on submission — killing the hourly "still polling" re-announce on long waits. |
 
