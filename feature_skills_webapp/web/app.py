@@ -36,6 +36,11 @@ from feature_skills_webapp.web.submit import (
     put_document,
 )
 from feature_skills_webapp.web.synthesis import get_synthesis_response, post_synthesis_response
+from feature_skills_webapp.web.tracker import (
+    list_documents_handler,
+    list_features_handler,
+    list_projects_handler,
+)
 
 _HERE = Path(__file__).parent
 TEMPLATES_DIR = _HERE / "templates"
@@ -126,6 +131,12 @@ def create_app(db_path: Path | None, docs_root: Path | None = None) -> Starlette
                 get_document_synthesis,
             ),
             Route("/api/manifests/{doc_type}", get_manifest),
+            Route("/api/projects", list_projects_handler),
+            Route("/api/projects/{project}/features", list_features_handler),
+            Route(
+                "/api/projects/{project}/features/{feature}/documents",
+                list_documents_handler,
+            ),
             Route("/retro-findings", post_retro_findings, methods=["POST"]),
             Route("/retro-findings", get_retro_findings),
             Route(
