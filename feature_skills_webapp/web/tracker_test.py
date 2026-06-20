@@ -274,6 +274,14 @@ def test_capture_400_non_string_notes(temp_db: Path) -> None:
     assert resp.status_code == 400
 
 
+def test_capture_400_non_dict_body(temp_db: Path) -> None:
+    # Valid JSON but not an object — exercises the isinstance(body, dict) guard
+    # via a path distinct from the malformed-JSON case above.
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post("/api/projects/proj/features/feat/capture", json=[])
+    assert resp.status_code == 400
+
+
 def test_capture_broadcasts_on_change(temp_db: Path) -> None:
     app = create_app(db_path=temp_db)
     with TestClient(app) as client:
@@ -375,6 +383,13 @@ def test_claim_400_non_string_owner(temp_db: Path) -> None:
     assert resp.status_code == 400
 
 
+def test_claim_400_non_dict_body(temp_db: Path) -> None:
+    _seed_bare_feature(temp_db, "feat")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post("/api/projects/proj/features/feat/claim", json=[])
+    assert resp.status_code == 400
+
+
 def test_claim_broadcasts_on_change(temp_db: Path) -> None:
     _seed_bare_feature(temp_db, "feat", status="available")
     app = create_app(db_path=temp_db)
@@ -448,6 +463,13 @@ def test_ship_400_non_string_outcome(temp_db: Path) -> None:
             "/api/projects/proj/features/feat/ship",
             json={"outcome": 99},
         )
+    assert resp.status_code == 400
+
+
+def test_ship_400_non_dict_body(temp_db: Path) -> None:
+    _seed_bare_feature(temp_db, "feat", status="in_progress")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post("/api/projects/proj/features/feat/ship", json=[])
     assert resp.status_code == 400
 
 
