@@ -11,6 +11,7 @@ from feature_skills_webapp.storage.inbox import (
     doc_type_rank,
     humanise_type,
 )
+from feature_skills_webapp.storage.tracker import get_feature
 from feature_skills_webapp.storage.walker import FEEDBACK_SUFFIX
 from feature_skills_webapp.web.db_dep import request_conn
 
@@ -22,12 +23,7 @@ async def feature_page(request: Request) -> Response:
     project = request.path_params["project"]
     slug = request.path_params["slug"]
     with request_conn(app) as conn:
-        feat = conn.execute(
-            "SELECT f.id, f.slug, f.status, f.owner, f.notes, p.name AS project "
-            "FROM features f JOIN projects p ON f.project_id = p.id "
-            "WHERE p.name = ? AND f.slug = ?",
-            (project, slug),
-        ).fetchone()
+        feat = get_feature(conn, project, slug)
         if feat is None:
             return PlainTextResponse("Not found", status_code=404)
         docs = conn.execute(

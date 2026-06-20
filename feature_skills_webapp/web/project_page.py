@@ -6,6 +6,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, PlainTextResponse, Response
 
 from feature_skills_webapp.storage.retro_findings import list_findings
+from feature_skills_webapp.storage.tracker import get_project, list_features
 from feature_skills_webapp.web.db_dep import request_conn
 
 
@@ -15,17 +16,10 @@ async def project_page(request: Request) -> Response:
         return JSONResponse({"error": "db not configured"}, status_code=503)
     name = request.path_params["project"]
     with request_conn(app) as conn:
-        proj = conn.execute("SELECT id, name FROM projects WHERE name = ?", (name,)).fetchone()
+        proj = get_project(conn, name)
         if proj is None:
             return PlainTextResponse("Not found", status_code=404)
-        feats = conn.execute(
-            "SELECT f.slug, f.status, f.owner, "
-            "  (SELECT MAX(e.created_at) FROM events e "
-            "   JOIN documents d ON e.document_id = d.id "
-            "   WHERE d.feature_id = f.id AND d.status = 'active') AS last_activity "
-            "FROM features f WHERE f.project_id = ? ORDER BY f.status, f.slug",
-            (proj["id"],),
-        ).fetchall()
+        feats = list_features(conn, proj["id"])
         tracker = conn.execute(
             "SELECT id FROM documents "
             "WHERE project_id = ? AND feature_id IS NULL AND status = 'active'",
