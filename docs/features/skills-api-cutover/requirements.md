@@ -42,14 +42,32 @@ Every feature-* skill authors documents and tracker changes through the logical-
         the keyed endpoint — never constructing a tilde-expanded
 
   URL that 404s if the expansion is wrong.
-3. As Nigel, running the workflow
+3. As a feature-* skill mutating the tracker
+  I want to claim, ship, and capture features through typed API
+        calls instead of hand-editing
+  When a feature is captured, the skill calls
+
+  to create an available row and
+
+  s the context
+        document separately; when requirements start it calls
+
+  ; at the
+        end it calls
+
+  . The
+
+  table is authoritative,
+        so the change sticks even across a re-walk — no row silently reverted by the file
+        parse.
+4. As Nigel, running the workflow
   I want the cutover to never strand my in-flight work or
         silently lose a document
   The skill being rewritten is the same machinery that
         captured this very requirements doc. The file-based path keeps working until
         the API path is proven equivalent by a parity check; only then is the
         dev-store deleted.
-4. As Nigel, maintaining the webapp
+5. As Nigel, maintaining the webapp
   I want the walker, the watcher, and the legacy path-keyed
         endpoints gone once nothing writes files
   After cutover, the webapp boots without a filesystem
@@ -61,7 +79,7 @@ Every feature-* skill authors documents and tracker changes through the logical-
 
   — there
         is less surface to reason about and no walk-timing race to debug.
-5. As a future Codex wrapper (downstream beneficiary)
+6. As a future Codex wrapper (downstream beneficiary)
   I want the authoring contract to depend on nothing in
   Once the Claude skills are thin wrappers over the API,
         standing up
@@ -78,16 +96,18 @@ This feature spans two repos and finishes with an irreversible deletion. What's 
 
 - **Authoring writes.** Rewriting the doc-authoring `feature-*` skills (context, requirements, plan, and the plan/requirements updates in implement and iterate) to author via `PUT /api/documents` and fetch `/api/manifests/{doc_type}` instead of writing dev-store HTML.
 - **Reads.** Moving the interactive reads (comments, synthesis) *and* the sibling-doc reads onto the API. Several skills read dev-store files as inputs — review and iterate read prior docs/synthesis, and retro reads `plan.html`, `requirements.html`, `.feedback-archive/*.html`, and the tracker. These move to `GET /api/documents/...` (and the tracker read to the tracker API), or Phase deletion would silently break them. The path-keyed polling convention in `docs/webapp-polling.md` is retired.
-- **Tracker mutations.** Cutting claim / move / ship onto the typed tracker API delivered by `agent-submission-tracker-ops` (a hard prerequisite — see Technical approach).
+- **Tracker mutations (skills).** Cutting the three tracker-writing skills onto tracker-ops's typed API — `/feature-context` → `capture` (creates an available row only, and `PUT`s the context document separately; `capture` is non-idempotent — 409 on an existing slug — so the flow treats an already-captured slug as success), `/feature-requirements` → `claim`, and `/feature-review` → `ship` — instead of hand-editing `features.html`. (`/feature-plan` only reads the tracker; no generic "move"; no "reopen".)
+- **Walker-authority flip.** Retiring `_apply_tracker_rows` in the walker so the `features` table stops being overwritten by the parse of `features.html` and becomes authoritative. Gated behind the skill migration above by a mechanical "all tracker-writers migrated" check — retire the parse too early and any still-file-based claim silently vanishes (the stranding hazard). A keystone test pins the property: a direct mutation survives a subsequent walk.
+- **Retire the opaque tracker document.** The project page already reads features from the table, so the authority flip needs no project-page change. The only lingering second view is the opaque `features.html` *document* still viewable at `/doc/{id}`, which is retired with the walker.
 - **Standalone import CLI.** Extracting a re-runnable import command from the walker's `walk()` before the walker is deleted, so fresh-DB / cross-repo ingestion survives (and the final reconciling import has a tool). No such CLI exists today — the walker only runs embedded in the server.
-- **Exports.** Repointing repo exports so `feature-html-to-md` (or its replacement) regenerates from DB content rather than dev-store HTML; exports stay optional, gated by `.feature-workflow.toml`.
+- **Exports (merge, not render).** Repointing repo exports so they regenerate from DB content rather than dev-store HTML — but `features.md` must *merge*, not render from scratch: the table models neither intra-state row order nor the prose "Suggested order" section, so a naive render would silently drop both into git history. Rewrite only the table-modelled rows; preserve editorial ordering and prose. Exports stay optional, gated by `.feature-workflow.toml`.
 - **Parity gate.** A mechanical parity check that proves the API-authored path produces equivalent DB state to the file+walker path, plus the final reconciling import — run before any deletion.
 - **Retirement (irreversible).** Snapshotting the dev-store to a tar.gz kept on disk, then deleting the dev-store and retiring the walker, watcher, startup walk, and the legacy path-keyed endpoints (`/synthesis-response?path=`, `/comments?path=`, the path-keyed `/comments/integrate`, `/admin/discover`, and the `/doc/{id}/raw` raw-fallback render target).
 
 ### Out of scope
 
 - **Codex wrappers.** Standing up `~/.codex/skills/feature-*` is a follow-up once the Claude skills are proven on the API. This feature makes that follow-up clean but does not do it. Capture it as a new tracker entry.
-- **Building the tracker API.** The typed claim/move/ship surface is `agent-submission-tracker-ops`' job; this feature *consumes* it and depends on it landing first.
+- **Building the tracker mutation/listing API.** The typed `claim`/`ship`/`capture` + listing surface is `agent-submission-tracker-ops`' job (now shipped); this feature *consumes* it. Note the walker-authority flip it deliberately left us *is* in scope (above).
 - **New document types or manifest changes.** The manifests are fixed by F1–F3; this feature adopts them as-is.
 
 ## Technical approach
@@ -96,9 +116,15 @@ This feature spans two repos and finishes with an irreversible deletion. What's 
 
 The server contract is complete. The work is almost entirely on the **skills side** (the `feature-skills` repo): rewrite each flow from "render template HTML → write file → force a walk → poll by path" to "fetch manifest → assemble sections → `PUT` by logical key → poll by key". The **webapp side** is deletion, not construction.
 
-### Tracker cutover depends on agent-submission-tracker-ops
+### The tracker cutover: migrate skills, then flip authority
 
-The walker does double duty: it imports per-feature docs *and* parses `features.html` into the `features` table that the inbox and project pages query. The document API deliberately refuses to write the `features` doc type. So the walker cannot be fully deleted until tracker mutations have somewhere else to go. We will therefore **depend on `agent-submission-tracker-ops` landing first** and cut claim/move/ship onto its typed API — letting the walker be deleted whole rather than left half-alive to keep parsing the tracker. This makes tracker-ops a hard prerequisite alongside F1/F2/F3. The dependency is inherited by everything from the tracker-cutover phase onward (parity must include tracker state; deletion requires tracker mutations to be off the file) — only the authoring-write and read-migration phases can proceed without it.
+The walker does double duty: it imports per-feature docs *and* parses `features.html` into the `features` table that the inbox and project pages query. `agent-submission-tracker-ops` (now shipped) added the typed mutations — `claim`, `ship`, `capture` (no generic "move"; no "reopen", since features aren't un-shipped) — and the listing endpoints, but deliberately left the walker-coupled half to this feature because it can't be made safe in isolation.
+
+Two coupled changes, in order. First, **migrate the three tracker-writing skills** off hand-editing `features.html` and onto the API: `/feature-context` → `capture` for a new available row (the context *document* is a separate `PUT /api/documents`), `/feature-requirements` → `claim`, and `/feature-review` → `ship`. (`/feature-plan` only reads.) Second, the **authority flip**: retire the walker's `_apply_tracker_rows` so the parse of `features.html` stops overwriting the table and the table becomes the source of truth.
+
+The flip must be **gated behind the migration by a mechanical check**. The transitional window is not fully harmless: once a skill stops writing `features.html` (Phase 3) while the parse still runs, the file goes stale and the next walk re-derives the table from it — *reverting* that skill's API mutations. And the moment the parse is retired while any skill still hand-edits the file, that skill's claims *silently vanish* with no error — the stranding hazard. So the parse is retired only once **every** tracker-writing skill has cut over. The check is concrete: a grep over the skills repo for any write to `features.html` returns zero, *and* the three known writers (`feature-context`, `feature-requirements`, `feature-review`) are confirmed on the API — both halves, so a newly-added writer can't slip through. A keystone test pins the result: a direct mutation survives a subsequent walk (red before the flip, green after).
+
+The webapp's project page already reads the tracker from the table, so the flip needs no project-page change. The only lingering second view is the indexed opaque `features.html` *document* at `/doc/{id}`, retired with the walker.
 
 ### Cut over one skill at a time, no in-skill dual-write
 
@@ -108,7 +134,7 @@ Each skill's authoring/read code is swapped in place, so once a skill is on the 
 
 The deletion of the dev-store is the one irreversible step, so it comes last, behind a parity gate. The importer's idempotency (an F1 design property, established precisely so the dev-store could be ingested one last time) makes a final reconciling import safe. Until that gate passes, the file-based path stays functional — important because the skill under rewrite is the same machinery the workflow runs on, so a hard swap could break the authoring loop itself.
 
-The parity gate must be a **mechanical pass/fail, not a prose judgement**, because it guards an irreversible deletion. The stored-content serialiser is byte-sensitive (whitespace, attribute order) and explicitly not semantic, so a template-authored doc and an API-assembled doc will differ in bytes while being semantically identical — parity must compare *normalised section content*, not raw bytes. Some fields also differ *by construction* between the two write paths and are excluded from the comparison: `source_path` (a real path vs NULL), `actor` (`importer` vs `agent`), the `metadata` size key, and event provenance (`created`/`updated` rows). Concrete pass conditions: every logical key authored both ways matches under that normalisation; the final import reports `created=0/updated=0`; and zero documents fall into the raw-fallback render path (see below). The check must run against the **redeployed** service, since the long-running `uv tool` service won't reflect edits until reinstall+restart.
+The parity gate must be a **mechanical pass/fail, not a prose judgement**, because it guards an irreversible deletion. The stored-content serialiser is byte-sensitive (whitespace, attribute order) and explicitly not semantic, so a template-authored doc and an API-assembled doc will differ in bytes while being semantically identical — parity must compare *normalised section content*, not raw bytes. Some fields also differ *by construction* between the two write paths and are excluded from the comparison (enumerated in the indicative notes). Concrete pass conditions: every logical key authored both ways matches under that normalisation; the final import reports `created=0/updated=0`; and zero documents fall into the raw-fallback render path (see below). The check must run against the **redeployed** service, since the long-running `uv tool` service won't reflect edits until reinstall+restart.
 
 **Recoverable deletion.** Before deleting, the dev-store is archived to a dated `tar.gz` left on disk (outside the walked tree), turning "irreversible" into "recoverable for a retention window". The archive is removed manually once the new path has proven itself.
 
@@ -118,9 +144,9 @@ The parity gate must be a **mechanical pass/fail, not a prose judgement**, becau
 
 Skills fetching `/api/manifests/{doc_type}` at authoring time is what *structurally* ends template-vs-manifest drift: there is no second copy of the section list to drift from. This realises the "webapp owns the manifest" decision from F2.
 
-### Exports regenerate from the DB
+### Exports regenerate from the DB — merge, not render
 
-Today `feature-html-to-md` reads dev-store HTML. With no dev-store, the export must source its content from the DB instead — either a webapp export endpoint that renders a doc to markdown/HTML, or a CLI that reads the API. Exports remain optional and per-repo; only their *source* changes. (Which mechanism and what triggers it is a plan-level decision — see Indicative notes.) The export repoint comes **after** the parity gate: exports source from the DB, so the DB should be proven equivalent before it's trusted as the export source.
+Today `feature-html-to-md` reads dev-store HTML. With no dev-store, the export sources from the DB instead — either a webapp export endpoint or a CLI (the mechanism and trigger are plan-level; see Indicative notes). For per-feature docs that's a straight render. But `features.md` must **merge, not render from scratch**: the `features` table models neither the intra-state row order nor the prose "Suggested order" section, so a naive regeneration silently drops both — and the bad output lands in committed git history. Regeneration rewrites only the table-modelled rows and leaves editorial ordering and prose untouched — the same opaque-region instinct F1 uses for feedback bodies. Exports stay optional and per-repo; only their *source* changes, and the repoint comes **after** the parity gate so the DB is proven before it's trusted as the source.
 
 ### Keep an import path alive
 
@@ -140,11 +166,11 @@ The walker is the only thing that ingests HTML into the DB, and it only runs emb
         accepting tracker-ops as a prerequisite.
 2. Absorb the tracker API into this feature
   Source: discussed with Nigel (requirements kickoff)
-  Build the typed claim/move/ship surface here so there's
+  Build the typed claim/ship/capture surface here so there's
         no cross-feature dependency. Rejected: it merges two features and inflates scope;
 
   already exists as a tracked,
-        separately-designed slice. Depend on it instead.
+        separately-designed slice (now shipped). Depend on it instead.
 3. Build Codex wrappers in this feature too
   Source: discussed with Nigel (requirements kickoff); codex/plan.md step 5
   Land both agents on the shared contract at once. Rejected:
@@ -166,7 +192,7 @@ The walker is the only thing that ingests HTML into the DB, and it only runs emb
 
 ## Delivery phases
 
-Ordered so each phase delivers testable value and the irreversible deletion is last, behind the parity gate. The file-based path stays functional until the final phase. Phases 1–2 can proceed without tracker-ops; everything from Phase 3 onward inherits the tracker-ops dependency.
+Ordered so each phase delivers testable value and the irreversible deletion is last, behind the parity gate. The file-based path stays functional until the final phase. Two mechanical gates govern the risky steps: the **stranding gate** (all tracker-writing skills migrated, before the authority flip) and the **parity gate** (before deletion). tracker-ops is shipped, so the tracker phases consume its API directly.
 
 ### Phase 1 — Cut document authoring to the API
 
@@ -176,25 +202,29 @@ Rewrite the authoring skills (context, requirements, plan, and the plan/requirem
 
 Move the interactive reads (comments, synthesis) and the sibling-doc reads onto the API: review/iterate read prior docs and synthesis, and retro reads `plan.html`/`requirements.html`/`.feedback-archive` by key instead of by path. Retire the path-keyed polling in `webapp-polling.md`. **Testable:** run a review/iterate/retro pass that consumes prior docs entirely through `GET /api/documents/...`, with the dev-store files moved aside.
 
-### Phase 3 — Cut tracker mutations to the tracker API
+### Phase 3 — Migrate the skills' tracker edits to the mutation API
 
-Move claim / move / ship onto the typed tracker API from `agent-submission-tracker-ops`, and the tracker *read* too. Skills stop editing `features.html` directly. **Testable:** claim and move a feature; the inbox and project rows update with no file write and no walk. (Depends on tracker-ops being shipped.)
+Cut the three tracker-writing skills off hand-editing `features.html`: `/feature-context` → `capture` (+ a separate context `PUT`), `/feature-requirements` → `claim`, and `/feature-review` → `ship`. The parse still runs, so a walk in this window will *revert* these mutations — durability arrives at the Phase 4 flip. **Testable:** each skill's mutation call succeeds and emits its event (`feature_captured`/`feature_claimed`/`shipped`) and the skills no longer touch the file; durable-survival-across-walk is the Phase 4 keystone test, not this phase's.
 
-### Phase 4 — Extract a standalone import CLI
+### Phase 4 — Flip tracker authority to the table
+
+Once the stranding gate confirms *every* tracker-writing skill has migrated, retire `_apply_tracker_rows` so the parse of `features.html` stops overwriting the `features` table, and render the webapp tracker view from the table. **Testable (keystone):** a direct mutation survives a subsequent walk — the test is red before the flip and green after.
+
+### Phase 5 — Extract a standalone import CLI
 
 Lift the walker's `walk()` into a re-runnable import command that can ingest dev-store / repo HTML into the DB without the embedded server. This is the ingestion path that survives the walker's deletion and the tool the final import uses. **Testable:** run the CLI against the dev-store on a fresh DB and get the same documents/versions the embedded walk produces.
 
-### Phase 5 — Parity check + final import
+### Phase 6 — Parity check + final import
 
 Prove the API-authored path produces DB state equivalent to the file+walker path under normalised section comparison (excluding the by-construction fields), then run the final reconciling import via the CLI. **Testable (the gate):** every logical key authored both ways matches; the final import reports `created=0/updated=0`; zero documents render in raw-fallback; re-authoring this very requirements doc via the API diffs clean — all against the redeployed service.
 
-### Phase 6 — Repoint exports to the DB
+### Phase 7 — Repoint exports to the DB (merge, not render)
 
-Make the opt-in repo export regenerate markdown/HTML from DB content instead of dev-store HTML. **Testable:** with `.feature-workflow.toml` opted in, export a feature's docs and `features.md` from DB content and diff against the previous file-sourced output.
+Make the opt-in repo export regenerate from DB content instead of dev-store HTML; for `features.md`, merge into the existing file (rewrite table rows, preserve row order + the "Suggested order" prose) rather than render from scratch. **Testable:** with `.feature-workflow.toml` opted in, export a feature's docs and `features.md` from DB content and diff against the previous file-sourced output — ordering and prose unchanged.
 
-### Phase 7 — Snapshot, then retire the walker, dev-store, and legacy endpoints (irreversible)
+### Phase 8 — Snapshot, then retire the walker, dev-store, and legacy endpoints (irreversible)
 
-Archive the dev-store to a dated `tar.gz` left on disk. Delete the filesystem walker, the watcher and startup walk, and the legacy path-keyed endpoints (`/synthesis-response?path=`, `/comments?path=`, path-keyed `/comments/integrate`, `/admin/discover`, `/doc/{id}/raw`); remove the dev-store directory; drop the now-unused `watchfiles` dependency (reinstall+restart). **Testable:** the webapp boots with no walker and no walk; all reads and writes go through the API; the full suite is green.
+Archive the dev-store to a dated `tar.gz` left on disk, then remove the dev-store directory and delete the walker, the watcher/startup walk, the legacy path-keyed endpoints, the opaque `features.html` tracker document, and the now-unused `watchfiles` dependency (reinstall+restart) — full inventory in the indicative "Webapp deletions" note. **Testable:** the webapp boots with no walker and no walk; all reads and writes go through the API; the full suite is green.
 
 ## Indicative implementation notes
 
@@ -206,22 +236,34 @@ Plan-level detail surfaced during requirements work, carried forward for `/featu
 - `GET /api/documents/.../{instance}` — returns sections in manifest order.
 - `GET /api/manifests/{doc_type}` — returns `{shape, sections:[{key,label}], repeated_prefixes}`. Fetch this to learn section keys before assembling a write.
 - `GET /api/documents/.../comments`, `POST /api/documents/.../comments/integrate` (body `{"ids":[...]}`), `GET /api/documents/.../synthesis` — the keyed replacements for the path-based reads.
-- `validate_writable` (storage/documents.py) permits only `context`, `requirements`, `plan`, and `*-feedback`; `instance != 1` only for feedback. The `features` type is intentionally not writable here — hence the tracker-ops dependency.
+- `validate_writable` (storage/documents.py) permits only `context`, `requirements`, `plan`, and `*-feedback`; `instance != 1` only for feedback. The `features` type is not writable via `PUT` — tracker rows are mutated through the dedicated endpoints below.
 
-### Webapp deletions (Phase 7)
+### Tracker API to consume (already built, agent-submission-tracker-ops)
 
-- `storage/walker.py` (whole file — note Phase 4 first lifts its `walk()` into a standalone import CLI), `web/discovery.py` (`_watch`, `_worker`, `request_walk`), and the lifespan walk wiring in `web/app.py`.
-- Legacy endpoints: `web/synthesis.py` path handler, `web/comments.py` path handlers, `web/routes.py` `admin_discover`, `web/doc_view.py` `doc_raw` (gated on the Phase 5 "no raw-fallback" check).
+- Mutation routes: `POST /api/projects/{project}/features/{feature}/capture` (body `{notes?}`; 409 `FeatureExists` on an existing slug — not idempotent), `.../claim` (body `{owner}` — required, 400 if empty), `.../ship` (body `{outcome?}` — omitted leaves `notes` unchanged; in_progress → done). The `{feature}` segment carries the *real slug*, not the `-` project sentinel the documents API uses (a trap). `capture` creates the row only — pair with a context-document `PUT`.
+- Mutations are transition-gated (a no-op write emits no event), emit a feature-level event with `document_id = NULL` and `{project, slug}` payload — `feature_captured`, `feature_claimed`, reused `shipped` — and SSE-broadcast. No "move"/"reopen".
+- Listing: `GET /api/projects`; `.../features` (rows `{slug, status, owner, notes}`); `.../features/{feature}/documents` (`{doc_type, instance, logical_key, version, document_id, url}`, `version = MAX(version_num) or 0`) — for the feature router / state resolution that currently stat the dev-store.
+- Status invariant is held in the app (tracker-ops backfilled NULL → available; every create path sets a valid status). No DB `CHECK` (SQLite).
+
+### Tracker authority flip (Phase 4)
+
+- Retire `_apply_tracker_rows` in `storage/walker.py` so a re-walk no longer re-derives `features` rows from `features.html`. Gate behind a mechanical "all tracker-writing skills migrated" check (sibling to the parity gate). Keystone test: a direct mutation survives a subsequent walk — red before, green after.
+- Point the webapp tracker view at the table; the opaque `features.html` document render at `/doc/{id}` is retired with the walker (Phase 8).
+
+### Webapp deletions (Phase 8)
+
+- `storage/walker.py` (whole file — Phase 4 first neuters its `_apply_tracker_rows`, and Phase 5 lifts its `walk()` into a standalone import CLI), `web/discovery.py` (`_watch`, `_worker`, `request_walk`), and the lifespan walk wiring in `web/app.py`.
+- Legacy endpoints: `web/synthesis.py` path handler, `web/comments.py` path handlers, `web/routes.py` `admin_discover`, `web/doc_view.py` `doc_raw` (gated on the Phase 6 "no raw-fallback" check), and the opaque `features.html` tracker document render.
 - Residual consumers of `source_path` (uniformly NULL post-cutover) and the legacy `content_html` column — clean these up too.
 - Drop the `watchfiles` dependency (only consumer is `discovery.py`); per the project CLAUDE.md this needs `uv tool install --reinstall` + restart.
 - Watch out for tests and fixtures that exercise the walker; some may need re-homing onto the API submission path (or the new import CLI) rather than deletion.
 
 ### Skills to rewrite (feature-skills repo)
 
-- The 8 doc-writing `feature-*/SKILL.md` flows, plus `docs/webapp-polling.md` (rewrite for keyed polling) and the `bin/feature-html-to-md` export path (DB-sourced).
-- The feature router (`feature/`) and any sub-skill that resolves state from dev-store file existence will need to resolve from the API instead.
+- The doc-authoring flows (context, requirements, plan, implement, iterate), the reading flows (review, iterate, retro), and the tracker-writing flows (`feature-context` → capture, `feature-requirements` → claim, `feature-review` → ship), plus `docs/webapp-polling.md` (rewrite for keyed polling) and the `bin/feature-html-to-md` export path (DB-sourced, merge-not-render for the tracker).
+- The feature router (`feature/`) and any sub-skill that resolves state from dev-store file existence will need to resolve from the listing API instead.
 
-### Parity check shape (Phase 5)
+### Parity check shape (Phase 6)
 
 - F3 reused the walker's `logical_key` + version-on-change, so both write paths converge on the same rows by design — the check is largely structural confirmation. A dual-run that authors a representative feature via both paths and diffs the resulting documents/versions/sections (and comments/synthesis) is the likely shape.
 - Compare *normalised* section content (e.g. extracted section text), not raw `serialise()` bytes, which are whitespace/attribute-order sensitive. Exclude the by-construction differences: `source_path`, `actor`, `metadata` size, event provenance.
@@ -230,10 +272,12 @@ Plan-level detail surfaced during requirements work, carried forward for `/featu
 
 ### Skill mechanics post-cutover
 
-- The rewritten skills must compute the feedback instance number (`-feedback-N`) by counting via `GET`, not by counting `.feedback-archive/` files, which won't exist.
+- Two reads have no listing-API equivalent and are solved **skill-side** (no tracker-ops extension): (1) the feedback instance number (`-feedback-N`) must be derived from document `GET`s rather than counting `.feedback-archive/` files — and must cover archived instances, which the active-only listing omits, so probe instances rather than listing them; (2) the `feature/` router's phase detection (currently a grep over `plan.html` for unchecked checklist items) reads checklist state from the plan document's sections via `GET`, since the listing only says a plan exists, not whether it has unchecked phases.
 
 ## Design notes
 
 - **Requirements kickoff.** Three scope decisions taken with Nigel before drafting: (1) tracker mutations cut to the API — depend on `agent-submission-tracker-ops` first so the walker is deleted whole; (2) Codex wrappers are a follow-up, not in scope; (3) dev-store + walker deletion is in this feature, as the final phase behind a parity gate.
 - **Round 1 (review synthesis).** Build the standalone import CLI now rather than defer it — "better to have it and not need it" — so cross-repo / fresh-DB ingestion isn't blocked later (reverses the drafted recommendation to defer). Snapshot the dev-store to a `tar.gz` left on disk before deletion, making the irreversible step recoverable.
 - **Round 1 (review synthesis).** Corrections folded in: retro is a read-path migration (not an authoring rewrite) and would otherwise break on deletion; the authoring surface is ~5 skills, not 8/9; the parity gate is mechanical (normalised comparison, excluded-by-construction fields) since it guards an irreversible deletion; `/doc/{id}/raw` is the live raw-fallback target, deletion gated on a "no raw-fallback" check; parity precedes the export repoint; Phase 1 split into authoring-writes and read-migration; the tracker-ops dependency is inherited from the tracker phase onward.
+- **Round 2 (agent-submission-tracker-ops handoff, 2026-06-20).** tracker-ops shipped narrow and handed the walker-coupled half here (see the context addendum). Folded in: verbs are `claim`/`ship`/`capture` (no "move"/"reopen"); `capture` creates only the row, the context document is a separate `PUT`; a new **walker-authority flip** (retire `_apply_tracker_rows`) makes the table authoritative, gated behind a mechanical "all tracker-writers migrated" **stranding gate** with a keystone anti-clobber test; the tracker view renders from the table and the opaque `features.html` document is retired with the walker; exports **merge, not render** to preserve row order + "Suggested order" prose. Phase 3 split into skill-migration (Phase 3) and authority-flip (Phase 4); the plan is now 8 phases.
+- **Round 2 (review synthesis).** Pinned against the shipped API and skills. Corrections: `feature-review` is the ship writer (the three tracker writers are context/requirements/review; `feature-plan` only reads); `capture` is non-idempotent (409 on an existing slug); the stranding gate has a concrete pass condition (zero `features.html` writes + the three known writers confirmed on the API); Phase 3 mutations are reverted by walks until the Phase 4 flip, so Phase 3 tests the call+event, not durable state; the real tracker routes/bodies/event names are recorded in the indicative notes; the project page already reads the table so the flip's only view change is retiring the opaque tracker document. Two skill-side reads (feedback-N, router checklist state) are solved via document `GET`s rather than extending tracker-ops.
