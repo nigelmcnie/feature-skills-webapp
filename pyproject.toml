@@ -13,6 +13,7 @@ dependencies = [
 
 [project.scripts]
 feature-skills-webapp = "feature_skills_webapp.server:main"
+feature-skills-import = "feature_skills_webapp.cli:main"
 
 [dependency-groups]
 dev = [
