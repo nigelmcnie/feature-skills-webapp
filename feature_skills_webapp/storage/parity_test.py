@@ -78,18 +78,28 @@ def test_whitespace_and_comment_differences_are_normalised(tmp_path: Path) -> No
     # DB A: extra internal whitespace
     content_a = build_content("context", {"problem-space": "<p>  Hello   world  </p>"}, None)
     # DB B: HTML comment added; no extra whitespace — both extract to "Hello world"
-    content_b = build_content(
-        "context", {"problem-space": "<!-- note --><p>Hello world</p>"}, None
-    )
+    content_b = build_content("context", {"problem-space": "<!-- note --><p>Hello world</p>"}, None)
     with transaction(conn_a):
         submit_document(
-            conn_a, project="proj", feature="feat", doc_type="context",
-            instance=1, content=content_a, actor="importer", now=now_iso(),
+            conn_a,
+            project="proj",
+            feature="feat",
+            doc_type="context",
+            instance=1,
+            content=content_a,
+            actor="importer",
+            now=now_iso(),
         )
     with transaction(conn_b):
         submit_document(
-            conn_b, project="proj", feature="feat", doc_type="context",
-            instance=1, content=content_b, actor="agent", now=now_iso(),
+            conn_b,
+            project="proj",
+            feature="feat",
+            doc_type="context",
+            instance=1,
+            content=content_b,
+            actor="agent",
+            now=now_iso(),
         )
 
     report = compare_dbs(conn_a, conn_b)
