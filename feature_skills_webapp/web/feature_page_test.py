@@ -79,8 +79,7 @@ def make_docs_root_with_archived(tmp_path: Path) -> Path:
 def make_docs_root_no_docs(tmp_path: Path) -> Path:
     docs_root = tmp_path / "docs"
     (docs_root / "proj1" / "feat-a").mkdir(parents=True)
-    # feature exists (no docs), needs a tracker to register the feature
-    (docs_root / "proj1" / "features.html").write_text(FEATURES_HTML)
+    # feature directory exists but has no HTML docs — the feature must be registered via the API
     return docs_root
 
 
@@ -194,7 +193,12 @@ def test_feature_page_archived_in_own_subsection(temp_db: Path, tmp_path: Path) 
 
 def test_feature_page_no_docs_renders_empty_hint(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_docs_root_no_docs(tmp_path)
-    resp = _discover_and_get_feature_page(temp_db, docs_root)
+    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        # No HTML docs in the feature dir, so the walker won't create the feature row;
+        # register it explicitly via the capture API.
+        client.post("/api/projects/proj1/features/feat-a/capture", json={"notes": ""})
+        client.post("/admin/discover")
+        resp = client.get("/project/proj1/feature/feat-a")
     assert resp.status_code == 200
     assert "No documents yet" in resp.text
 

@@ -11,6 +11,7 @@ from pathlib import Path
 
 from feature_skills_webapp.storage.db import connect, migrate
 from feature_skills_webapp.storage.inbox import humanise_type
+from feature_skills_webapp.storage.tracker import capture_feature, claim_feature
 from feature_skills_webapp.storage.versions import backfill_logical_keys, current_content
 from feature_skills_webapp.storage.walker import (
     DocIdentity,
@@ -486,50 +487,6 @@ def test_features_html_indexes_as_project_level_doc(tmp_path: Path):
     assert proj["name"] == "proj1"
 
 
-def test_tracker_populates_feature_status_owner_notes(tmp_path: Path):
-    docs_root = tmp_path / "docs"
-    (docs_root / "proj1").mkdir(parents=True)
-    (docs_root / "proj1" / "features.html").write_text(FEATURES_HTML)
-
-    conn = temp_conn(tmp_path)
-    walk(conn, docs_root, reconcile=False)
-
-    features = conn.execute(
-        "SELECT slug, status, owner, notes FROM features ORDER BY slug"
-    ).fetchall()
-    by_slug = {r["slug"]: r for r in features}
-
-    assert by_slug["feat-active"]["status"] == "in_progress"
-    assert by_slug["feat-active"]["owner"] == "Alice"
-    assert by_slug["feat-active"]["notes"] == "doing it now"
-    assert by_slug["feat-queued"]["status"] == "available"
-    assert by_slug["feat-done"]["status"] == "done"
-    assert by_slug["feat-done"]["notes"] == "Shipped."
-
-
-def test_tracker_backfills_existing_bare_feature(tmp_path: Path):
-    """A feature doc already in the DB (via a per-feature walk) gets status back-filled, not duplicated."""
-    docs_root = tmp_path / "docs"
-    (docs_root / "proj1" / "feat-active").mkdir(parents=True)
-    (docs_root / "proj1" / "feat-active" / "context.html").write_text(
-        make_html("context", "feat-active ctx")
-    )
-    (docs_root / "proj1" / "features.html").write_text(FEATURES_HTML)
-
-    conn = temp_conn(tmp_path)
-    walk(conn, docs_root, reconcile=False)
-
-    # Only one features row for feat-active (not duplicated)
-    count = conn.execute("SELECT COUNT(*) AS n FROM features WHERE slug='feat-active'").fetchone()[
-        "n"
-    ]
-    assert count == 1
-
-    feat = conn.execute("SELECT status, owner FROM features WHERE slug='feat-active'").fetchone()
-    assert feat["status"] == "in_progress"
-    assert feat["owner"] == "Alice"
-
-
 def test_mangled_tracker_degrades_gracefully(tmp_path: Path):
     """A mangled features.html still indexes the document, just produces no tracker rows."""
     mangled = """\
@@ -586,93 +543,6 @@ FEATURES_HTML_AVAILABLE = """\
 </body>
 </html>
 """
-
-FEATURES_HTML_DONE = """\
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="feature-doc-type" content="features">
-<title>proj1 — Features</title>
-</head>
-<body>
-<section id="available">
-  <table class="features">
-    <tbody>
-      <tr class="empty">
-        <td colspan="2">Nothing available.</td>
-      </tr>
-    </tbody>
-  </table>
-</section>
-<section id="done">
-  <table class="features">
-    <tbody>
-      <tr>
-        <td class="feature-name">feat-x</td>
-        <td class="feature-outcome">Shipped.</td>
-      </tr>
-    </tbody>
-  </table>
-</section>
-</body>
-</html>
-"""
-
-
-def test_ship_event_emitted_on_done_transition(tmp_path: Path):
-    """Walking a tracker that transitions a feature to done inserts one shipped event."""
-    docs_root = tmp_path / "docs"
-    (docs_root / "proj1").mkdir(parents=True)
-    features_file = docs_root / "proj1" / "features.html"
-
-    conn = temp_conn(tmp_path)
-    features_file.write_text(FEATURES_HTML_AVAILABLE)
-    walk(conn, docs_root, reconcile=False)
-
-    # No shipped events yet
-    assert (
-        conn.execute("SELECT COUNT(*) AS n FROM events WHERE event_type='shipped'").fetchone()["n"]
-        == 0
-    )
-
-    # Transition feat-x to done
-    import time
-
-    time.sleep(0.01)  # ensure mtime changes
-    features_file.write_text(FEATURES_HTML_DONE)
-    walk(conn, docs_root, reconcile=False)
-
-    shipped = conn.execute("SELECT * FROM events WHERE event_type='shipped'").fetchall()
-    assert len(shipped) == 1
-    assert shipped[0]["document_id"] is None
-    payload = json.loads(shipped[0]["payload_json"])
-    assert payload == {"project": "proj1", "slug": "feat-x"}
-
-
-def test_ship_event_no_duplicate_on_rewalk(tmp_path: Path):
-    """Re-walking a tracker with an already-done feature does not produce a second shipped event."""
-    docs_root = tmp_path / "docs"
-    (docs_root / "proj1").mkdir(parents=True)
-    features_file = docs_root / "proj1" / "features.html"
-
-    conn = temp_conn(tmp_path)
-    features_file.write_text(FEATURES_HTML_AVAILABLE)
-    walk(conn, docs_root, reconcile=False)
-
-    import time
-
-    time.sleep(0.01)
-    features_file.write_text(FEATURES_HTML_DONE)
-    walk(conn, docs_root, reconcile=False)
-
-    # Walk again without changing the file
-    walk(conn, docs_root, reconcile=False)
-
-    shipped_count = conn.execute(
-        "SELECT COUNT(*) AS n FROM events WHERE event_type='shipped'"
-    ).fetchone()["n"]
-    assert shipped_count == 1
 
 
 FEATURES_HTML_IN_PROGRESS = """\
@@ -731,24 +601,7 @@ def test_ship_event_not_emitted_for_non_done_status(tmp_path: Path):
     )
 
 
-# --- WalkSummary.shipped and .changed ---
-
-
-def test_done_transition_increments_shipped(tmp_path: Path):
-    """Walking a tracker with a new done-transition increments summary.shipped."""
-    docs_root = tmp_path / "docs"
-    (docs_root / "proj1").mkdir(parents=True)
-    features_file = docs_root / "proj1" / "features.html"
-
-    conn = temp_conn(tmp_path)
-    features_file.write_text(FEATURES_HTML_AVAILABLE)
-    walk(conn, docs_root, reconcile=False)
-
-    time.sleep(0.01)
-    features_file.write_text(FEATURES_HTML_DONE)
-    summary = walk(conn, docs_root, reconcile=False)
-
-    assert summary.shipped == 1
+# --- WalkSummary.changed ---
 
 
 def test_changed_true_for_created():
@@ -1250,11 +1103,11 @@ def test_feedback_version_is_opaque(tmp_path: Path) -> None:
     assert content.sections[0].key == ""
 
 
-def test_features_html_dual_representation(tmp_path: Path) -> None:
-    """features.html is simultaneously opaque-versioned AND row-extracted.
+def test_features_html_opaque_versioned(tmp_path: Path) -> None:
+    """features.html is opaque-versioned by the walker.
 
-    Phase 2 content versioning and the Phase 3 tracker extraction coexist: a single
-    walk populates both document_versions (opaque shape) and the features rows.
+    The authority flip (Phase 4) means the walker no longer populates tracker rows
+    from features.html — it only indexes the document itself.
     """
     docs_root = tmp_path / "docs"
     (docs_root / "proj1").mkdir(parents=True)
@@ -1263,56 +1116,14 @@ def test_features_html_dual_representation(tmp_path: Path) -> None:
     conn = temp_conn(tmp_path)
     walk(conn, docs_root, reconcile=False)
 
-    # Version exists with opaque shape
+    # Document is indexed with opaque shape
     doc_id = conn.execute("SELECT id FROM documents WHERE type='features'").fetchone()["id"]
     content = current_content(conn, doc_id)
     assert content is not None
     assert content.shape == "opaque"
 
-    # Tracker rows are still populated
-    features = conn.execute("SELECT slug, status FROM features ORDER BY slug").fetchall()
-    by_slug = {r["slug"]: r["status"] for r in features}
-    assert by_slug["feat-active"] == "in_progress"
-    assert by_slug["feat-queued"] == "available"
-    assert by_slug["feat-done"] == "done"
-
-    # Shipped event fires for the feature first seen as 'done'
-    shipped = conn.execute("SELECT payload_json FROM events WHERE event_type='shipped'").fetchall()
-    assert len(shipped) == 1
-    assert json.loads(shipped[0]["payload_json"])["slug"] == "feat-done"
-
-
-def test_features_html_shipped_event_intact_after_content_change(tmp_path: Path) -> None:
-    """Opaque versioning doesn't break the shipped event on done-transition."""
-    docs_root = tmp_path / "docs"
-    (docs_root / "proj1").mkdir(parents=True)
-    features_file = docs_root / "proj1" / "features.html"
-    features_file.write_text(FEATURES_HTML_AVAILABLE)
-
-    conn = temp_conn(tmp_path)
-    walk(conn, docs_root, reconcile=False)
-
-    assert (
-        conn.execute("SELECT COUNT(*) AS n FROM events WHERE event_type='shipped'").fetchone()["n"]
-        == 0
-    )
-    assert conn.execute("SELECT COUNT(*) AS n FROM document_versions").fetchone()["n"] == 1
-
-    time.sleep(0.01)
-    features_file.write_text(FEATURES_HTML_DONE)
-    walk(conn, docs_root, reconcile=False)
-
-    # Shipped event fired
-    assert (
-        conn.execute("SELECT COUNT(*) AS n FROM events WHERE event_type='shipped'").fetchone()["n"]
-        == 1
-    )
-    # New content version recorded (v2)
-    ver_count = conn.execute(
-        "SELECT COUNT(*) AS n FROM document_versions WHERE document_id=?",
-        (conn.execute("SELECT id FROM documents").fetchone()["id"],),
-    ).fetchone()["n"]
-    assert ver_count == 2
+    # Walker does NOT populate tracker rows — the features table is API-authoritative
+    assert conn.execute("SELECT COUNT(*) AS n FROM features").fetchone()["n"] == 0
 
 
 def test_single_change_isolation(tmp_path: Path) -> None:
@@ -1384,3 +1195,60 @@ def test_full_corpus_idempotent_reimport(tmp_path: Path) -> None:
         conn.execute("SELECT COUNT(*) AS n FROM document_versions").fetchone()["n"] == ver_count_1
     )
     assert conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"] == event_count_1
+
+
+# --- Phase 4 keystone: authority flip ---
+
+FEATURES_HTML_KEYSTONE = """\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="feature-doc-type" content="features">
+<title>proj1 — Features</title>
+</head>
+<body>
+<section id="available">
+  <table class="features">
+    <tbody>
+      <tr>
+        <td class="feature-name">my-feature</td>
+        <td class="feature-notes">stale entry — API says in_progress</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+</body>
+</html>
+"""
+
+
+def test_keystone_anti_clobber_walk_does_not_overwrite_api_status(tmp_path: Path) -> None:
+    """Walk over a stale features.html must not overwrite status set via the tracker API.
+
+    A feature captured then claimed via the API (status=in_progress) must remain
+    in_progress even when the dev-store features.html lists it as 'available'.
+    This is the authority flip: the features table is API-authoritative; the walker
+    only indexes documents — it does not govern feature status.
+    """
+    docs_root = tmp_path / "docs"
+    (docs_root / "proj1").mkdir(parents=True)
+    conn = temp_conn(tmp_path)
+    now = "2025-01-01T00:00:00+00:00"
+
+    # Use the tracker API to capture then claim — status becomes in_progress.
+    capture_feature(conn, project="proj1", slug="my-feature", notes="test", now=now)
+    claim_feature(conn, project="proj1", slug="my-feature", owner="Alice", now=now)
+
+    pre = conn.execute("SELECT status FROM features WHERE slug='my-feature'").fetchone()
+    assert pre["status"] == "in_progress"
+
+    # The dev-store features.html is stale: it shows the feature as 'available'.
+    (docs_root / "proj1" / "features.html").write_text(FEATURES_HTML_KEYSTONE)
+
+    walk(conn, docs_root, reconcile=False)
+
+    post = conn.execute("SELECT status FROM features WHERE slug='my-feature'").fetchone()
+    assert post["status"] == "in_progress", (
+        "walk() overwrote the API-authoritative status — the authority flip is not in effect"
+    )

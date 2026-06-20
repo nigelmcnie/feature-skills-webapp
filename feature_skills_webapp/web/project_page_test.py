@@ -146,6 +146,14 @@ def test_project_page_503_when_db_not_configured() -> None:
 def test_project_page_features_grouped_by_status(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_docs_root_multi(tmp_path)
     with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        # Set up tracker state via API before discover so the walker's INSERT OR IGNORE
+        # does not overwrite these statuses.
+        client.post("/api/projects/proj1/features/feat-active/capture", json={"notes": ""})
+        client.post("/api/projects/proj1/features/feat-active/claim", json={"owner": "Alice"})
+        client.post("/api/projects/proj1/features/feat-available/capture", json={"notes": ""})
+        client.post("/api/projects/proj1/features/feat-done/capture", json={"notes": ""})
+        client.post("/api/projects/proj1/features/feat-done/claim", json={"owner": "Bob"})
+        client.post("/api/projects/proj1/features/feat-done/ship", json={"outcome": "Shipped."})
         client.post("/admin/discover")
         resp = client.get("/project/proj1")
     assert resp.status_code == 200
