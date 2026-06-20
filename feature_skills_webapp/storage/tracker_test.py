@@ -286,8 +286,11 @@ def test_migration_backfills_null_status(tmp_path: Path) -> None:
         "SELECT status FROM features WHERE slug='feat' AND project_id=?", (pid,)
     ).fetchone()
     assert row["status"] is None
-    # Run the backfill SQL manually (simulating migration 0005 re-applied).
-    conn.execute("UPDATE features SET status = 'available' WHERE status IS NULL")
+    # Rewind the schema version so the real migrate() runner re-applies 0005
+    # (and only 0005) — pins that the migration is wired in and numbered, not
+    # just that the backfill SQL is correct.
+    conn.execute("DELETE FROM schema_version WHERE version = 5")
+    assert migrate(conn) == 5
     row = conn.execute(
         "SELECT status FROM features WHERE slug='feat' AND project_id=?", (pid,)
     ).fetchone()

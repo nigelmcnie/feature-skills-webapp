@@ -160,3 +160,13 @@ Plan-level seams worth carrying forward — concrete enough that the plan should
 - **Mutations test-safe, not service-safe until the flip** (round 2): the live walker reverts mutations on the next walk; explicitly flagged so "shippable on its own" isn't read as "usable in production on its own".
 - **Mutations transition-gated** (round 1): no-op writes emit no event, mirroring the existing ship guard.
 - **Export fidelity is merge-not-render** (round 1): owned by skills-api-cutover — regenerating `features.md` from the table must preserve unmodelled editorial content (row order, "suggested order" prose) by merging, not rendering from scratch.
+
+## Review decisions
+
+### Round 1 (post-merge review)
+
+No correctness defects found; the implementation matched the plan and requirements exactly, the walker-authority flip was correctly left undone, and the transition-gate tests count `events` rows so they fail for the right reason. Items actioned:
+
+- **Test hardening (applied):** added a valid-JSON-but-non-dict body → 400 test to each mutation handler (capture/claim/ship) — that branch was previously only reached via the malformed-JSON path; and rewrote the 0005 backfill test to rewind `schema_version` and run the real `migrate()` runner, so it pins the migration is wired in and numbered, not just that the SQL is correct. 664 passed.
+- **Declined:** `get_feature`'s extra JOIN per mutation and `capture` not reusing `get_feature` — both intentional and correct (capture must auto-create the project; claim/ship must 404), benign on localhost SQLite.
+- **Corpus test left red, by decision (Nigel):** `test_corpus_section_keys_subset_of_manifest` is red locally because the `tracker-ops-handoff` section added to `skills-api-cutover`'s context.html isn't a key in the `context` manifest. It is green on CI (the test scans the out-of-repo dev-store, absent there) and is already flagged as a test-quality smell. Not contorting the handoff doc to satisfy it; flagged to the skills-api-cutover agent / the retro instead.
