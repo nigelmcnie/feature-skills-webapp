@@ -52,7 +52,6 @@
       {% if next %}<a href="/doc/{{ next.id }}">{{ next.label }} →</a>{% endif %}
     </nav>
     {% endif %}
-    {% if available %}<a class="view-source" href="{{ raw_url }}" target="_blank">View source file</a>{% endif %}
     {% if has_diff_toggle %}
       {% if mode == "diff" %}
         <a class="diff-toggle" href="/doc/{{ doc_id }}">Full view</a>
@@ -213,7 +212,7 @@
 {% else %}{# unavailable or raw-fallback #}
 
 {% if available %}
-  <iframe class="doc-frame" src="{{ raw_url }}" title="document"></iframe>
+  <div class="unavailable">This document has not been parsed yet.</div>
 {% else %}
   <div class="unavailable">This document is no longer available.</div>
 {% endif %}

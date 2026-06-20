@@ -17,6 +17,17 @@ HTML_FEEDBACK = """\
 """
 
 
+def _walk_docs(db_path: Path, docs_root: Path, *, reconcile: bool = True) -> None:
+    from feature_skills_webapp.storage.walker import walk
+
+    conn = connect(db_path)
+    try:
+        walk(conn, docs_root, reconcile=reconcile)
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def make_feedback_root(tmp_path: Path) -> tuple[Path, str]:
     """Docs root with a single feedback doc. Returns (docs_root, absolute source_path)."""
     docs_root = tmp_path / "docs"
@@ -38,10 +49,10 @@ def get_doc_id(db_path: Path, source_path: str) -> int:
 # --- POST /doc/{id}/synthesis-response ---
 
 
-def test_post_then_get_round_trip(temp_db: Path, tmp_path: Path) -> None:
+def test_post_then_round_trip(temp_db: Path, tmp_path: Path) -> None:
     docs_root, source_path = make_feedback_root(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    _walk_docs(temp_db, docs_root)
+    with TestClient(create_app(db_path=temp_db)) as client:
         doc_id = get_doc_id(temp_db, source_path)
 
         payload = {
@@ -54,18 +65,24 @@ def test_post_then_get_round_trip(temp_db: Path, tmp_path: Path) -> None:
         assert data["document_id"] == doc_id
         assert data["items_written"] == 3
 
-        get_resp = client.get(f"/synthesis-response?path={source_path}")
-        assert get_resp.status_code == 200
-        got = get_resp.json()
-        assert got["submitted"] is True
-        assert got["responses"] == {"1": "my answer", "2": ""}
-        assert got["routine_flags"] == {"3": "routine note"}
+    conn = connect(temp_db)
+    rows = conn.execute(
+        "SELECT item_num, response, routine_flag FROM synthesis_responses "
+        "WHERE document_id = ? ORDER BY item_num",
+        (doc_id,),
+    ).fetchall()
+    conn.close()
+    assert len(rows) == 3
+    responses = {r["item_num"]: r["response"] for r in rows if r["routine_flag"] is None}
+    flags = {r["item_num"]: r["routine_flag"] for r in rows if r["routine_flag"] is not None}
+    assert responses == {1: "my answer", 2: ""}
+    assert flags == {3: "routine note"}
 
 
 def test_empty_string_response_stored_and_marks_submitted(temp_db: Path, tmp_path: Path) -> None:
     docs_root, source_path = make_feedback_root(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    _walk_docs(temp_db, docs_root)
+    with TestClient(create_app(db_path=temp_db)) as client:
         doc_id = get_doc_id(temp_db, source_path)
 
         resp = client.post(
@@ -74,15 +91,20 @@ def test_empty_string_response_stored_and_marks_submitted(temp_db: Path, tmp_pat
         )
         assert resp.status_code == 200
 
-        got = client.get(f"/synthesis-response?path={source_path}").json()
-        assert got["submitted"] is True
-        assert got["responses"] == {"1": ""}
+    conn = connect(temp_db)
+    rows = conn.execute(
+        "SELECT response FROM synthesis_responses WHERE document_id = ? AND item_num = 1",
+        (doc_id,),
+    ).fetchall()
+    conn.close()
+    assert len(rows) == 1
+    assert rows[0]["response"] == ""
 
 
 def test_repost_replaces_item_set(temp_db: Path, tmp_path: Path) -> None:
     docs_root, source_path = make_feedback_root(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    _walk_docs(temp_db, docs_root)
+    with TestClient(create_app(db_path=temp_db)) as client:
         doc_id = get_doc_id(temp_db, source_path)
 
         client.post(
@@ -156,8 +178,8 @@ def test_post_400_non_string_value(temp_db: Path) -> None:
 
 def test_post_400_over_size_value(temp_db: Path, tmp_path: Path) -> None:
     docs_root, source_path = make_feedback_root(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    _walk_docs(temp_db, docs_root)
+    with TestClient(create_app(db_path=temp_db)) as client:
         doc_id = get_doc_id(temp_db, source_path)
         big = "x" * (1024 * 1024 + 1)
         resp = client.post(
@@ -173,47 +195,13 @@ def test_post_503_db_not_configured() -> None:
     assert resp.status_code == 503
 
 
-# --- GET /synthesis-response ---
-
-
-def test_get_submitted_false_for_unsubmitted_doc(temp_db: Path, tmp_path: Path) -> None:
-    docs_root, source_path = make_feedback_root(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
-        resp = client.get(f"/synthesis-response?path={source_path}")
-        assert resp.status_code == 200
-        got = resp.json()
-        assert got["submitted"] is False
-        assert got["responses"] == {}
-        assert got["routine_flags"] == {}
-        assert got["doc"] == source_path
-
-
-def test_get_404_unknown_path(temp_db: Path) -> None:
-    client = TestClient(create_app(db_path=temp_db))
-    resp = client.get("/synthesis-response?path=/no/such/path.html")
-    assert resp.status_code == 404
-
-
-def test_get_400_missing_path_param(temp_db: Path) -> None:
-    client = TestClient(create_app(db_path=temp_db))
-    resp = client.get("/synthesis-response")
-    assert resp.status_code == 400
-
-
-def test_get_503_db_not_configured() -> None:
-    client = TestClient(create_app(db_path=None))
-    resp = client.get("/synthesis-response?path=/some/path.html")
-    assert resp.status_code == 503
-
-
 # --- broadcast ---
 
 
 def test_post_broadcasts(temp_db: Path, tmp_path: Path) -> None:
     docs_root, source_path = make_feedback_root(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    _walk_docs(temp_db, docs_root)
+    with TestClient(create_app(db_path=temp_db)) as client:
         doc_id = get_doc_id(temp_db, source_path)
 
         app = cast(Starlette, client.app)

@@ -4,6 +4,19 @@ from starlette.testclient import TestClient
 
 from feature_skills_webapp.web.app import create_app
 
+
+def _walk_docs(db_path: Path, docs_root: Path, *, reconcile: bool = True) -> None:
+    from feature_skills_webapp.storage.db import connect
+    from feature_skills_webapp.storage.walker import walk
+
+    conn = connect(db_path)
+    try:
+        walk(conn, docs_root, reconcile=reconcile)
+        conn.commit()
+    finally:
+        conn.close()
+
+
 HTML_TEMPLATE = """\
 <!DOCTYPE html>
 <html>
@@ -116,8 +129,8 @@ def make_docs_root_with_archived(tmp_path: Path) -> Path:
 
 def test_doc_shell_200_with_breadcrumbs(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_docs_root(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         from feature_skills_webapp.storage.db import connect
 
         conn = connect(temp_db)
@@ -128,9 +141,8 @@ def test_doc_shell_200_with_breadcrumbs(temp_db: Path, tmp_path: Path) -> None:
     assert "proj1" in response.text
     assert "feat-a" in response.text
     assert "Plan" in response.text
-    # Native render: no iframe, view source is a link not an embed
+    # Native render: no iframe
     assert "<iframe" not in response.text
-    assert f'href="/doc/{doc_id}/raw"' in response.text
 
 
 # ---- viewing clears unread ----
@@ -138,8 +150,8 @@ def test_doc_shell_200_with_breadcrumbs(temp_db: Path, tmp_path: Path) -> None:
 
 def test_viewing_shell_clears_unread(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_docs_root(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         from feature_skills_webapp.storage.db import connect
         from feature_skills_webapp.storage.read_state import unread_document_ids
 
@@ -155,26 +167,6 @@ def test_viewing_shell_clears_unread(temp_db: Path, tmp_path: Path) -> None:
     assert doc_id not in after
 
 
-# ---- raw GET does not stamp read-state ----
-
-
-def test_raw_does_not_stamp_read_state(temp_db: Path, tmp_path: Path) -> None:
-    docs_root = make_docs_root(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
-        from feature_skills_webapp.storage.db import connect
-        from feature_skills_webapp.storage.read_state import unread_document_ids
-
-        conn = connect(temp_db)
-        doc_id = conn.execute("SELECT id FROM documents LIMIT 1").fetchone()["id"]
-        conn.close()
-        client.get(f"/doc/{doc_id}/raw")
-        conn = connect(temp_db)
-        after = unread_document_ids(conn)
-        conn.close()
-    assert doc_id in after
-
-
 # ---- 404 cases ----
 
 
@@ -188,29 +180,6 @@ def test_doc_shell_non_numeric_id_returns_404(temp_db: Path) -> None:
     client = TestClient(create_app(db_path=temp_db))
     response = client.get("/doc/abc")
     assert response.status_code == 404
-
-
-def test_doc_raw_unknown_id_returns_404(temp_db: Path) -> None:
-    client = TestClient(create_app(db_path=temp_db))
-    response = client.get("/doc/99999/raw")
-    assert response.status_code == 404
-
-
-# ---- raw serves file body ----
-
-
-def test_doc_raw_serves_file_html(temp_db: Path, tmp_path: Path) -> None:
-    docs_root = make_docs_root(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
-        from feature_skills_webapp.storage.db import connect
-
-        conn = connect(temp_db)
-        doc_id = conn.execute("SELECT id FROM documents WHERE type='plan' LIMIT 1").fetchone()["id"]
-        conn.close()
-        response = client.get(f"/doc/{doc_id}/raw")
-    assert response.status_code == 200
-    assert "MARKER_plan" in response.text
 
 
 # ---- missing-file unavailable variant ----
@@ -229,28 +198,17 @@ def _get_plan_doc_id(temp_db: Path) -> tuple[int, str]:
 
 def test_missing_file_shell_shows_unavailable(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_docs_root(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         doc_id, source_path = _get_plan_doc_id(temp_db)
         # Delete plan.html; context.html remains so seen_paths is non-empty and
         # the reconcile step's NOT IN clause fires correctly.
         Path(source_path).unlink()
-        client.post("/admin/discover")
+        _walk_docs(temp_db, docs_root)
         response = client.get(f"/doc/{doc_id}")
     assert response.status_code == 200
     assert "no longer available" in response.text
     assert "<iframe" not in response.text
-
-
-def test_missing_file_raw_returns_404(temp_db: Path, tmp_path: Path) -> None:
-    docs_root = make_docs_root(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
-        doc_id, source_path = _get_plan_doc_id(temp_db)
-        Path(source_path).unlink()
-        client.post("/admin/discover")
-        response = client.get(f"/doc/{doc_id}/raw")
-    assert response.status_code == 404
 
 
 # ---- tracker doc crumb ----
@@ -258,8 +216,8 @@ def test_missing_file_raw_returns_404(temp_db: Path, tmp_path: Path) -> None:
 
 def test_tracker_doc_renders_tracker_crumb(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_docs_root_with_tracker(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         from feature_skills_webapp.storage.db import connect
 
         conn = connect(temp_db)
@@ -280,8 +238,8 @@ def test_tracker_doc_renders_tracker_crumb(temp_db: Path, tmp_path: Path) -> Non
 
 def test_archived_doc_renders_archived_label(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_docs_root_with_archived(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         from feature_skills_webapp.storage.db import connect
 
         conn = connect(temp_db)
@@ -293,22 +251,6 @@ def test_archived_doc_renders_archived_label(temp_db: Path, tmp_path: Path) -> N
         response = client.get(f"/doc/{row['id']}")
     assert response.status_code == 200
     assert "(archived)" in response.text
-
-
-def test_archived_doc_raw_serves_file(temp_db: Path, tmp_path: Path) -> None:
-    docs_root = make_docs_root_with_archived(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
-        from feature_skills_webapp.storage.db import connect
-
-        conn = connect(temp_db)
-        row = conn.execute(
-            "SELECT d.id FROM documents d WHERE d.status='archived' LIMIT 1"
-        ).fetchone()
-        conn.close()
-        response = client.get(f"/doc/{row['id']}/raw")
-    assert response.status_code == 200
-    assert "MARKER_plan" in response.text
 
 
 # ---- 503 when db not configured ----
@@ -325,8 +267,8 @@ def test_doc_shell_503_when_db_not_configured() -> None:
 
 def test_index_unread_card_has_doc_link_and_aria_label(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_docs_root(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         from feature_skills_webapp.storage.db import connect
 
         conn = connect(temp_db)
@@ -340,10 +282,10 @@ def test_index_unread_card_has_doc_link_and_aria_label(temp_db: Path, tmp_path: 
 
 def test_index_in_progress_card_not_wrapped_in_anchor(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_docs_root(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+    with TestClient(create_app(db_path=temp_db)) as client:
         client.post("/api/projects/proj1/features/feat-a/capture", json={"notes": ""})
         client.post("/api/projects/proj1/features/feat-a/claim", json={"owner": "Alice"})
-        client.post("/admin/discover")
+        _walk_docs(temp_db, docs_root)
         # mark the unread doc read so only in-progress shows
         client.post("/admin/projects/proj1/mark-read")
         response = client.get("/")
@@ -379,8 +321,8 @@ def _doc_ids_by_type(temp_db: Path) -> dict[str, int]:
 
 def test_sibling_nav_prev_and_next(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_three_doc_root(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         ids = _doc_ids_by_type(temp_db)
         response = client.get(f"/doc/{ids['requirements']}")
     assert response.status_code == 200
@@ -390,8 +332,8 @@ def test_sibling_nav_prev_and_next(temp_db: Path, tmp_path: Path) -> None:
 
 def test_sibling_nav_first_has_no_prev(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_three_doc_root(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         ids = _doc_ids_by_type(temp_db)
         response = client.get(f"/doc/{ids['context']}")
     assert response.status_code == 200
@@ -402,8 +344,8 @@ def test_sibling_nav_first_has_no_prev(temp_db: Path, tmp_path: Path) -> None:
 
 def test_sibling_nav_last_has_no_next(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_three_doc_root(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         ids = _doc_ids_by_type(temp_db)
         response = client.get(f"/doc/{ids['plan']}")
     assert response.status_code == 200
@@ -419,8 +361,8 @@ def test_sibling_nav_order_independent_of_insertion(temp_db: Path, tmp_path: Pat
         (docs_root / "proj1" / "feat-a" / f"{doc_type}.html").write_text(
             HTML_TEMPLATE.format(doc_type=doc_type, title=f"feat-a {doc_type}")
         )
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         ids = _doc_ids_by_type(temp_db)
         response = client.get(f"/doc/{ids['plan']}")
     assert response.status_code == 200
@@ -432,8 +374,8 @@ def test_sibling_nav_order_independent_of_insertion(temp_db: Path, tmp_path: Pat
 
 def test_tracker_doc_has_no_sibling_nav(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_docs_root_with_tracker(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         from feature_skills_webapp.storage.db import connect
 
         conn = connect(temp_db)
@@ -446,8 +388,8 @@ def test_tracker_doc_has_no_sibling_nav(temp_db: Path, tmp_path: Path) -> None:
 
 def test_archived_feature_doc_has_no_sibling_nav(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_docs_root_with_archived(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         from feature_skills_webapp.storage.db import connect
 
         conn = connect(temp_db)
@@ -523,8 +465,8 @@ def _doc_id_by_type(temp_db: Path, doc_type: str) -> int:
 
 def test_submit_button_shown_for_active_feedback_doc(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_docs_root_with_feedback(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         doc_id = _doc_id_by_type(temp_db, "requirements-feedback")
         response = client.get(f"/doc/{doc_id}")
     assert response.status_code == 200
@@ -534,8 +476,8 @@ def test_submit_button_shown_for_active_feedback_doc(temp_db: Path, tmp_path: Pa
 
 def test_submit_button_not_shown_for_plan_doc(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_docs_root(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         doc_id = _doc_id_by_type(temp_db, "plan")
         response = client.get(f"/doc/{doc_id}")
     assert response.status_code == 200
@@ -544,8 +486,8 @@ def test_submit_button_not_shown_for_plan_doc(temp_db: Path, tmp_path: Path) -> 
 
 def test_submit_button_not_shown_for_archived_feedback_doc(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_docs_root_with_archived_feedback(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         doc_id = _doc_id_by_type(temp_db, "requirements-feedback")
         response = client.get(f"/doc/{doc_id}")
     assert response.status_code == 200
@@ -555,8 +497,8 @@ def test_submit_button_not_shown_for_archived_feedback_doc(temp_db: Path, tmp_pa
 def test_siblings_omits_feedback_doc(temp_db: Path, tmp_path: Path) -> None:
     """A feedback doc in feat-a does not appear as a sibling in prev/next nav."""
     docs_root = make_docs_root_with_feedback(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         # View the context doc — its only sibling should be plan, not feedback
         context_id = _doc_id_by_type(temp_db, "context")
         plan_id = _doc_id_by_type(temp_db, "plan")
@@ -592,8 +534,8 @@ def make_docs_root_with_requirements(tmp_path: Path) -> Path:
 
 def test_comment_button_shown_for_active_requirements_doc(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_docs_root_with_requirements(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         doc_id = _doc_id_by_type(temp_db, "requirements")
         response = client.get(f"/doc/{doc_id}")
     assert response.status_code == 200
@@ -603,8 +545,8 @@ def test_comment_button_shown_for_active_requirements_doc(temp_db: Path, tmp_pat
 
 def test_comment_button_shown_for_active_plan_doc(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_docs_root(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         doc_id = _doc_id_by_type(temp_db, "plan")
         response = client.get(f"/doc/{doc_id}")
     assert response.status_code == 200
@@ -614,8 +556,8 @@ def test_comment_button_shown_for_active_plan_doc(temp_db: Path, tmp_path: Path)
 
 def test_comment_button_not_shown_for_feedback_doc(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_docs_root_with_feedback(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         doc_id = _doc_id_by_type(temp_db, "requirements-feedback")
         response = client.get(f"/doc/{doc_id}")
     assert response.status_code == 200
@@ -624,8 +566,8 @@ def test_comment_button_not_shown_for_feedback_doc(temp_db: Path, tmp_path: Path
 
 def test_comment_button_not_shown_for_tracker_doc(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_docs_root_with_tracker(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         from feature_skills_webapp.storage.db import connect
 
         conn = connect(temp_db)
@@ -638,8 +580,8 @@ def test_comment_button_not_shown_for_tracker_doc(temp_db: Path, tmp_path: Path)
 
 def test_comment_button_not_shown_for_archived_doc(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_docs_root_with_archived(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         from feature_skills_webapp.storage.db import connect
 
         conn = connect(temp_db)
@@ -655,8 +597,8 @@ def test_comment_button_not_shown_for_archived_doc(temp_db: Path, tmp_path: Path
 
 def test_feature_crumb_carries_feature_page_href(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_docs_root(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         doc_id = _doc_id_by_type(temp_db, "plan")
         response = client.get(f"/doc/{doc_id}")
     assert response.status_code == 200
@@ -666,8 +608,8 @@ def test_feature_crumb_carries_feature_page_href(temp_db: Path, tmp_path: Path) 
 def test_tracker_doc_crumb_has_no_feature_href(temp_db: Path, tmp_path: Path) -> None:
     """The tracker (project-level) doc has no feature crumb, so no feature-page href."""
     docs_root = make_docs_root_with_tracker(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         from feature_skills_webapp.storage.db import connect
 
         conn = connect(temp_db)
@@ -683,8 +625,8 @@ def test_tracker_doc_crumb_has_no_feature_href(temp_db: Path, tmp_path: Path) ->
 
 def test_project_crumb_carries_project_page_href(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_docs_root(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         doc_id = _doc_id_by_type(temp_db, "plan")
         response = client.get(f"/doc/{doc_id}")
     assert response.status_code == 200
@@ -694,8 +636,8 @@ def test_project_crumb_carries_project_page_href(temp_db: Path, tmp_path: Path) 
 def test_tracker_project_crumb_carries_project_page_href(temp_db: Path, tmp_path: Path) -> None:
     """The tracker doc's project crumb also links to the project page."""
     docs_root = make_docs_root_with_tracker(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         from feature_skills_webapp.storage.db import connect
 
         conn = connect(temp_db)
@@ -727,8 +669,8 @@ def make_docs_root_with_sectioned_requirements(tmp_path: Path) -> Path:
 
 def test_plan_renders_natively_no_iframe(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_docs_root_with_sectioned_plan(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         doc_id = _doc_id_by_type(temp_db, "plan")
         response = client.get(f"/doc/{doc_id}")
     assert response.status_code == 200
@@ -740,8 +682,8 @@ def test_plan_renders_natively_no_iframe(temp_db: Path, tmp_path: Path) -> None:
 
 def test_requirements_renders_natively_no_iframe(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_docs_root_with_sectioned_requirements(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         doc_id = _doc_id_by_type(temp_db, "requirements")
         response = client.get(f"/doc/{doc_id}")
     assert response.status_code == 200
@@ -751,8 +693,8 @@ def test_requirements_renders_natively_no_iframe(temp_db: Path, tmp_path: Path) 
 
 def test_tracker_doc_renders_natively_no_iframe(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_docs_root_with_tracker(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         from feature_skills_webapp.storage.db import connect
 
         conn = connect(temp_db)
@@ -767,8 +709,8 @@ def test_tracker_doc_renders_natively_no_iframe(temp_db: Path, tmp_path: Path) -
 
 def test_doc_shell_references_static_assets(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_docs_root_with_sectioned_plan(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         doc_id = _doc_id_by_type(temp_db, "plan")
         response = client.get(f"/doc/{doc_id}")
     assert response.status_code == 200
@@ -778,14 +720,13 @@ def test_doc_shell_references_static_assets(temp_db: Path, tmp_path: Path) -> No
 
 def test_feedback_doc_renders_natively_no_iframe(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_docs_root_with_feedback(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         doc_id = _doc_id_by_type(temp_db, "requirements-feedback")
         response = client.get(f"/doc/{doc_id}")
     assert response.status_code == 200
     assert "<iframe" not in response.text
     assert 'id="synthesis-submit-btn"' in response.text
-    assert f'href="/doc/{doc_id}/raw"' in response.text
 
 
 def _insert_doc_no_version(db: Path, doc_type: str = "plan") -> int:
@@ -822,17 +763,17 @@ def test_raw_fallback_when_no_version_row(temp_db: Path) -> None:
     with TestClient(create_app(db_path=temp_db)) as client:
         response = client.get(f"/doc/{doc_id}")
     assert response.status_code == 200
-    # Raw-fallback: shows iframe pointing to raw URL
-    assert "<iframe" in response.text
-    assert f'src="/doc/{doc_id}/raw"' in response.text
+    # Raw-fallback: shows "not been parsed" message, no iframe
+    assert "not been parsed" in response.text
+    assert "<iframe" not in response.text
     # No static doc assets in raw-fallback mode
     assert "/static/doc.css" not in response.text
 
 
 def test_comment_prefill_in_native_render(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_docs_root_with_sectioned_requirements(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         doc_id = _doc_id_by_type(temp_db, "requirements")
         # Submit two comments
         client.post(
@@ -860,8 +801,8 @@ def _make_feedback_docs_root_with_tiers(tmp_path: Path) -> Path:
 
 def test_feedback_native_renders_feedback_items(temp_db: Path, tmp_path: Path) -> None:
     docs_root = _make_feedback_docs_root_with_tiers(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         doc_id = _doc_id_by_type(temp_db, "requirements-feedback")
         response = client.get(f"/doc/{doc_id}")
     assert response.status_code == 200
@@ -875,8 +816,8 @@ def test_feedback_native_renders_feedback_items(temp_db: Path, tmp_path: Path) -
 
 def test_feedback_native_prefill_responses(temp_db: Path, tmp_path: Path) -> None:
     docs_root = _make_feedback_docs_root_with_tiers(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         doc_id = _doc_id_by_type(temp_db, "requirements-feedback")
         # Submit synthesis responses first
         client.post(
@@ -890,8 +831,8 @@ def test_feedback_native_prefill_responses(temp_db: Path, tmp_path: Path) -> Non
 
 def test_feedback_native_prefill_routine_flags(temp_db: Path, tmp_path: Path) -> None:
     docs_root = _make_feedback_docs_root_with_tiers(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         doc_id = _doc_id_by_type(temp_db, "requirements-feedback")
         client.post(
             f"/doc/{doc_id}/synthesis-response",
@@ -967,13 +908,13 @@ def _make_plan_root(tmp_path: Path, html: str) -> Path:
 
 def test_diff_view_shows_diff_for_changed_doc(temp_db: Path, tmp_path: Path) -> None:
     docs_root = _make_plan_root(tmp_path, _PLAN_V1)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         doc_id = _doc_id_by_type(temp_db, "plan")
         client.get(f"/doc/{doc_id}")  # marks as read
         # Update file and re-index
         (tmp_path / "docs" / "proj1" / "feat-a" / "plan.html").write_text(_PLAN_V2)
-        client.post("/admin/discover")
+        _walk_docs(temp_db, docs_root)
         response = client.get(f"/doc/{doc_id}?view=diff")
     assert response.status_code == 200
     assert 'class="diff-changed"' in response.text
@@ -983,8 +924,8 @@ def test_diff_view_shows_diff_for_changed_doc(temp_db: Path, tmp_path: Path) -> 
 
 def test_diff_view_note_when_no_prior_version(temp_db: Path, tmp_path: Path) -> None:
     docs_root = _make_plan_root(tmp_path, _PLAN_V1)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         doc_id = _doc_id_by_type(temp_db, "plan")
         # Do NOT read the doc first — no prior version
         response = client.get(f"/doc/{doc_id}?view=diff")
@@ -997,12 +938,12 @@ def test_diff_view_note_when_no_prior_version(temp_db: Path, tmp_path: Path) -> 
 
 def test_diff_view_note_when_formatting_only(temp_db: Path, tmp_path: Path) -> None:
     docs_root = _make_plan_root(tmp_path, _PLAN_V1)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         doc_id = _doc_id_by_type(temp_db, "plan")
         client.get(f"/doc/{doc_id}")  # marks as read
         (tmp_path / "docs" / "proj1" / "feat-a" / "plan.html").write_text(_PLAN_V2_FORMATTING_ONLY)
-        client.post("/admin/discover")
+        _walk_docs(temp_db, docs_root)
         response = client.get(f"/doc/{doc_id}?view=diff")
     assert response.status_code == 200
     assert "diff-note" in response.text
@@ -1014,12 +955,12 @@ def test_diff_view_fallback_toggle_offers_view_changes(temp_db: Path, tmp_path: 
     # resolved mode — offering "View changes", not a misleading "Full view" for a page that is
     # already the full render.
     docs_root = _make_plan_root(tmp_path, _PLAN_V1)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         doc_id = _doc_id_by_type(temp_db, "plan")
         client.get(f"/doc/{doc_id}")  # marks as read
         (tmp_path / "docs" / "proj1" / "feat-a" / "plan.html").write_text(_PLAN_V2_FORMATTING_ONLY)
-        client.post("/admin/discover")
+        _walk_docs(temp_db, docs_root)
         response = client.get(f"/doc/{doc_id}?view=diff")
     assert response.status_code == 200
     assert "View changes" in response.text
@@ -1031,8 +972,8 @@ def test_diff_view_mark_read_stamped(temp_db: Path, tmp_path: Path) -> None:
     from feature_skills_webapp.storage.read_state import unread_document_ids
 
     docs_root = _make_plan_root(tmp_path, _PLAN_V1)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         doc_id = _doc_id_by_type(temp_db, "plan")
         conn = connect(temp_db)
         assert doc_id in unread_document_ids(conn)
@@ -1046,8 +987,8 @@ def test_diff_view_mark_read_stamped(temp_db: Path, tmp_path: Path) -> None:
 
 def test_diff_toggle_shown_for_section_doc(temp_db: Path, tmp_path: Path) -> None:
     docs_root = _make_plan_root(tmp_path, _PLAN_V1)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         doc_id = _doc_id_by_type(temp_db, "plan")
         response = client.get(f"/doc/{doc_id}")
     assert response.status_code == 200
@@ -1057,12 +998,12 @@ def test_diff_toggle_shown_for_section_doc(temp_db: Path, tmp_path: Path) -> Non
 
 def test_diff_toggle_shows_full_view_when_in_diff_mode(temp_db: Path, tmp_path: Path) -> None:
     docs_root = _make_plan_root(tmp_path, _PLAN_V1)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         doc_id = _doc_id_by_type(temp_db, "plan")
         client.get(f"/doc/{doc_id}")  # marks as read
         (tmp_path / "docs" / "proj1" / "feat-a" / "plan.html").write_text(_PLAN_V2)
-        client.post("/admin/discover")
+        _walk_docs(temp_db, docs_root)
         response = client.get(f"/doc/{doc_id}?view=diff")
     assert response.status_code == 200
     assert "Full view" in response.text
@@ -1072,8 +1013,8 @@ def test_diff_toggle_shows_full_view_when_in_diff_mode(temp_db: Path, tmp_path: 
 def test_no_iframe_for_doc_with_stored_content(temp_db: Path, tmp_path: Path) -> None:
     """Guard: no doc with stored content (non-raw-fallback) should emit an iframe."""
     docs_root = _make_feedback_docs_root_with_tiers(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         from feature_skills_webapp.storage.db import connect
 
         conn = connect(temp_db)

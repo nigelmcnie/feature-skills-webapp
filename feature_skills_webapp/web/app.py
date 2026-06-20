@@ -1,4 +1,3 @@
-import asyncio
 import contextlib
 import logging
 from pathlib import Path
@@ -10,8 +9,8 @@ from starlette.staticfiles import StaticFiles
 from starlette.templating import Jinja2Templates
 
 from feature_skills_webapp.web.broadcaster import Broadcaster
-from feature_skills_webapp.web.comments import get_comments, post_comments, post_comments_integrate
-from feature_skills_webapp.web.doc_view import doc_raw, doc_shell
+from feature_skills_webapp.web.comments import post_comments
+from feature_skills_webapp.web.doc_view import doc_shell
 from feature_skills_webapp.web.events import events
 from feature_skills_webapp.web.feature_page import feature_page
 from feature_skills_webapp.web.project_page import project_page
@@ -21,7 +20,6 @@ from feature_skills_webapp.web.retro_findings import (
     post_retro_findings,
 )
 from feature_skills_webapp.web.routes import (
-    admin_discover,
     admin_mark_new_since_read,
     admin_mark_read,
     healthz,
@@ -35,7 +33,7 @@ from feature_skills_webapp.web.submit import (
     post_document_comments_integrate,
     put_document,
 )
-from feature_skills_webapp.web.synthesis import get_synthesis_response, post_synthesis_response
+from feature_skills_webapp.web.synthesis import post_synthesis_response
 from feature_skills_webapp.web.tracker import (
     capture_handler,
     claim_handler,
@@ -52,7 +50,7 @@ STATIC_DIR = _HERE / "static"
 log = logging.getLogger(__name__)
 
 
-def create_app(db_path: Path | None, docs_root: Path | None = None) -> Starlette:
+def create_app(db_path: Path | None) -> Starlette:
     jinja_env = Environment(
         loader=FileSystemLoader(TEMPLATES_DIR),
         autoescape=select_autoescape(["html"]),
@@ -73,44 +71,27 @@ def create_app(db_path: Path | None, docs_root: Path | None = None) -> Starlette
             backfill_logical_keys(conn)
             conn.close()
 
-        worker = watch = None
-        if db_path is not None and docs_root is not None:
-            from feature_skills_webapp.web.discovery import _watch, _worker, request_walk
-
-            app.state.walk_queue = asyncio.Queue()
-            worker = asyncio.create_task(_worker(app))
-            watch = asyncio.create_task(_watch(app))
-            await request_walk(app, reconcile=True, await_result=False)
-
         try:
             yield
         finally:
-            for task in (watch, worker):
-                if task:
-                    task.cancel()
-            await asyncio.gather(*[t for t in (watch, worker) if t], return_exceptions=True)
+            pass
 
     app = Starlette(
         routes=[
             Route("/", index),
             Route("/events", events),
             Route("/healthz", healthz),
-            Route("/admin/discover", admin_discover, methods=["POST"]),
             Route("/admin/mark-read", admin_mark_new_since_read, methods=["POST"]),
             Route("/admin/projects/{project}/mark-read", admin_mark_read, methods=["POST"]),
             Route("/project/{project}", project_page),
             Route("/project/{project}/feature/{slug}", feature_page),
             Route("/doc/{document_id:int}", doc_shell),
-            Route("/doc/{document_id:int}/raw", doc_raw),
             Route(
                 "/doc/{document_id:int}/synthesis-response",
                 post_synthesis_response,
                 methods=["POST"],
             ),
-            Route("/synthesis-response", get_synthesis_response),
             Route("/doc/{document_id:int}/comments", post_comments, methods=["POST"]),
-            Route("/comments", get_comments),
-            Route("/comments/integrate", post_comments_integrate, methods=["POST"]),
             Route(
                 "/api/documents/{project}/{feature}/{doc_type}/{instance:int}",
                 put_document,
@@ -168,5 +149,4 @@ def create_app(db_path: Path | None, docs_root: Path | None = None) -> Starlette
     )
     app.state.templates = templates
     app.state.db_path = db_path
-    app.state.docs_root = docs_root
     return app

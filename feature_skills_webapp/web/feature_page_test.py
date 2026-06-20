@@ -4,6 +4,19 @@ from starlette.testclient import TestClient
 
 from feature_skills_webapp.web.app import create_app
 
+
+def _walk_docs(db_path: Path, docs_root: Path, *, reconcile: bool = True) -> None:
+    from feature_skills_webapp.storage.db import connect
+    from feature_skills_webapp.storage.walker import walk
+
+    conn = connect(db_path)
+    try:
+        walk(conn, docs_root, reconcile=reconcile)
+        conn.commit()
+    finally:
+        conn.close()
+
+
 HTML_TEMPLATE = """\
 <!DOCTYPE html>
 <html>
@@ -86,8 +99,8 @@ def make_docs_root_no_docs(tmp_path: Path) -> Path:
 def _discover_and_get_feature_page(
     temp_db: Path, docs_root: Path, project: str = "proj1", slug: str = "feat-a"
 ):
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    _walk_docs(temp_db, docs_root)
+    with TestClient(create_app(db_path=temp_db)) as client:
         resp = client.get(f"/project/{project}/feature/{slug}")
     return resp
 
@@ -97,16 +110,16 @@ def _discover_and_get_feature_page(
 
 def test_feature_page_unknown_project_returns_404(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_docs_root(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         resp = client.get("/project/no-such/feature/feat-a")
     assert resp.status_code == 404
 
 
 def test_feature_page_unknown_slug_returns_404(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_docs_root(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         resp = client.get("/project/proj1/feature/no-such")
     assert resp.status_code == 404
 
@@ -135,8 +148,8 @@ def test_feature_page_primary_docs_render_in_type_order(temp_db: Path, tmp_path:
 
 def test_feature_page_primary_doc_links_to_doc(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_docs_root(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         from feature_skills_webapp.storage.db import connect
 
         conn = connect(temp_db)
@@ -158,8 +171,8 @@ def test_feature_page_unanswered_feedback_badged_awaiting(temp_db: Path, tmp_pat
 
 def test_feature_page_answered_feedback_not_badged_awaiting(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_docs_root_with_feedback(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         from feature_skills_webapp.storage.db import connect
 
         conn = connect(temp_db)
@@ -193,11 +206,11 @@ def test_feature_page_archived_in_own_subsection(temp_db: Path, tmp_path: Path) 
 
 def test_feature_page_no_docs_renders_empty_hint(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_docs_root_no_docs(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+    with TestClient(create_app(db_path=temp_db)) as client:
         # No HTML docs in the feature dir, so the walker won't create the feature row;
         # register it explicitly via the capture API.
         client.post("/api/projects/proj1/features/feat-a/capture", json={"notes": ""})
-        client.post("/admin/discover")
+        _walk_docs(temp_db, docs_root)
         resp = client.get("/project/proj1/feature/feat-a")
     assert resp.status_code == 200
     assert "No documents yet" in resp.text
@@ -211,8 +224,8 @@ def test_feature_page_does_not_stamp_read_state(temp_db: Path, tmp_path: Path) -
     docs_root = make_docs_root(tmp_path)
     from feature_skills_webapp.storage.db import connect
 
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         resp = client.get("/project/proj1/feature/feat-a")
         assert resp.status_code == 200
         conn = connect(temp_db)
