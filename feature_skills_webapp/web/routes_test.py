@@ -242,8 +242,10 @@ def test_index_shows_unread_doc_card(temp_db: Path, tmp_path: Path) -> None:
 
 def test_index_shows_in_progress_feature(temp_db: Path, tmp_path: Path) -> None:
     """A feature with in_progress status appears under 'In progress'."""
-    docs_root = make_docs_root_with_tracker(tmp_path)
+    docs_root = make_docs_root(tmp_path)
     with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/api/projects/proj1/features/feat-a/capture", json={"notes": ""})
+        client.post("/api/projects/proj1/features/feat-a/claim", json={"owner": "Alice"})
         client.post("/admin/discover")
         response = client.get("/")
     assert response.status_code == 200
@@ -506,8 +508,10 @@ def make_docs_root_with_types(tmp_path: Path) -> Path:
 
 def test_inbox_card_feature_name_links_to_feature_page(temp_db: Path, tmp_path: Path) -> None:
     """Per-feature cards (in progress / shipped) link the feature name to its feature page."""
-    docs_root = make_docs_root_with_tracker(tmp_path)
+    docs_root = make_docs_root(tmp_path)
     with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/api/projects/proj1/features/feat-a/capture", json={"notes": ""})
+        client.post("/api/projects/proj1/features/feat-a/claim", json={"owner": "Alice"})
         client.post("/admin/discover")
         resp = client.get("/")
     assert resp.status_code == 200

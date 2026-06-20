@@ -449,16 +449,6 @@ def _process_file(
             )
         # else: content identical — metadata already updated, no version or event.
 
-    # For project-level features.html docs, parse the tracker (reusing html_content)
-    # and upsert feature metadata. Guarded so a tracker mishap can't abort the walk.
-    if identity.feature is None and parsed.doc_type == "features":
-        try:
-            _apply_tracker_rows(
-                conn, project_id, identity.project, parse_tracker(html_content), now, summary
-            )
-        except Exception:
-            log.warning("Failed to apply tracker rows from %s", abs_path)
-
 
 def walk(conn: sqlite3.Connection, docs_root: Path, *, reconcile: bool) -> WalkSummary:
     """Index every *.html under docs_root.

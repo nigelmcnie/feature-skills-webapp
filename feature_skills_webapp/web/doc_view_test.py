@@ -339,8 +339,10 @@ def test_index_unread_card_has_doc_link_and_aria_label(temp_db: Path, tmp_path: 
 
 
 def test_index_in_progress_card_not_wrapped_in_anchor(temp_db: Path, tmp_path: Path) -> None:
-    docs_root = make_docs_root_with_tracker(tmp_path)
+    docs_root = make_docs_root(tmp_path)
     with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+        client.post("/api/projects/proj1/features/feat-a/capture", json={"notes": ""})
+        client.post("/api/projects/proj1/features/feat-a/claim", json={"owner": "Alice"})
         client.post("/admin/discover")
         # mark the unread doc read so only in-progress shows
         client.post("/admin/projects/proj1/mark-read")
