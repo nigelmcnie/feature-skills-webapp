@@ -1,8 +1,9 @@
-"""Tests for web/tracker.py GET listing handlers."""
+"""Tests for web/tracker.py GET listing and POST mutation handlers."""
 
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import MagicMock
 
 from starlette.testclient import TestClient
 
@@ -201,3 +202,271 @@ def test_list_documents_404_unknown_project(temp_db: Path) -> None:
     with TestClient(create_app(db_path=temp_db)) as client:
         resp = client.get("/api/projects/no-such/features/feat-one/documents")
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Helper: seed a bare feature (no docs) for mutation tests
+# ---------------------------------------------------------------------------
+
+
+def _seed_bare_feature(db: Path, slug: str, status: str = "available") -> None:
+    conn = connect(db)
+    now = "2024-01-01T00:00:00+00:00"
+    conn.execute("INSERT OR IGNORE INTO projects (name, created_at) VALUES ('proj', ?)", (now,))
+    pid = conn.execute("SELECT id FROM projects WHERE name='proj'").fetchone()["id"]
+    conn.execute(
+        "INSERT INTO features (project_id, slug, status, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (pid, slug, status, now, now),
+    )
+    conn.commit()
+    conn.close()
+
+
+# ---------------------------------------------------------------------------
+# capture handler
+# ---------------------------------------------------------------------------
+
+
+def test_capture_503_no_db() -> None:
+    client = TestClient(create_app(db_path=None))
+    resp = client.post("/api/projects/proj/features/feat/capture", json={})
+    assert resp.status_code == 503
+
+
+def test_capture_200_creates_feature(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post(
+            "/api/projects/proj/features/new-feat/capture",
+            json={"notes": "hello"},
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["project"] == "proj"
+    assert data["slug"] == "new-feat"
+    assert data["status"] == "available"
+    assert data["changed"] is True
+
+
+def test_capture_409_feature_already_exists(temp_db: Path) -> None:
+    _seed_bare_feature(temp_db, "existing")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post("/api/projects/proj/features/existing/capture", json={})
+    assert resp.status_code == 409
+
+
+def test_capture_400_invalid_json(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post(
+            "/api/projects/proj/features/feat/capture",
+            content="not-json",
+            headers={"Content-Type": "application/json"},
+        )
+    assert resp.status_code == 400
+
+
+def test_capture_400_non_string_notes(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post(
+            "/api/projects/proj/features/feat/capture",
+            json={"notes": 123},
+        )
+    assert resp.status_code == 400
+
+
+def test_capture_broadcasts_on_change(temp_db: Path) -> None:
+    app = create_app(db_path=temp_db)
+    with TestClient(app) as client:
+        app.state.broadcaster = MagicMock()
+        resp = client.post("/api/projects/proj/features/new-feat/capture", json={})
+    assert resp.status_code == 200
+    app.state.broadcaster.broadcast.assert_called_once()
+
+
+def test_capture_no_broadcast_on_existing(temp_db: Path) -> None:
+    _seed_bare_feature(temp_db, "existing")
+    app = create_app(db_path=temp_db)
+    with TestClient(app) as client:
+        app.state.broadcaster = MagicMock()
+        resp = client.post("/api/projects/proj/features/existing/capture", json={})
+    assert resp.status_code == 409
+    app.state.broadcaster.broadcast.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# claim handler
+# ---------------------------------------------------------------------------
+
+
+def test_claim_503_no_db() -> None:
+    client = TestClient(create_app(db_path=None))
+    resp = client.post("/api/projects/proj/features/feat/claim", json={"owner": "Alice"})
+    assert resp.status_code == 503
+
+
+def test_claim_200_transitions_to_in_progress(temp_db: Path) -> None:
+    _seed_bare_feature(temp_db, "feat", status="available")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post(
+            "/api/projects/proj/features/feat/claim",
+            json={"owner": "Alice"},
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "in_progress"
+    assert data["changed"] is True
+
+
+def test_claim_200_noop_when_already_in_progress(temp_db: Path) -> None:
+    _seed_bare_feature(temp_db, "feat", status="in_progress")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post(
+            "/api/projects/proj/features/feat/claim",
+            json={"owner": "Alice"},
+        )
+    assert resp.status_code == 200
+    assert resp.json()["changed"] is False
+
+
+def test_claim_404_missing_feature(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post(
+            "/api/projects/proj/features/no-such/claim",
+            json={"owner": "Alice"},
+        )
+    assert resp.status_code == 404
+
+
+def test_claim_409_invalid_transition(temp_db: Path) -> None:
+    _seed_bare_feature(temp_db, "feat", status="done")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post(
+            "/api/projects/proj/features/feat/claim",
+            json={"owner": "Alice"},
+        )
+    assert resp.status_code == 409
+
+
+def test_claim_400_missing_owner(temp_db: Path) -> None:
+    _seed_bare_feature(temp_db, "feat")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post("/api/projects/proj/features/feat/claim", json={})
+    assert resp.status_code == 400
+    assert "owner" in resp.json()["error"]
+
+
+def test_claim_400_empty_owner(temp_db: Path) -> None:
+    _seed_bare_feature(temp_db, "feat")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post(
+            "/api/projects/proj/features/feat/claim",
+            json={"owner": "  "},
+        )
+    assert resp.status_code == 400
+
+
+def test_claim_400_non_string_owner(temp_db: Path) -> None:
+    _seed_bare_feature(temp_db, "feat")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post(
+            "/api/projects/proj/features/feat/claim",
+            json={"owner": 42},
+        )
+    assert resp.status_code == 400
+
+
+def test_claim_broadcasts_on_change(temp_db: Path) -> None:
+    _seed_bare_feature(temp_db, "feat", status="available")
+    app = create_app(db_path=temp_db)
+    with TestClient(app) as client:
+        app.state.broadcaster = MagicMock()
+        resp = client.post("/api/projects/proj/features/feat/claim", json={"owner": "Alice"})
+    assert resp.status_code == 200
+    app.state.broadcaster.broadcast.assert_called_once()
+
+
+def test_claim_no_broadcast_on_noop(temp_db: Path) -> None:
+    _seed_bare_feature(temp_db, "feat", status="in_progress")
+    app = create_app(db_path=temp_db)
+    with TestClient(app) as client:
+        app.state.broadcaster = MagicMock()
+        resp = client.post("/api/projects/proj/features/feat/claim", json={"owner": "Alice"})
+    assert resp.status_code == 200
+    assert resp.json()["changed"] is False
+    app.state.broadcaster.broadcast.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# ship handler
+# ---------------------------------------------------------------------------
+
+
+def test_ship_503_no_db() -> None:
+    client = TestClient(create_app(db_path=None))
+    resp = client.post("/api/projects/proj/features/feat/ship", json={})
+    assert resp.status_code == 503
+
+
+def test_ship_200_transitions_to_done(temp_db: Path) -> None:
+    _seed_bare_feature(temp_db, "feat", status="in_progress")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post(
+            "/api/projects/proj/features/feat/ship",
+            json={"outcome": "shipped it"},
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "done"
+    assert data["changed"] is True
+
+
+def test_ship_200_noop_when_already_done(temp_db: Path) -> None:
+    _seed_bare_feature(temp_db, "feat", status="done")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post("/api/projects/proj/features/feat/ship", json={})
+    assert resp.status_code == 200
+    assert resp.json()["changed"] is False
+
+
+def test_ship_404_missing_feature(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post("/api/projects/proj/features/no-such/ship", json={})
+    assert resp.status_code == 404
+
+
+def test_ship_409_invalid_transition(temp_db: Path) -> None:
+    _seed_bare_feature(temp_db, "feat", status="available")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post("/api/projects/proj/features/feat/ship", json={})
+    assert resp.status_code == 409
+
+
+def test_ship_400_non_string_outcome(temp_db: Path) -> None:
+    _seed_bare_feature(temp_db, "feat", status="in_progress")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post(
+            "/api/projects/proj/features/feat/ship",
+            json={"outcome": 99},
+        )
+    assert resp.status_code == 400
+
+
+def test_ship_broadcasts_on_change(temp_db: Path) -> None:
+    _seed_bare_feature(temp_db, "feat", status="in_progress")
+    app = create_app(db_path=temp_db)
+    with TestClient(app) as client:
+        app.state.broadcaster = MagicMock()
+        resp = client.post("/api/projects/proj/features/feat/ship", json={})
+    assert resp.status_code == 200
+    app.state.broadcaster.broadcast.assert_called_once()
+
+
+def test_ship_no_broadcast_on_noop(temp_db: Path) -> None:
+    _seed_bare_feature(temp_db, "feat", status="done")
+    app = create_app(db_path=temp_db)
+    with TestClient(app) as client:
+        app.state.broadcaster = MagicMock()
+        resp = client.post("/api/projects/proj/features/feat/ship", json={})
+    assert resp.status_code == 200
+    assert resp.json()["changed"] is False
+    app.state.broadcaster.broadcast.assert_not_called()

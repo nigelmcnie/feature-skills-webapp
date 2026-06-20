@@ -275,7 +275,8 @@ def upsert_project(conn: sqlite3.Connection, name: str, now: str) -> int:
 
 def upsert_feature(conn: sqlite3.Connection, project_id: int, slug: str, now: str) -> int:
     conn.execute(
-        "INSERT INTO features (project_id, slug, created_at, updated_at) VALUES (?, ?, ?, ?) "
+        "INSERT INTO features (project_id, slug, status, created_at, updated_at) "
+        "VALUES (?, ?, 'available', ?, ?) "
         "ON CONFLICT(project_id, slug) DO NOTHING",
         (project_id, slug, now, now),
     )

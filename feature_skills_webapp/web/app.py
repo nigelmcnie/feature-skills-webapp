@@ -37,9 +37,12 @@ from feature_skills_webapp.web.submit import (
 )
 from feature_skills_webapp.web.synthesis import get_synthesis_response, post_synthesis_response
 from feature_skills_webapp.web.tracker import (
+    capture_handler,
+    claim_handler,
     list_documents_handler,
     list_features_handler,
     list_projects_handler,
+    ship_handler,
 )
 
 _HERE = Path(__file__).parent
@@ -136,6 +139,21 @@ def create_app(db_path: Path | None, docs_root: Path | None = None) -> Starlette
             Route(
                 "/api/projects/{project}/features/{feature}/documents",
                 list_documents_handler,
+            ),
+            Route(
+                "/api/projects/{project}/features/{feature}/capture",
+                capture_handler,
+                methods=["POST"],
+            ),
+            Route(
+                "/api/projects/{project}/features/{feature}/claim",
+                claim_handler,
+                methods=["POST"],
+            ),
+            Route(
+                "/api/projects/{project}/features/{feature}/ship",
+                ship_handler,
+                methods=["POST"],
             ),
             Route("/retro-findings", post_retro_findings, methods=["POST"]),
             Route("/retro-findings", get_retro_findings),

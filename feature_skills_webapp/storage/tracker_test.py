@@ -1,17 +1,25 @@
-"""Tests for storage/tracker.py read accessors."""
+"""Tests for storage/tracker.py read accessors and mutations."""
 
 from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
 
-from feature_skills_webapp.storage.db import connect, migrate
+import pytest
+
+from feature_skills_webapp.storage.db import connect, migrate, transaction
 from feature_skills_webapp.storage.tracker import (
+    FeatureExists,
+    FeatureNotFound,
+    InvalidTransition,
+    capture_feature,
+    claim_feature,
     get_feature,
     get_project,
     list_feature_documents,
     list_features,
     list_projects,
+    ship_feature,
 )
 
 
@@ -258,3 +266,229 @@ def test_list_feature_documents_ordered_by_type_then_instance(tmp_path: Path) ->
     rows = list_feature_documents(conn, fid)
     types_instances = [(r["type"], r["instance"]) for r in rows]
     assert types_instances == [("context", 1), ("requirements", 1), ("requirements", 2)]
+
+
+# ---------------------------------------------------------------------------
+# Migration: backfill NULL status
+# ---------------------------------------------------------------------------
+
+
+def test_migration_backfills_null_status(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    pid = _seed_project(conn, "proj")
+    # Force a NULL status row (bypassing the default) to simulate pre-migration state.
+    conn.execute(
+        "INSERT INTO features (project_id, slug, status, created_at, updated_at) "
+        "VALUES (?, 'feat', NULL, '2024-01-01T00:00:00+00:00', '2024-01-01T00:00:00+00:00')",
+        (pid,),
+    )
+    row = conn.execute(
+        "SELECT status FROM features WHERE slug='feat' AND project_id=?", (pid,)
+    ).fetchone()
+    assert row["status"] is None
+    # Run the backfill SQL manually (simulating migration 0005 re-applied).
+    conn.execute("UPDATE features SET status = 'available' WHERE status IS NULL")
+    row = conn.execute(
+        "SELECT status FROM features WHERE slug='feat' AND project_id=?", (pid,)
+    ).fetchone()
+    assert row["status"] == "available"
+
+
+def test_upsert_feature_seeds_available_status(tmp_path: Path) -> None:
+    from feature_skills_webapp.storage.walker import upsert_feature, upsert_project
+
+    conn = _conn(tmp_path)
+    now = "2024-01-01T00:00:00+00:00"
+    pid = upsert_project(conn, "proj", now)
+    upsert_feature(conn, pid, "brand-new", now)
+    row = conn.execute(
+        "SELECT status FROM features WHERE project_id=? AND slug='brand-new'", (pid,)
+    ).fetchone()
+    assert row["status"] == "available"
+
+
+# ---------------------------------------------------------------------------
+# capture_feature
+# ---------------------------------------------------------------------------
+
+
+def test_capture_creates_available_feature_and_event(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    now = "2024-01-01T00:00:00+00:00"
+    with transaction(conn):
+        result = capture_feature(conn, project="proj", slug="new-feat", notes="n", now=now)
+    assert result.status == "available"
+    assert result.changed is True
+    feat = get_feature(conn, "proj", "new-feat")
+    assert feat is not None
+    assert feat["status"] == "available"
+    assert feat["notes"] == "n"
+    event = conn.execute(
+        "SELECT event_type FROM events WHERE event_type='feature_captured'"
+    ).fetchone()
+    assert event is not None
+
+
+def test_capture_raises_feature_exists_on_duplicate(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    now = "2024-01-01T00:00:00+00:00"
+    with transaction(conn):
+        capture_feature(conn, project="proj", slug="feat", notes=None, now=now)
+    with pytest.raises(FeatureExists), transaction(conn):
+        capture_feature(conn, project="proj", slug="feat", notes=None, now=now)
+
+
+def test_capture_with_no_notes(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    now = "2024-01-01T00:00:00+00:00"
+    with transaction(conn):
+        result = capture_feature(conn, project="proj", slug="feat", notes=None, now=now)
+    assert result.status == "available"
+    feat = get_feature(conn, "proj", "feat")
+    assert feat is not None
+    assert feat["notes"] is None
+
+
+# ---------------------------------------------------------------------------
+# claim_feature
+# ---------------------------------------------------------------------------
+
+
+def test_claim_available_transitions_to_in_progress(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    now = "2024-01-01T00:00:00+00:00"
+    pid = _seed_project(conn, "proj")
+    _seed_feature(conn, pid, "feat", status="available")
+    with transaction(conn):
+        result = claim_feature(conn, project="proj", slug="feat", owner="Alice", now=now)
+    assert result.status == "in_progress"
+    assert result.changed is True
+    feat = get_feature(conn, "proj", "feat")
+    assert feat is not None
+    assert feat["status"] == "in_progress"
+    assert feat["owner"] == "Alice"
+    event = conn.execute(
+        "SELECT event_type FROM events WHERE event_type='feature_claimed'"
+    ).fetchone()
+    assert event is not None
+
+
+def test_claim_already_in_progress_is_noop(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    now = "2024-01-01T00:00:00+00:00"
+    pid = _seed_project(conn, "proj")
+    _seed_feature(conn, pid, "feat", status="in_progress")
+    before = conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
+    with transaction(conn):
+        result = claim_feature(conn, project="proj", slug="feat", owner="Alice", now=now)
+    after = conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
+    assert result.changed is False
+    assert result.status == "in_progress"
+    assert after == before  # no event emitted
+
+
+def test_claim_done_feature_raises_invalid_transition(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    now = "2024-01-01T00:00:00+00:00"
+    pid = _seed_project(conn, "proj")
+    _seed_feature(conn, pid, "feat", status="done")
+    before = conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
+    with pytest.raises(InvalidTransition), transaction(conn):
+        claim_feature(conn, project="proj", slug="feat", owner="Alice", now=now)
+    after = conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
+    assert after == before  # no event emitted on rejection
+    # Status unchanged
+    feat = get_feature(conn, "proj", "feat")
+    assert feat is not None
+    assert feat["status"] == "done"
+
+
+def test_claim_missing_feature_raises_feature_not_found(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    now = "2024-01-01T00:00:00+00:00"
+    _seed_project(conn, "proj")
+    with pytest.raises(FeatureNotFound), transaction(conn):
+        claim_feature(conn, project="proj", slug="no-such", owner="Alice", now=now)
+
+
+# ---------------------------------------------------------------------------
+# ship_feature
+# ---------------------------------------------------------------------------
+
+
+def test_ship_in_progress_transitions_to_done(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    now = "2024-01-01T00:00:00+00:00"
+    pid = _seed_project(conn, "proj")
+    _seed_feature(conn, pid, "feat", status="in_progress")
+    with transaction(conn):
+        result = ship_feature(conn, project="proj", slug="feat", outcome="great", now=now)
+    assert result.status == "done"
+    assert result.changed is True
+    feat = get_feature(conn, "proj", "feat")
+    assert feat is not None
+    assert feat["status"] == "done"
+    assert feat["notes"] == "great"
+    event = conn.execute("SELECT event_type FROM events WHERE event_type='shipped'").fetchone()
+    assert event is not None
+
+
+def test_ship_writes_outcome_to_notes(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    now = "2024-01-01T00:00:00+00:00"
+    pid = _seed_project(conn, "proj")
+    _seed_feature(conn, pid, "feat", status="in_progress", notes="old note")
+    with transaction(conn):
+        ship_feature(conn, project="proj", slug="feat", outcome="new outcome", now=now)
+    feat = get_feature(conn, "proj", "feat")
+    assert feat is not None
+    assert feat["notes"] == "new outcome"
+
+
+def test_ship_without_outcome_leaves_notes_unchanged(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    now = "2024-01-01T00:00:00+00:00"
+    pid = _seed_project(conn, "proj")
+    _seed_feature(conn, pid, "feat", status="in_progress", notes="existing note")
+    with transaction(conn):
+        ship_feature(conn, project="proj", slug="feat", outcome=None, now=now)
+    feat = get_feature(conn, "proj", "feat")
+    assert feat is not None
+    assert feat["notes"] == "existing note"
+
+
+def test_ship_already_done_is_noop(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    now = "2024-01-01T00:00:00+00:00"
+    pid = _seed_project(conn, "proj")
+    _seed_feature(conn, pid, "feat", status="done")
+    before = conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
+    with transaction(conn):
+        result = ship_feature(conn, project="proj", slug="feat", outcome=None, now=now)
+    after = conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
+    assert result.changed is False
+    assert result.status == "done"
+    assert after == before  # no event emitted
+
+
+def test_ship_available_feature_raises_invalid_transition(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    now = "2024-01-01T00:00:00+00:00"
+    pid = _seed_project(conn, "proj")
+    _seed_feature(conn, pid, "feat", status="available")
+    before = conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
+    with pytest.raises(InvalidTransition), transaction(conn):
+        ship_feature(conn, project="proj", slug="feat", outcome=None, now=now)
+    after = conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
+    assert after == before  # no event emitted on rejection
+    feat = get_feature(conn, "proj", "feat")
+    assert feat is not None
+    assert feat["status"] == "available"
+
+
+def test_ship_missing_feature_raises_feature_not_found(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    now = "2024-01-01T00:00:00+00:00"
+    _seed_project(conn, "proj")
+    with pytest.raises(FeatureNotFound), transaction(conn):
+        ship_feature(conn, project="proj", slug="no-such", outcome=None, now=now)
