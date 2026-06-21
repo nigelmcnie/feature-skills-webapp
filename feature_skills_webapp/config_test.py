@@ -2,7 +2,7 @@ import os
 
 import pytest
 
-from feature_skills_webapp.config import DEFAULT_PORT, ConfigError, db_path, docs_root, port
+from feature_skills_webapp.config import DEFAULT_PORT, ConfigError, db_path, port
 
 
 def test_port_default_when_unset(monkeypatch):
@@ -36,26 +36,6 @@ def test_port_too_large(monkeypatch):
     monkeypatch.setenv("FEATURE_SKILLS_WEBAPP_PORT", "99999")
     with pytest.raises(ConfigError, match="out of range"):
         port()
-
-
-def test_docs_root_default(monkeypatch):
-    monkeypatch.delenv("FEATURE_SKILLS_WEBAPP_DOCS_ROOT", raising=False)
-    result = docs_root()
-    from pathlib import Path
-
-    assert result == Path.home() / ".claude" / "feature-docs"
-
-
-def test_docs_root_valid_override(monkeypatch, tmp_path):
-    monkeypatch.setenv("FEATURE_SKILLS_WEBAPP_DOCS_ROOT", str(tmp_path))
-    assert docs_root() == tmp_path
-
-
-def test_docs_root_non_dir_override(monkeypatch, tmp_path):
-    non_dir = str(tmp_path / "does-not-exist")
-    monkeypatch.setenv("FEATURE_SKILLS_WEBAPP_DOCS_ROOT", non_dir)
-    with pytest.raises(ConfigError, match="is not a directory"):
-        docs_root()
 
 
 def test_db_path_env_override(monkeypatch, tmp_path):

@@ -11,6 +11,18 @@ from starlette.testclient import TestClient
 from feature_skills_webapp.storage.db import connect, transaction
 from feature_skills_webapp.web.app import create_app
 
+
+def _walk_docs(db_path: Path, docs_root: Path, *, reconcile: bool = True) -> None:
+    from feature_skills_webapp.storage.walker import walk
+
+    conn = connect(db_path)
+    try:
+        walk(conn, docs_root, reconcile=reconcile)
+        conn.commit()
+    finally:
+        conn.close()
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -577,8 +589,8 @@ def test_project_page_shows_finding_title(temp_db: Path, tmp_path: Path) -> None
         '<meta name="feature-doc-type" content="context"><title>ctx</title>'
         "</head><body>ctx</body></html>"
     )
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         conn = db_connect(temp_db)
         proj_id = conn.execute("SELECT id FROM projects WHERE name='proj'").fetchone()["id"]
         now = "2026-01-01T00:00:00+00:00"
@@ -611,8 +623,8 @@ def test_project_page_shows_recurrence_badge(temp_db: Path, tmp_path: Path) -> N
         '<meta name="feature-doc-type" content="context"><title>ctx</title>'
         "</head><body>ctx</body></html>"
     )
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         conn = db_connect(temp_db)
         proj_id = conn.execute("SELECT id FROM projects WHERE name='proj'").fetchone()["id"]
         now = "2026-01-01T00:00:00+00:00"

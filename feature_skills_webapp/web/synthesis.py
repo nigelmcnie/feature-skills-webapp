@@ -71,36 +71,3 @@ async def post_synthesis_response(request: Request) -> JSONResponse:
     items_written = len(responses) + len(routine_flags)
     request.app.state.broadcaster.broadcast()
     return JSONResponse({"document_id": doc_id, "items_written": items_written})
-
-
-async def get_synthesis_response(request: Request) -> JSONResponse:
-    if request.app.state.db_path is None:
-        return JSONResponse({"error": "db not configured"}, status_code=503)
-
-    path = request.query_params.get("path")
-    if not path:
-        return JSONResponse({"error": "path parameter required"}, status_code=400)
-
-    with request_conn(request.app) as conn:
-        doc_row = conn.execute("SELECT id FROM documents WHERE source_path = ?", (path,)).fetchone()
-        if doc_row is None:
-            return JSONResponse({"error": "document not found"}, status_code=404)
-
-        rows = conn.execute(
-            "SELECT item_num, response, routine_flag FROM synthesis_responses WHERE document_id = ?",
-            (doc_row["id"],),
-        ).fetchall()
-
-    responses = {str(r["item_num"]): r["response"] for r in rows if r["routine_flag"] is None}
-    routine_flags = {
-        str(r["item_num"]): r["routine_flag"] for r in rows if r["routine_flag"] is not None
-    }
-
-    return JSONResponse(
-        {
-            "doc": path,
-            "submitted": bool(rows),
-            "responses": responses,
-            "routine_flags": routine_flags,
-        }
-    )

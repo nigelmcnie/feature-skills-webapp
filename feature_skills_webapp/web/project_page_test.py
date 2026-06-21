@@ -4,6 +4,19 @@ from starlette.testclient import TestClient
 
 from feature_skills_webapp.web.app import create_app
 
+
+def _walk_docs(db_path: Path, docs_root: Path, *, reconcile: bool = True) -> None:
+    from feature_skills_webapp.storage.db import connect
+    from feature_skills_webapp.storage.walker import walk
+
+    conn = connect(db_path)
+    try:
+        walk(conn, docs_root, reconcile=reconcile)
+        conn.commit()
+    finally:
+        conn.close()
+
+
 HTML_TEMPLATE = """\
 <!DOCTYPE html>
 <html>
@@ -128,8 +141,8 @@ def make_docs_root_available_only(tmp_path: Path) -> Path:
 
 def test_project_page_unknown_returns_404(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_docs_root_available_only(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         resp = client.get("/project/no-such")
     assert resp.status_code == 404
 
@@ -145,7 +158,7 @@ def test_project_page_503_when_db_not_configured() -> None:
 
 def test_project_page_features_grouped_by_status(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_docs_root_multi(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+    with TestClient(create_app(db_path=temp_db)) as client:
         # Set up tracker state via API before discover so the walker's INSERT OR IGNORE
         # does not overwrite these statuses.
         client.post("/api/projects/proj1/features/feat-active/capture", json={"notes": ""})
@@ -154,7 +167,7 @@ def test_project_page_features_grouped_by_status(temp_db: Path, tmp_path: Path) 
         client.post("/api/projects/proj1/features/feat-done/capture", json={"notes": ""})
         client.post("/api/projects/proj1/features/feat-done/claim", json={"owner": "Bob"})
         client.post("/api/projects/proj1/features/feat-done/ship", json={"outcome": "Shipped."})
-        client.post("/admin/discover")
+        _walk_docs(temp_db, docs_root)
         resp = client.get("/project/proj1")
     assert resp.status_code == 200
     assert "In progress" in resp.text
@@ -170,8 +183,8 @@ def test_project_page_features_grouped_by_status(temp_db: Path, tmp_path: Path) 
 
 def test_project_page_feature_links_to_feature_page(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_docs_root_available_only(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         resp = client.get("/project/proj1")
     assert resp.status_code == 200
     assert 'href="/project/proj1/feature/feat-a"' in resp.text
@@ -180,8 +193,8 @@ def test_project_page_feature_links_to_feature_page(temp_db: Path, tmp_path: Pat
 def test_project_page_available_only_renders_list(temp_db: Path, tmp_path: Path) -> None:
     """An available-only project still shows the feature list, not an empty state."""
     docs_root = make_docs_root_available_only(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         resp = client.get("/project/proj1")
     assert resp.status_code == 200
     assert "Available" in resp.text
@@ -193,8 +206,8 @@ def test_project_page_available_only_renders_list(temp_db: Path, tmp_path: Path)
 
 def test_project_page_tracker_doc_linked_when_present(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_docs_root_with_tracker(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         from feature_skills_webapp.storage.db import connect
 
         conn = connect(temp_db)
@@ -214,8 +227,8 @@ def test_project_page_no_tracker_doc_no_tracker_link(temp_db: Path, tmp_path: Pa
     (docs_root / "proj1" / "feat-a" / "context.html").write_text(
         HTML_TEMPLATE.format(doc_type="context", title="ctx")
     )
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         resp = client.get("/project/proj1")
     assert resp.status_code == 200
     assert "feature tracker" not in resp.text
@@ -229,8 +242,8 @@ def test_project_page_does_not_stamp_read_state(temp_db: Path, tmp_path: Path) -
     docs_root = make_docs_root_with_tracker(tmp_path)
     from feature_skills_webapp.storage.db import connect
 
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         resp = client.get("/project/proj1")
         assert resp.status_code == 200
         conn = connect(temp_db)

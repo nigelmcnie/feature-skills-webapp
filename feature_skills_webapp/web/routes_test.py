@@ -5,6 +5,19 @@ from starlette.testclient import TestClient
 
 from feature_skills_webapp.web.app import create_app
 
+
+def _walk_docs(db_path: Path, docs_root: Path, *, reconcile: bool = True) -> None:
+    from feature_skills_webapp.storage.db import connect
+    from feature_skills_webapp.storage.walker import walk
+
+    conn = connect(db_path)
+    try:
+        walk(conn, docs_root, reconcile=reconcile)
+        conn.commit()
+    finally:
+        conn.close()
+
+
 HTML_TEMPLATE = """\
 <!DOCTYPE html>
 <html>
@@ -117,34 +130,16 @@ def test_healthz_unavailable_when_db_is_directory(tmp_path: Path) -> None:
     assert response.json()["status"] == "unavailable"
 
 
-def test_admin_discover_returns_summary(temp_db: Path, tmp_path: Path) -> None:
-    docs_root = make_docs_root(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        response = client.post("/admin/discover")
-    assert response.status_code == 200
-    data = response.json()
-    assert "created" in data
-    assert "errors" in data
-    assert isinstance(data["created"], int)
-
-
-def test_admin_discover_503_when_unwired(tmp_path: Path) -> None:
-    # No docs_root means discovery is not wired up
-    client = TestClient(create_app(db_path=None, docs_root=None))
-    response = client.post("/admin/discover")
-    assert response.status_code == 503
-
-
-def test_index_still_ok_with_new_lifespan(temp_db: Path, tmp_path: Path) -> None:
-    docs_root = make_docs_root(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+def test_index_still_ok_with_new_lifespan(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
         response = client.get("/")
     assert response.status_code == 200
 
 
-def test_healthz_still_ok_with_docs_root(temp_db: Path, tmp_path: Path) -> None:
+def test_healthz_still_ok_after_walk(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_docs_root(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+    _walk_docs(temp_db, docs_root)
+    with TestClient(create_app(db_path=temp_db)) as client:
         response = client.get("/healthz")
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
@@ -152,8 +147,8 @@ def test_healthz_still_ok_with_docs_root(temp_db: Path, tmp_path: Path) -> None:
 
 def test_admin_mark_read_returns_summary(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_docs_root(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")  # wait for initial walk so proj1 is indexed
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)  # wait for initial walk so proj1 is indexed
         response = client.post("/admin/projects/proj1/mark-read")
     assert response.status_code == 200
     data = response.json()
@@ -164,8 +159,8 @@ def test_admin_mark_read_returns_summary(temp_db: Path, tmp_path: Path) -> None:
 
 def test_admin_mark_read_clears_unread(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_docs_root(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")  # wait for initial walk so proj1 is indexed
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)  # wait for initial walk so proj1 is indexed
         client.post("/admin/projects/proj1/mark-read")
 
     from feature_skills_webapp.storage.db import connect
@@ -177,9 +172,8 @@ def test_admin_mark_read_clears_unread(temp_db: Path, tmp_path: Path) -> None:
     conn.close()
 
 
-def test_admin_mark_read_unknown_project_returns_404(temp_db: Path, tmp_path: Path) -> None:
-    docs_root = make_docs_root(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+def test_admin_mark_read_unknown_project_returns_404(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
         response = client.post("/admin/projects/no-such-project/mark-read")
     assert response.status_code == 404
     assert response.json()["error"] == "unknown project"
@@ -215,8 +209,8 @@ def test_index_has_projects_but_empty_inbox_shows_empty_state(
     exercises the configured + has-projects + all-categories-empty path.
     """
     docs_root = make_docs_root(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         client.post("/admin/projects/proj1/mark-read")  # clears the only unread doc
         response = client.get("/")
     assert response.status_code == 200
@@ -232,8 +226,8 @@ def test_index_has_projects_but_empty_inbox_shows_empty_state(
 def test_index_shows_unread_doc_card(temp_db: Path, tmp_path: Path) -> None:
     """An unread active feature doc appears under 'New since last visit'."""
     docs_root = make_docs_root(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         response = client.get("/")
     assert response.status_code == 200
     assert "New since last visit" in response.text
@@ -243,10 +237,10 @@ def test_index_shows_unread_doc_card(temp_db: Path, tmp_path: Path) -> None:
 def test_index_shows_in_progress_feature(temp_db: Path, tmp_path: Path) -> None:
     """A feature with in_progress status appears under 'In progress'."""
     docs_root = make_docs_root(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+    with TestClient(create_app(db_path=temp_db)) as client:
         client.post("/api/projects/proj1/features/feat-a/capture", json={"notes": ""})
         client.post("/api/projects/proj1/features/feat-a/claim", json={"owner": "Alice"})
-        client.post("/admin/discover")
+        _walk_docs(temp_db, docs_root)
         response = client.get("/")
     assert response.status_code == 200
     assert "In progress" in response.text
@@ -258,8 +252,8 @@ def test_index_shows_recently_shipped(temp_db: Path, tmp_path: Path) -> None:
     from datetime import UTC, datetime
 
     docs_root = make_docs_root(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
 
     from feature_skills_webapp.storage.db import connect
 
@@ -286,8 +280,8 @@ def test_index_shows_recently_shipped(temp_db: Path, tmp_path: Path) -> None:
 def test_project_filter_scopes_cards(temp_db: Path, tmp_path: Path) -> None:
     """/?project=proj1 shows proj1's cards and not proj2's."""
     docs_root = make_two_project_docs_root(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         resp_all = client.get("/")
         resp_p1 = client.get("/?project=proj1")
         resp_p2 = client.get("/?project=proj2")
@@ -305,8 +299,8 @@ def test_project_filter_scopes_cards(temp_db: Path, tmp_path: Path) -> None:
 def test_chips_rendered_per_project(temp_db: Path, tmp_path: Path) -> None:
     """Each project gets a chip; the active one is marked."""
     docs_root = make_two_project_docs_root(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         resp = client.get("/?project=proj1")
 
     assert 'href="/?project=proj1"' in resp.text
@@ -319,8 +313,8 @@ def test_chips_rendered_per_project(temp_db: Path, tmp_path: Path) -> None:
 def test_all_chip_active_on_unfiltered(temp_db: Path, tmp_path: Path) -> None:
     """The All chip is active when no ?project param is given."""
     docs_root = make_two_project_docs_root(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         resp = client.get("/")
 
     assert 'href="/" class="chip active"' in resp.text
@@ -329,8 +323,8 @@ def test_all_chip_active_on_unfiltered(temp_db: Path, tmp_path: Path) -> None:
 def test_unknown_project_returns_empty_state(temp_db: Path, tmp_path: Path) -> None:
     """/?project=no-such returns 200 and the all-empty state."""
     docs_root = make_docs_root(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         resp = client.get("/?project=no-such")
 
     assert resp.status_code == 200
@@ -343,8 +337,8 @@ def test_unknown_project_returns_empty_state(temp_db: Path, tmp_path: Path) -> N
 def test_fragment_returns_body_only_html(temp_db: Path, tmp_path: Path) -> None:
     """GET /?fragment=1 returns a partial without <html>/<head>, status 200, no-store."""
     docs_root = make_docs_root(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         resp = client.get("/?fragment=1")
 
     assert resp.status_code == 200
@@ -357,8 +351,8 @@ def test_fragment_returns_body_only_html(temp_db: Path, tmp_path: Path) -> None:
 def test_fragment_respects_project_filter(temp_db: Path, tmp_path: Path) -> None:
     """?fragment=1&project=proj1 shows only proj1's cards."""
     docs_root = make_two_project_docs_root(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         resp = client.get("/?fragment=1&project=proj1")
 
     assert resp.status_code == 200
@@ -408,8 +402,8 @@ def make_docs_root_with_feedback(tmp_path: Path) -> Path:
 def test_index_shows_awaiting_input_for_unsubmitted_feedback(temp_db: Path, tmp_path: Path) -> None:
     """An unsubmitted feedback doc appears under 'Awaiting your input' with a card link."""
     docs_root = make_docs_root_with_feedback(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
 
         from feature_skills_webapp.storage.db import connect
 
@@ -430,8 +424,8 @@ def test_index_shows_awaiting_input_for_unsubmitted_feedback(temp_db: Path, tmp_
 def test_index_awaiting_input_project_filter(temp_db: Path, tmp_path: Path) -> None:
     """/?project=proj1 scopes the Awaiting your input section to proj1."""
     docs_root = make_docs_root_with_feedback(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         resp_p1 = client.get("/?project=proj1")
         resp_p2 = client.get("/?project=proj2")
 
@@ -444,8 +438,8 @@ def test_index_awaiting_input_project_filter(temp_db: Path, tmp_path: Path) -> N
 
 def test_admin_mark_new_since_read_stamps_all(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_docs_root(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         response = client.post("/admin/mark-read")
     assert response.status_code == 200
     assert "stamped" in response.json()
@@ -454,16 +448,15 @@ def test_admin_mark_new_since_read_stamps_all(temp_db: Path, tmp_path: Path) -> 
 
 def test_admin_mark_new_since_read_scoped_by_project(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_two_project_docs_root(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         resp = client.post("/admin/mark-read?project=proj1")
     assert resp.status_code == 200
     assert isinstance(resp.json()["stamped"], int)
 
 
-def test_admin_mark_new_since_read_unknown_project_404(temp_db: Path, tmp_path: Path) -> None:
-    docs_root = make_docs_root(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+def test_admin_mark_new_since_read_unknown_project_404(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
         resp = client.post("/admin/mark-read?project=no-such")
     assert resp.status_code == 404
     assert resp.json()["error"] == "unknown project"
@@ -478,8 +471,8 @@ def test_admin_mark_new_since_read_503_when_db_not_configured() -> None:
 
 def test_admin_mark_new_since_read_clears_new_since(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_docs_root(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         before = client.get("/")
         assert "New since last visit" in before.text
         client.post("/admin/mark-read")
@@ -509,10 +502,10 @@ def make_docs_root_with_types(tmp_path: Path) -> Path:
 def test_inbox_card_feature_name_links_to_feature_page(temp_db: Path, tmp_path: Path) -> None:
     """Per-feature cards (in progress / shipped) link the feature name to its feature page."""
     docs_root = make_docs_root(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
+    with TestClient(create_app(db_path=temp_db)) as client:
         client.post("/api/projects/proj1/features/feat-a/capture", json={"notes": ""})
         client.post("/api/projects/proj1/features/feat-a/claim", json={"owner": "Alice"})
-        client.post("/admin/discover")
+        _walk_docs(temp_db, docs_root)
         resp = client.get("/")
     assert resp.status_code == 200
     # feat-a is in_progress per the tracker → its in-progress card links to the feature page
@@ -522,8 +515,8 @@ def test_inbox_card_feature_name_links_to_feature_page(temp_db: Path, tmp_path: 
 def test_inbox_card_new_since_feature_links_to_doc(temp_db: Path, tmp_path: Path) -> None:
     """Per-document cards (new-since / awaiting) link the feature name to the doc, not the feature page."""
     docs_root = make_docs_root(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         from feature_skills_webapp.storage.db import connect
 
         conn = connect(temp_db)
@@ -538,8 +531,8 @@ def test_inbox_card_new_since_feature_links_to_doc(temp_db: Path, tmp_path: Path
 def test_index_renders_badge_css_classes(temp_db: Path, tmp_path: Path) -> None:
     """Rendered inbox HTML carries badge-<type> classes for seeded doc types."""
     docs_root = make_docs_root_with_types(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         resp = client.get("/")
     assert resp.status_code == 200
     assert "badge-context" in resp.text
@@ -553,8 +546,8 @@ def test_index_renders_badge_css_classes(temp_db: Path, tmp_path: Path) -> None:
 def test_inbox_card_project_name_links_to_project_page(temp_db: Path, tmp_path: Path) -> None:
     """Cards carry a project-page href on the project name."""
     docs_root = make_docs_root(tmp_path)
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         resp = client.get("/")
     assert resp.status_code == 200
     assert 'href="/project/proj1"' in resp.text
@@ -613,12 +606,12 @@ def test_inbox_content_change_card_links_to_diff_view(temp_db: Path, tmp_path: P
     past = time.time() - 10
     os.utime(plan_file, (past, past))
 
-    with TestClient(create_app(db_path=temp_db, docs_root=docs_root)) as client:
-        client.post("/admin/discover")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
         client.post("/admin/projects/proj1/mark-read")
 
         plan_file.write_text(_PLAN_SECTIONS_V2)
-        client.post("/admin/discover")
+        _walk_docs(temp_db, docs_root)
 
         from feature_skills_webapp.storage.db import connect
 

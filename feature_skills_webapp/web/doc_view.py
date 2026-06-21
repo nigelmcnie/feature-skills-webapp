@@ -7,7 +7,7 @@ from urllib.parse import quote
 
 from markupsafe import Markup
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
+from starlette.responses import JSONResponse, PlainTextResponse, Response
 
 from feature_skills_webapp.storage.doc_content import manifest_for
 from feature_skills_webapp.storage.doc_diff import diff_contents
@@ -177,7 +177,6 @@ async def doc_shell(request: Request) -> Response:
             "doc_id": doc_id,
             "crumbs": crumbs,
             "available": available,
-            "raw_url": f"/doc/{doc_id}/raw",
             "mode": mode,
             "body_html": body_html,
             "feedback_items": feedback_items,
@@ -196,26 +195,3 @@ async def doc_shell(request: Request) -> Response:
             "next": {"id": nxt["id"], "label": humanise_type(nxt["type"])} if nxt else None,
         },
     )
-
-
-async def doc_raw(request: Request) -> Response:
-    app = request.app
-    if app.state.db_path is None:
-        return PlainTextResponse("Not found", status_code=404)
-    doc_id = request.path_params["document_id"]
-    with request_conn(app) as conn:
-        row = conn.execute(
-            "SELECT status, source_path, content_html FROM documents WHERE id = ?",
-            (doc_id,),
-        ).fetchone()
-    if row is None or row["status"] not in ("active", "archived"):
-        return PlainTextResponse("Not found", status_code=404)
-    if row["content_html"]:
-        return HTMLResponse(row["content_html"])
-    if not row["source_path"]:
-        return PlainTextResponse("Not found", status_code=404)
-    try:
-        html = Path(row["source_path"]).read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return PlainTextResponse("Not found", status_code=404)
-    return HTMLResponse(html)
