@@ -21,7 +21,6 @@ from feature_skills_webapp.storage.walker import (
     identity_for,
     logical_key,
     parse_doc,
-    parse_tracker,
     walk,
 )
 
@@ -424,49 +423,6 @@ FEATURES_HTML_EMPTY_SECTION = """\
 """
 
 
-# --- parse_tracker unit tests ---
-
-
-def test_parse_tracker_extracts_rows():
-    rows = parse_tracker(FEATURES_HTML)
-    assert len(rows) == 3
-    slugs = {r.slug for r in rows}
-    assert slugs == {"feat-active", "feat-queued", "feat-done"}
-
-
-def test_parse_tracker_statuses():
-    rows = parse_tracker(FEATURES_HTML)
-    by_slug = {r.slug: r for r in rows}
-    assert by_slug["feat-active"].status == "in_progress"
-    assert by_slug["feat-queued"].status == "available"
-    assert by_slug["feat-done"].status == "done"
-
-
-def test_parse_tracker_owner_and_notes():
-    rows = parse_tracker(FEATURES_HTML)
-    by_slug = {r.slug: r for r in rows}
-    assert by_slug["feat-active"].owner == "Alice"
-    assert by_slug["feat-active"].notes == "doing it now"
-    assert by_slug["feat-queued"].owner is None
-    assert by_slug["feat-queued"].notes == "ready to start"
-    assert by_slug["feat-done"].notes == "Shipped."
-
-
-def test_parse_tracker_skips_empty_rows():
-    rows = parse_tracker(FEATURES_HTML_EMPTY_SECTION)
-    assert len(rows) == 1
-    assert rows[0].slug == "feat-a"
-    assert rows[0].status == "available"
-
-
-def test_parse_tracker_returns_empty_on_mangled_html():
-    assert parse_tracker("<not valid html at all <<<>>>") == []
-
-
-def test_parse_tracker_returns_empty_on_no_sections():
-    assert parse_tracker("<html><body><p>nothing here</p></body></html>") == []
-
-
 # --- walk Phase 3 integration tests ---
 
 
@@ -862,9 +818,9 @@ def test_changed_content_cuts_new_version(tmp_path: Path):
 
 
 def test_walk_leaves_content_html_null(tmp_path: Path):
-    """F1 must not populate content_html: doc_raw prefers it over disk (doc_view.py),
-    so writing it would silently change the render source. Versioned content lives in
-    document_versions instead — content_html stays the untouched F2 seam."""
+    """The walker must not populate content_html: versioned content lives in
+    document_versions, and content_html is now an unused legacy column the cutover left
+    in place. Writing it would resurrect a dead render seam, so it stays NULL."""
     docs_root = tmp_path / "docs"
     _make_tree(docs_root)
     conn = temp_conn(tmp_path)

@@ -117,102 +117,6 @@ class _MetaParser(HTMLParser):
             self._title_buf.append(data)
 
 
-@dataclass(frozen=True)
-class TrackerRow:
-    slug: str
-    status: str  # 'in_progress' | 'available' | 'done'
-    owner: str | None
-    notes: str | None
-
-
-_SECTION_STATUS = {
-    "in-progress": "in_progress",
-    "available": "available",
-    "done": "done",
-}
-_CONTENT_CLASSES = {"feature-name", "feature-owner", "feature-notes", "feature-outcome"}
-
-
-class _TrackerParser(HTMLParser):
-    def __init__(self) -> None:
-        super().__init__()
-        self.rows: list[TrackerRow] = []
-        self._status: str | None = None
-        self._in_tbody = False
-        self._row_classes: set[str] = set()
-        self._td_class: str | None = None
-        self._buf: list[str] = []
-        self._slug: str | None = None
-        self._owner: str | None = None
-        self._notes: str | None = None
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        attr = dict(attrs)
-        if tag == "section":
-            sid: str = attr.get("id") or ""
-            self._status = _SECTION_STATUS.get(sid)
-            self._in_tbody = False
-        elif tag == "tbody" and self._status is not None:
-            self._in_tbody = True
-        elif tag == "tr" and self._in_tbody:
-            classes: set[str] = set((attr.get("class") or "").split())
-            self._row_classes = classes
-            self._slug = self._owner = self._notes = None
-        elif tag == "td" and self._in_tbody:
-            td_class = attr.get("class") or ""
-            if td_class in _CONTENT_CLASSES:
-                self._td_class = td_class
-                self._buf = []
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "section":
-            self._status = None
-            self._in_tbody = False
-        elif tag == "tbody":
-            self._in_tbody = False
-        elif tag == "tr" and self._in_tbody:
-            if "empty" not in self._row_classes and self._slug and self._status:
-                self.rows.append(
-                    TrackerRow(
-                        slug=self._slug,
-                        status=self._status,
-                        owner=self._owner or None,
-                        notes=self._notes or None,
-                    )
-                )
-        elif tag == "td" and self._td_class:
-            text = "".join(self._buf).strip()
-            if self._td_class == "feature-name":
-                self._slug = text or None
-            elif self._td_class == "feature-owner":
-                self._owner = text or None
-            elif self._td_class in ("feature-notes", "feature-outcome"):
-                self._notes = text or None
-            self._td_class = None
-            self._buf = []
-
-    def handle_data(self, data: str) -> None:
-        if self._td_class:
-            self._buf.append(data)
-
-
-def parse_tracker(html: str) -> list[TrackerRow]:
-    """Parse a features.html tracker into TrackerRow list. Returns [] on unrecognised shape.
-
-    Tolerance is structural: a tracker whose markup we don't recognise simply yields
-    no rows (the section-id / td-class keying matches nothing). The try/except is a
-    defensive backstop — HTMLParser.feed doesn't raise on malformed markup in the
-    default non-strict mode, so it rarely fires.
-    """
-    parser = _TrackerParser()
-    try:
-        parser.feed(html)
-    except Exception:
-        log.warning("Failed to parse tracker HTML")
-        return []
-    return parser.rows
-
-
 def parse_doc_html(html: str) -> ParsedDoc | None:
     """Parse the feature-doc-type meta tag and title from HTML text. None if no meta tag."""
     parser = _MetaParser()
@@ -233,36 +137,6 @@ def parse_doc(path: Path) -> ParsedDoc | None:
         log.warning("Could not read %s", path)
         return None
     return parse_doc_html(html)
-
-
-def _apply_tracker_rows(
-    conn: sqlite3.Connection,
-    project_id: int,
-    project_name: str,
-    rows: list[TrackerRow],
-    now: str,
-    summary: WalkSummary,
-) -> None:
-    for row in rows:
-        prev = conn.execute(
-            "SELECT status FROM features WHERE project_id=? AND slug=?",
-            (project_id, row.slug),
-        ).fetchone()
-        old_status = prev["status"] if prev else None
-        conn.execute(
-            "INSERT INTO features (project_id, slug, status, owner, notes, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT(project_id, slug) DO UPDATE SET "
-            "status=excluded.status, owner=excluded.owner, notes=excluded.notes, updated_at=excluded.updated_at",
-            (project_id, row.slug, row.status, row.owner, row.notes, now, now),
-        )
-        if row.status == "done" and old_status != "done":
-            conn.execute(
-                "INSERT INTO events (document_id, event_type, payload_json, created_at) "
-                "VALUES (NULL, 'shipped', ?, ?)",
-                (json.dumps({"project": project_name, "slug": row.slug}), now),
-            )
-            summary.shipped += 1
 
 
 def upsert_project(conn: sqlite3.Connection, name: str, now: str) -> int:
@@ -339,8 +213,8 @@ def _process_file(
                 )
             return
 
-    # Read the file once here and reuse the text for both the meta parse and (for
-    # features.html) the tracker parse, rather than reading it twice.
+    # Read the file once here and reuse the text for the meta parse and section
+    # content, rather than reading it twice.
     try:
         html_content = abs_path.read_text(encoding="utf-8", errors="replace")
     except OSError:

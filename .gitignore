@@ -12,3 +12,4 @@ build/
 .ruff_cache/
 .ty_cache/
 .playwright-mcp/
+.claude/worktrees/
