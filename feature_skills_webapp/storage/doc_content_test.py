@@ -191,7 +191,8 @@ def test_manifest_for_requirements() -> None:
 def test_manifest_for_requirements_section_labels_ordered() -> None:
     spec = manifest_for("requirements")
     keys = [k for k, _ in spec.section_labels]
-    assert keys[0] == "problem"
+    assert keys[0] == "summary"
+    assert keys[1] == "problem"
     assert "delivery-phases" in keys
     for key, label in spec.section_labels:
         assert key
