@@ -213,8 +213,8 @@ def _process_file(
                 )
             return
 
-    # Read the file once here and reuse the text for both the meta parse and (for
-    # features.html) the tracker parse, rather than reading it twice.
+    # Read the file once here and reuse the text for the meta parse and section
+    # content, rather than reading it twice.
     try:
         html_content = abs_path.read_text(encoding="utf-8", errors="replace")
     except OSError:
