@@ -4,6 +4,7 @@
 
 | Feature | Owner | Notes |
 |---|---|---|
+| [doc-presentation-contract](docs/features/doc-presentation-contract/context.md) | Nigel McNie |  |
 
 ## Available
 
@@ -12,7 +13,6 @@
 | retro-recurrence-trend | Split from retro-findings-capture: surface a finding's recurrence depth ("raised in N retros") as an explicit trend and feed it back into the /feature-retro prompt to nudge persistent findings toward becoming tracked features. Design once retro-findings-capture has run in anger. |
 | [event-driven-synthesis-wait](docs/features/event-driven-synthesis-wait/context.md) | Replace the skills' 5s busy-poll of GET /synthesis-response with an event-driven wait (blocking long-poll backed by the existing broadcaster/SSE), so the agent makes one call, idles silently, and wakes on submission — killing the hourly "still polling" re-announce on long waits. |
 | synthesis-count-integrity-guard | Assert the webapp rendered every authored synthesis item before the review/plan/requirements flow treats a blank response as "agreed". Defence-in-depth half of the PR #37 feedback-parser fix (never built); guards the "blank = agreed" assumption as more of the process auto-proceeds. Cross-repo (webapp exposes/validates the parsed count; skills assert it). Surfaced by the agent-submission-api retro. |
-| [doc-presentation-contract](docs/features/doc-presentation-contract/context.md) |  |
 | tracker-drop-verb | Add a durable drop/archive path to the tracker API: capture/claim/ship cannot remove a feature, so a dropped feature lingers as available in the DB and re-surfaces on every features.md merge-export (hit during skills-api-cutover review — synthesis-count-integrity-guard). Options: a drop/archive verb + an archived status the Available bucket excludes, or a delete endpoint. Surfaced by feature-skills-webapp review 2026-06-21. |
 
 ## Suggested order
