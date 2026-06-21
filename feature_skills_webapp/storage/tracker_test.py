@@ -19,6 +19,7 @@ from feature_skills_webapp.storage.tracker import (
     list_feature_documents,
     list_features,
     list_projects,
+    normalise_feature_slugs,
     ship_feature,
 )
 
@@ -495,3 +496,116 @@ def test_ship_missing_feature_raises_feature_not_found(tmp_path: Path) -> None:
     _seed_project(conn, "proj")
     with pytest.raises(FeatureNotFound), transaction(conn):
         ship_feature(conn, project="proj", slug="no-such", outcome=None, now=now)
+
+
+# --- guard: slug normalisation on the mutation/lookup boundary ---
+
+
+def test_capture_normalises_display_name_to_slug(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    now = "2024-01-01T00:00:00+00:00"
+    with transaction(conn):
+        result = capture_feature(
+            conn, project="proj", slug="File Classification", notes=None, now=now
+        )
+    assert result.slug == "file-classification"
+    stored = conn.execute("SELECT slug FROM features").fetchall()
+    assert [r["slug"] for r in stored] == ["file-classification"]
+
+
+def test_capture_of_display_name_then_slug_is_a_duplicate(tmp_path: Path) -> None:
+    # The core regression: a display-name capture and a kebab capture must not
+    # become two rows. Without slugify the second capture would not collide.
+    conn = _conn(tmp_path)
+    now = "2024-01-01T00:00:00+00:00"
+    with transaction(conn):
+        capture_feature(conn, project="proj", slug="File classification", notes=None, now=now)
+    with pytest.raises(FeatureExists), transaction(conn):
+        capture_feature(conn, project="proj", slug="file-classification", notes=None, now=now)
+    assert conn.execute("SELECT COUNT(*) AS n FROM features").fetchone()["n"] == 1
+
+
+def test_get_feature_matches_non_canonical_input(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    pid = _seed_project(conn, "proj")
+    _seed_feature(conn, pid, "file-classification")
+    feat = get_feature(conn, "proj", "File Classification")
+    assert feat is not None
+    assert feat["slug"] == "file-classification"
+
+
+def test_claim_and_ship_resolve_via_non_canonical_slug(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    now = "2024-01-01T00:00:00+00:00"
+    pid = _seed_project(conn, "proj")
+    _seed_feature(conn, pid, "file-classification")
+    with transaction(conn):
+        claim_feature(conn, project="proj", slug="File classification", owner="Nigel", now=now)
+    with transaction(conn):
+        ship_feature(conn, project="proj", slug="FILE   classification", outcome=None, now=now)
+    rows = conn.execute("SELECT slug, status FROM features").fetchall()
+    assert len(rows) == 1
+    assert rows[0]["slug"] == "file-classification"
+    assert rows[0]["status"] == "done"
+
+
+# --- backfill: normalise_feature_slugs ---
+
+
+def test_normalise_renames_non_canonical_slug(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    pid = _seed_project(conn, "proj")
+    _seed_feature(conn, pid, "File classification", status="in_progress")
+    with transaction(conn):
+        report = normalise_feature_slugs(conn)
+    assert report.renamed == [("proj", "File classification", "file-classification")]
+    assert report.conflicts == []
+    row = conn.execute("SELECT slug, status FROM features").fetchone()
+    assert row["slug"] == "file-classification"
+    assert row["status"] == "in_progress"  # status untouched
+
+
+def test_normalise_is_idempotent(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    pid = _seed_project(conn, "proj")
+    _seed_feature(conn, pid, "Markdown checks")
+    with transaction(conn):
+        normalise_feature_slugs(conn)
+    with transaction(conn):
+        second = normalise_feature_slugs(conn)
+    assert second.renamed == []
+    assert second.conflicts == []
+
+
+def test_normalise_rewrites_document_logical_keys(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    pid = _seed_project(conn, "proj")
+    fid = _seed_feature(conn, pid, "File classification")
+    _seed_doc(conn, pid, fid, "requirements", logical_key="proj/File classification/requirements/1")
+    with transaction(conn):
+        normalise_feature_slugs(conn)
+    lkey = conn.execute("SELECT logical_key FROM documents").fetchone()["logical_key"]
+    assert lkey == "proj/file-classification/requirements/1"
+
+
+def test_normalise_reports_collision_without_mutating(tmp_path: Path) -> None:
+    # A non-canonical 'done' shell colliding with a canonical 'available' row is
+    # a judgement call — report it, change nothing.
+    conn = _conn(tmp_path)
+    pid = _seed_project(conn, "proj")
+    shell = _seed_feature(conn, pid, "Synthesis verify+retry v2", status="done")
+    canon = _seed_feature(conn, pid, "synthesis-verify-retry-v2", status="available")
+    with transaction(conn):
+        report = normalise_feature_slugs(conn)
+    assert report.renamed == []
+    assert len(report.conflicts) == 1
+    c = report.conflicts[0]
+    assert (c.old_id, c.old_status, c.target_id, c.target_status) == (
+        shell,
+        "done",
+        canon,
+        "available",
+    )
+    # both rows still present, unchanged
+    slugs = {r["slug"] for r in conn.execute("SELECT slug FROM features").fetchall()}
+    assert slugs == {"Synthesis verify+retry v2", "synthesis-verify-retry-v2"}

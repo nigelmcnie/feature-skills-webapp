@@ -6,6 +6,8 @@ import json
 import sqlite3
 from dataclasses import dataclass
 
+from feature_skills_webapp.storage.walker import logical_key, slugify
+
 FEATURE_STATUSES: tuple[str, ...] = ("available", "in_progress", "done")
 
 
@@ -34,6 +36,7 @@ def list_features(conn: sqlite3.Connection, project_id: int) -> list[sqlite3.Row
 
 
 def get_feature(conn: sqlite3.Connection, project: str, slug: str) -> sqlite3.Row | None:
+    slug = slugify(slug)
     return conn.execute(
         "SELECT f.id, f.slug, f.status, f.owner, f.notes, p.name AS project "
         "FROM features f JOIN projects p ON f.project_id = p.id "
@@ -94,6 +97,7 @@ def capture_feature(
 ) -> MutationResult:
     from feature_skills_webapp.storage.walker import upsert_project
 
+    slug = slugify(slug)
     project_id = upsert_project(conn, project, now)
     existing = conn.execute(
         "SELECT 1 FROM features WHERE project_id=? AND slug=?", (project_id, slug)
@@ -121,6 +125,7 @@ def claim_feature(
     owner: str,
     now: str,
 ) -> MutationResult:
+    slug = slugify(slug)
     feat = get_feature(conn, project, slug)
     if feat is None:
         raise FeatureNotFound(f"{project}/{slug}")
@@ -148,6 +153,7 @@ def ship_feature(
     outcome: str | None,
     now: str,
 ) -> MutationResult:
+    slug = slugify(slug)
     feat = get_feature(conn, project, slug)
     if feat is None:
         raise FeatureNotFound(f"{project}/{slug}")
@@ -171,3 +177,82 @@ def ship_feature(
         (json.dumps({"project": project, "slug": slug}), now),
     )
     return MutationResult(project, slug, "done", changed=True)
+
+
+# ---------------------------------------------------------------------------
+# Maintenance: one-off slug backfill
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class SlugConflict:
+    project: str
+    old_slug: str
+    old_id: int
+    old_status: str
+    old_docs: int
+    target_slug: str
+    target_id: int
+    target_status: str
+
+
+@dataclass(frozen=True)
+class SlugBackfillReport:
+    renamed: list[tuple[str, str, str]]  # (project, old_slug, new_slug)
+    conflicts: list[SlugConflict]
+
+
+def normalise_feature_slugs(conn: sqlite3.Connection) -> SlugBackfillReport:
+    """Rename feature rows whose slug is not its canonical ``slugify`` form.
+
+    Idempotent: a second run finds nothing. Any document logical_keys embedding
+    the old feature segment are rewritten to stay consistent with the new slug.
+
+    A rename that would collide with an existing canonical-slug feature in the
+    same project is **not** applied — it is reported as a conflict. Merging two
+    feature rows (differing status, owner, history, and possibly both holding
+    documents) is a judgement call, not a mechanical one; the guard prevents new
+    collisions, so the remaining ones are surfaced for manual resolution rather
+    than resolved destructively.
+    """
+    renamed: list[tuple[str, str, str]] = []
+    conflicts: list[SlugConflict] = []
+    rows = conn.execute(
+        "SELECT f.id, f.project_id, f.slug, f.status, p.name AS project "
+        "FROM features f JOIN projects p ON f.project_id = p.id"
+    ).fetchall()
+    for r in rows:
+        target = slugify(r["slug"])
+        if target == r["slug"]:
+            continue
+        other = conn.execute(
+            "SELECT id, status FROM features WHERE project_id=? AND slug=? AND id<>?",
+            (r["project_id"], target, r["id"]),
+        ).fetchone()
+        if other is not None:
+            ndocs = conn.execute(
+                "SELECT COUNT(*) FROM documents WHERE feature_id=?", (r["id"],)
+            ).fetchone()[0]
+            conflicts.append(
+                SlugConflict(
+                    project=r["project"],
+                    old_slug=r["slug"],
+                    old_id=r["id"],
+                    old_status=r["status"],
+                    old_docs=ndocs,
+                    target_slug=target,
+                    target_id=other["id"],
+                    target_status=other["status"],
+                )
+            )
+            continue
+        conn.execute("UPDATE features SET slug=? WHERE id=?", (target, r["id"]))
+        for d in conn.execute(
+            "SELECT id, type, instance FROM documents WHERE feature_id=?", (r["id"],)
+        ).fetchall():
+            conn.execute(
+                "UPDATE documents SET logical_key=? WHERE id=?",
+                (logical_key(r["project"], target, d["type"], d["instance"]), d["id"]),
+            )
+        renamed.append((r["project"], r["slug"], target))
+    return SlugBackfillReport(renamed=renamed, conflicts=conflicts)

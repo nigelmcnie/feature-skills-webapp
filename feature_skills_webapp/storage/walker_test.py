@@ -21,6 +21,7 @@ from feature_skills_webapp.storage.walker import (
     identity_for,
     logical_key,
     parse_doc,
+    slugify,
     walk,
 )
 
@@ -693,8 +694,39 @@ def test_feedback_instance_non_feedback_returns_1():
     assert feedback_instance(Path("proj/feat/context.html")) == 1
 
 
+# --- slugify ---
+
+
+def test_slugify_already_kebab_is_idempotent():
+    assert slugify("file-classification") == "file-classification"
+
+
+def test_slugify_lowercases_and_replaces_spaces():
+    assert slugify("File classification") == "file-classification"
+
+
+def test_slugify_collapses_runs_of_punctuation():
+    # spaces, dots and an em-dash all collapse to single hyphens
+    assert slugify("Compile 2.0 — TUI polish") == "compile-2-0-tui-polish"
+
+
+def test_slugify_strips_leading_and_trailing_separators():
+    assert slugify("  Per-check suppression!  ") == "per-check-suppression"
+
+
+def test_slugify_preserves_existing_internal_hyphens_without_doubling():
+    assert slugify("kea check — incremental / targeted") == "kea-check-incremental-targeted"
+
+
 def test_logical_key_feature_doc():
     assert logical_key("proj", "feat", "context", 1) == "proj/feat/context/1"
+
+
+def test_logical_key_slugifies_feature_segment():
+    # a non-canonical feature name yields the same key as its slug
+    assert logical_key("proj", "File classification", "context", 1) == logical_key(
+        "proj", "file-classification", "context", 1
+    )
 
 
 def test_logical_key_project_level():
