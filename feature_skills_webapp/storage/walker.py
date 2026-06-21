@@ -34,9 +34,29 @@ def feedback_instance(rel_path: Path) -> int:
     return int(m.group("num")) if m else 1
 
 
+def slugify(text: str) -> str:
+    """Canonicalise a feature name into a kebab-case slug.
+
+    Lowercase; every run of non-alphanumeric characters collapses to a single
+    '-'; leading/trailing '-' stripped. Idempotent on already-kebab input.
+
+    This is the single rule for feature identity. Without it a display name
+    ("File classification") and its slug ("file-classification") diverge into
+    two feature rows: a bulk tracker import once stored display names verbatim
+    as slugs, and the per-document write path keys on the slugified directory
+    name — so the two could never reconcile and spawned duplicate features.
+    """
+    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+
+
 def logical_key(project: str, feature: str | None, doc_type: str, instance: int) -> str:
-    """Canonical stable identity key for a document: '{project}/{feature or '-'}/{doc_type}/{instance}'."""
-    return f"{project}/{feature or '-'}/{doc_type}/{instance}"
+    """Canonical stable identity key for a document: '{project}/{feature or '-'}/{doc_type}/{instance}'.
+
+    The feature segment is slugified so a document's identity can never diverge
+    from its feature's canonical slug (see ``slugify``).
+    """
+    seg = slugify(feature) if feature else "-"
+    return f"{project}/{seg}/{doc_type}/{instance}"
 
 
 @dataclass(frozen=True)
@@ -148,6 +168,7 @@ def upsert_project(conn: sqlite3.Connection, name: str, now: str) -> int:
 
 
 def upsert_feature(conn: sqlite3.Connection, project_id: int, slug: str, now: str) -> int:
+    slug = slugify(slug)
     conn.execute(
         "INSERT INTO features (project_id, slug, status, created_at, updated_at) "
         "VALUES (?, ?, 'available', ?, ?) "
