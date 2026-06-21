@@ -36,7 +36,7 @@ def _static_v(filename: str) -> str:
 
 
 ROW_SQL = (
-    "SELECT d.id, d.type, d.status, d.source_path, d.content_html, "
+    "SELECT d.id, d.type, d.status, "
     "  p.name AS project, f.slug AS feature, f.id AS feature_id "
     "FROM documents d "
     "JOIN projects p ON d.project_id = p.id "

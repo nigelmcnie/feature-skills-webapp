@@ -71,10 +71,7 @@ def create_app(db_path: Path | None) -> Starlette:
             backfill_logical_keys(conn)
             conn.close()
 
-        try:
-            yield
-        finally:
-            pass
+        yield
 
     app = Starlette(
         routes=[
