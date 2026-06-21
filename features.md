@@ -4,14 +4,14 @@
 
 | Feature | Owner | Notes |
 |---|---|---|
-| [skills-api-cutover](docs/features/skills-api-cutover/context.md) | Nigel | The arc's last mile: cut the feature-* skills over from writing dev-store HTML to `PUT /api/documents` + fetching `/api/manifests`, run one final import, then retire the dev-store and walker. Needs F1/F2/F3 (all shipped). |
 
 ## Available
 
 | Feature | Notes |
 |---|---|
-| retro-recurrence-trend | Split from retro-findings-capture: surface a finding's recurrence depth ("raised in N retros") as an explicit trend and feed it back into the `/feature-retro` prompt to nudge persistent findings toward becoming tracked features. Design once retro-findings-capture has run in anger. |
-| [event-driven-synthesis-wait](docs/features/event-driven-synthesis-wait/context.md) | Replace the skills' 5s busy-poll of `GET /synthesis-response` with an event-driven wait (blocking long-poll backed by the existing broadcaster/SSE), so the agent makes one call, idles silently, and wakes on submission — killing the hourly "still polling" re-announce on long waits. |
+| retro-recurrence-trend | Split from retro-findings-capture: surface a finding's recurrence depth ("raised in N retros") as an explicit trend and feed it back into the /feature-retro prompt to nudge persistent findings toward becoming tracked features. Design once retro-findings-capture has run in anger. |
+| [event-driven-synthesis-wait](docs/features/event-driven-synthesis-wait/context.md) | Replace the skills' 5s busy-poll of GET /synthesis-response with an event-driven wait (blocking long-poll backed by the existing broadcaster/SSE), so the agent makes one call, idles silently, and wakes on submission — killing the hourly "still polling" re-announce on long waits. |
+| synthesis-count-integrity-guard | Assert the webapp rendered every authored synthesis item before the review/plan/requirements flow treats a blank response as "agreed". Defence-in-depth half of the PR #37 feedback-parser fix (never built); guards the "blank = agreed" assumption as more of the process auto-proceeds. Cross-repo (webapp exposes/validates the parsed count; skills assert it). Surfaced by the agent-submission-api retro. |
 
 ## Suggested order
 
@@ -48,3 +48,4 @@ Completed or obsoleted; kept here for context.
 | [read-state](docs/features/read-state/context.md) | **Shipped.** First writer of the `read_state` table (no migration): a `storage/read_state.py` with `mark_read` (idempotent upsert through `transaction()`), `mark_all_read` (stamps every active doc in a project), and `unread_document_ids` — the inbox's "new since last visit" predicate (active docs with an event newer than `last_read_at`; `COALESCE(…, '')` so a missing row = never-read; strict `>` so ties read as read; optional project filter). A shared `now_iso()` helper in `db.py`, adopted by the walker too, guarantees `last_read_at` and `events.created_at` stay byte-comparable. The bulk action is exposed as name-keyed `POST /admin/projects/{project}/mark-read` (404/503 guards); the per-render stamp is deferred to `doc-view`. Two phase PRs + one post-merge review-fix round (equal-timestamp tie test); 101 tests, ruff/ty clean. |
 | [doc-discovery](docs/features/doc-discovery/context.md) | **Shipped.** Filesystem walker indexing the dev-store into the §4 SQLite schema: migration 0002 (DROP+recreate `documents` with `project_id`, nullable `feature_id`, a `status` column — active/archived/missing — and a partial unique index on `source_path`); a synchronous mtime+size-gated `walk()` with status transitions and an `events` row (carrying a `payload_json`) per change; a single serialised async walk worker fed by startup reconcile, an on-demand `POST /admin/discover`, and a `watchfiles` watch; plus `features.html` tracker parsing into `features.status`/`owner`/`notes`. Three phase PRs + one post-merge review-fix round; 85 tests, ruff/ty clean, CI added. |
 | [webapp-skeleton](docs/features/webapp-skeleton/context.md) | **Shipped.** Supervised Starlette server on `127.0.0.1:8800` with a Jinja placeholder page and a DB-backed `/healthz` readiness check; migrated SQLite carrying the full §4 schema (per-request connections, WAL, `events` SET-NULL audit semantics, FK indexes); systemd user unit with a working crash-loop cap; kea-style test harness (xdist + pytest-socket, per-worker DB). Three phase PRs + one review-fix round; 27 tests, ruff/ty clean. |
+| [skills-api-cutover](docs/features/skills-api-cutover/context.md) | Shipped. |
