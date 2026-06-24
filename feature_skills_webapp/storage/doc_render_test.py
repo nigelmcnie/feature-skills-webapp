@@ -220,7 +220,7 @@ def test_extract_safe_inner_preserves_entities() -> None:
 # ---------------------------------------------------------------------------
 
 _NEEDS_INPUT_ARTICLE = """\
-<article class="item" data-item="1">
+<article class="feedback-item" data-item="1">
   <header><span class="item-num">1.</span><h3>Title one</h3></header>
   <div class="detail"><p>Detail paragraph.</p></div>
   <div class="my-take"><span class="label">My take:</span> Take text.</div>
@@ -230,7 +230,7 @@ _NEEDS_INPUT_ARTICLE = """\
 </article>"""
 
 _FEEDBACK_ARTICLE = """\
-<article class="item" data-item="4">
+<article class="feedback-item" data-item="4">
   <header><span class="item-num">4.</span><h3>Title four</h3></header>
   <div class="detail"><p>Detail four.</p></div>
   <div class="my-take"><span class="label">My take:</span> Take four.</div>
@@ -238,7 +238,7 @@ _FEEDBACK_ARTICLE = """\
 </article>"""
 
 _ROUTINE_LI = """\
-<li class="routine-item" data-item="9">
+<li class="syn-routine-item" data-item="9">
   <span class="item-num">9.</span>
   <span class="body">Routine body text with <em>emphasis</em>.</span>
   <button class="flag-btn" data-item="9">Flag</button>
@@ -249,15 +249,15 @@ _FULL_FEEDBACK_HTML = f"""\
 <!DOCTYPE html>
 <html><head><style>body {{ color: red; }}</style></head>
 <body>
-<section class="tier tier-needs-input">
+<section id="tier-needs-input">
 <h2>Needs your input</h2>
 {_NEEDS_INPUT_ARTICLE}
 </section>
-<section class="tier tier-feedback">
+<section id="tier-feedback">
 <h2>Feedback</h2>
 {_FEEDBACK_ARTICLE}
 </section>
-<section class="tier tier-routine">
+<section id="tier-routine">
 <h2>Routine</h2>
 <ul class="routine-list">
 {_ROUTINE_LI}
@@ -338,8 +338,8 @@ def test_parse_feedback_items_strips_script_and_style() -> None:
 def test_parse_feedback_items_nested_html_in_title() -> None:
     html = """\
 <html><body>
-<section class="tier tier-needs-input">
-<article class="item" data-item="2">
+<section id="tier-needs-input">
+<article class="feedback-item" data-item="2">
   <header><h3>Title with <code>code</code> and <em>em</em></h3></header>
   <div class="detail"><p>Some detail.</p></div>
   <div class="my-take">My take text.</div>
@@ -368,8 +368,8 @@ def test_parse_feedback_items_malformed_returns_empty_or_partial() -> None:
 def test_parse_feedback_items_void_elements_in_body() -> None:
     html = """\
 <html><body>
-<section class="tier tier-needs-input">
-<article class="item" data-item="3">
+<section id="tier-needs-input">
+<article class="feedback-item" data-item="3">
   <header><h3>With br tag</h3></header>
   <div class="detail"><p>Line one.<br>Line two.</p></div>
   <div class="my-take">Take.<br>More take.</div>
@@ -388,18 +388,18 @@ def test_parse_feedback_items_multiple_items_per_tier() -> None:
     # Boundary detection must not stop at the first article in a tier.
     html = """\
 <html><body>
-<section class="tier tier-needs-input">
-<article class="item" data-item="1"><header><h3>One</h3></header>
+<section id="tier-needs-input">
+<article class="feedback-item" data-item="1"><header><h3>One</h3></header>
   <div class="detail"><p>d1</p></div><div class="my-take">t1</div></article>
-<article class="item" data-item="2"><header><h3>Two</h3></header>
+<article class="feedback-item" data-item="2"><header><h3>Two</h3></header>
   <div class="detail"><p>d2</p></div><div class="my-take">t2</div></article>
-<article class="item" data-item="3"><header><h3>Three</h3></header>
+<article class="feedback-item" data-item="3"><header><h3>Three</h3></header>
   <div class="detail"><p>d3</p></div><div class="my-take">t3</div></article>
 </section>
-<section class="tier tier-feedback">
-<article class="item" data-item="4"><header><h3>Four</h3></header>
+<section id="tier-feedback">
+<article class="feedback-item" data-item="4"><header><h3>Four</h3></header>
   <div class="detail"><p>d4</p></div><div class="my-take">t4</div></article>
-<article class="item" data-item="5"><header><h3>Five</h3></header>
+<article class="feedback-item" data-item="5"><header><h3>Five</h3></header>
   <div class="detail"><p>d5</p></div><div class="my-take">t5</div></article>
 </section>
 </body></html>"""
@@ -416,13 +416,13 @@ def test_parse_feedback_items_survives_imbalanced_body_markup() -> None:
     # made the tier appear to close at the first article's </article>.
     html = """\
 <html><body>
-<section class="tier tier-needs-input">
-<article class="item" data-item="1">
+<section id="tier-needs-input">
+<article class="feedback-item" data-item="1">
   <header><h3>One</h3></header>
   <div class="detail">text without an opening p</p></div>
   <div class="my-take">take one</div>
 </article>
-<article class="item" data-item="2">
+<article class="feedback-item" data-item="2">
   <header><h3>Two</h3></header>
   <div class="detail"><p>fine</p></div>
   <div class="my-take">take two</div>

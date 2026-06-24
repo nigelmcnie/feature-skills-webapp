@@ -378,8 +378,10 @@ class FeedbackItem:
 class _FeedbackParser(HTMLParser):
     """Extract FeedbackItems from a feedback doc's HTML.
 
-    Recognises tier sections (tier-needs-input, tier-feedback, tier-routine),
-    article.item elements, and li.routine-item elements.
+    Recognises tier sections by their id (tier-needs-input, tier-feedback,
+    tier-routine), article.feedback-item elements, and li.syn-routine-item
+    elements — the same vocabulary the feedback template, doc.css, and the
+    server-rendered doc.html output all use.
 
     Boundaries are tracked by counting only the *relevant* element's own tag
     nesting — the tier by <section>, the item by <article>/<li>, each captured
@@ -502,18 +504,17 @@ class _FeedbackParser(HTMLParser):
         if self._tier is not None:
             if tag == "section":
                 self._section_depth += 1
-            elif self._tier != "routine" and tag == "article" and "item" in classes:
+            elif self._tier != "routine" and tag == "article" and "feedback-item" in classes:
                 self._open_item(attr_dict, "article", "response")
-            elif self._tier == "routine" and tag == "li" and "routine-item" in classes:
+            elif self._tier == "routine" and tag == "li" and "syn-routine-item" in classes:
                 self._open_item(attr_dict, "li", "routine")
             return
 
-        if tag == "section" and "tier" in classes:
-            for cls in classes:
-                if cls.startswith("tier-"):
-                    self._tier = cls[len("tier-") :]
-                    self._section_depth = 1
-                    break
+        if tag == "section":
+            sec_id = attr_dict.get("id") or ""
+            if sec_id.startswith("tier-"):
+                self._tier = sec_id[len("tier-") :]
+                self._section_depth = 1
 
     def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if self._skip_tag is not None:

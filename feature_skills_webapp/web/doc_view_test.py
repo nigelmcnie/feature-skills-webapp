@@ -407,22 +407,27 @@ HTML_FEEDBACK_NO_META = """\
 <html><head><title>Feedback</title></head><body><p>feedback content</p></body></html>
 """
 
+# Vocabulary here MUST match what the feedback template, doc.css, and the
+# server-rendered doc.html output all use: id-based tier sections,
+# article.feedback-item, li.syn-routine-item. _FeedbackParser keys off these,
+# so a fixture in any other vocabulary parses to zero items and the page
+# renders blank — the regression this fixture guards against.
 HTML_FEEDBACK_WITH_TIERS = """\
 <!DOCTYPE html>
 <html><head><title>Feedback</title></head><body>
-<section class="tier tier-needs-input">
+<section id="tier-needs-input">
 <h2>Needs your input</h2>
-<article class="item" data-item="1">
+<article class="feedback-item" data-item="1">
   <header><span class="item-num">1.</span><h3>Item one title</h3></header>
   <div class="detail"><p>Detail one.</p></div>
   <div class="my-take"><span class="label">My take:</span> Take one.</div>
   <div class="your-thoughts"><textarea data-item="1"></textarea></div>
 </article>
 </section>
-<section class="tier tier-routine">
+<section id="tier-routine">
 <h2>Routine</h2>
 <ul class="routine-list">
-<li class="routine-item" data-item="5">
+<li class="syn-routine-item" data-item="5">
   <span class="item-num">5.</span>
   <span class="body">Routine item five.</span>
   <button class="flag-btn" data-item="5">Flag</button>
