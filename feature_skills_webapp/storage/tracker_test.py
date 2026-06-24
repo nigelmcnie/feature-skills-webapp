@@ -478,19 +478,35 @@ def test_ship_already_done_is_noop(tmp_path: Path) -> None:
     assert after == before  # no event emitted
 
 
-def test_ship_available_feature_raises_invalid_transition(tmp_path: Path) -> None:
+def test_ship_available_feature_backfills_to_done(tmp_path: Path) -> None:
     conn = _conn(tmp_path)
     now = "2024-01-01T00:00:00+00:00"
     pid = _seed_project(conn, "proj")
     _seed_feature(conn, pid, "feat", status="available")
+    with transaction(conn):
+        result = ship_feature(conn, project="proj", slug="feat", outcome=None, now=now)
+    assert result.status == "done"
+    assert result.changed is True
+    feat = get_feature(conn, "proj", "feat")
+    assert feat is not None
+    assert feat["status"] == "done"
+    event = conn.execute("SELECT event_type FROM events WHERE event_type='shipped'").fetchone()
+    assert event is not None
+
+
+def test_ship_parked_feature_raises_invalid_transition(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    now = "2024-01-01T00:00:00+00:00"
+    pid = _seed_project(conn, "proj")
+    _seed_feature(conn, pid, "feat", status="parked")
     before = conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
     with pytest.raises(InvalidTransition), transaction(conn):
         ship_feature(conn, project="proj", slug="feat", outcome=None, now=now)
     after = conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
-    assert after == before  # no event emitted on rejection
+    assert after == before
     feat = get_feature(conn, "proj", "feat")
     assert feat is not None
-    assert feat["status"] == "available"
+    assert feat["status"] == "parked"
 
 
 def test_ship_missing_feature_raises_feature_not_found(tmp_path: Path) -> None:
