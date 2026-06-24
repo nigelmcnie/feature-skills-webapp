@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
@@ -12,6 +14,7 @@ from feature_skills_webapp.storage.tracker import (
     InvalidTransition,
     capture_feature,
     claim_feature,
+    drop_feature,
     get_feature,
     get_project,
     list_feature_documents,
@@ -194,6 +197,40 @@ async def ship_handler(request: Request) -> JSONResponse:
     try:
         with request_conn(request.app) as conn, transaction(conn):
             result = ship_feature(conn, project=project, slug=slug, outcome=outcome, now=now_iso())
+    except FeatureNotFound:
+        return JSONResponse({"error": "feature not found"}, status_code=404)
+    except InvalidTransition as exc:
+        return JSONResponse({"error": str(exc)}, status_code=409)
+
+    if result.changed:
+        request.app.state.broadcaster.broadcast()
+    return JSONResponse(
+        {
+            "project": result.project,
+            "slug": result.slug,
+            "status": result.status,
+            "changed": result.changed,
+        }
+    )
+
+
+async def drop_handler(request: Request) -> JSONResponse:
+    if request.app.state.db_path is None:
+        return JSONResponse({"error": "db not configured"}, status_code=503)
+    project = request.path_params["project"]
+    slug = request.path_params["feature"]
+    raw = await request.body()
+    if raw:
+        try:
+            body = json.loads(raw)
+        except Exception:
+            return JSONResponse({"error": "invalid JSON"}, status_code=400)
+        if not isinstance(body, dict):
+            return JSONResponse({"error": "body must be a JSON object"}, status_code=400)
+
+    try:
+        with request_conn(request.app) as conn, transaction(conn):
+            result = drop_feature(conn, project=project, slug=slug, now=now_iso())
     except FeatureNotFound:
         return JSONResponse({"error": "feature not found"}, status_code=404)
     except InvalidTransition as exc:

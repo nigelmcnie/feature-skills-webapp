@@ -555,3 +555,100 @@ def test_release_no_broadcast_on_noop(temp_db: Path) -> None:
     assert resp.status_code == 200
     assert resp.json()["changed"] is False
     app.state.broadcaster.broadcast.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# drop handler
+# ---------------------------------------------------------------------------
+
+
+def test_drop_503_no_db() -> None:
+    client = TestClient(create_app(db_path=None))
+    resp = client.post("/api/projects/proj/features/feat/drop")
+    assert resp.status_code == 503
+
+
+def test_drop_200_transitions_to_archived(temp_db: Path) -> None:
+    _seed_bare_feature(temp_db, "feat", status="available")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post("/api/projects/proj/features/feat/drop")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "archived"
+    assert data["changed"] is True
+
+
+def test_drop_200_empty_body_tolerated(temp_db: Path) -> None:
+    _seed_bare_feature(temp_db, "feat", status="available")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post("/api/projects/proj/features/feat/drop", content=b"")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "archived"
+
+
+def test_drop_200_json_object_body_tolerated(temp_db: Path) -> None:
+    _seed_bare_feature(temp_db, "feat", status="available")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post("/api/projects/proj/features/feat/drop", json={})
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "archived"
+
+
+def test_drop_200_noop_when_already_archived(temp_db: Path) -> None:
+    _seed_bare_feature(temp_db, "feat", status="archived")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post("/api/projects/proj/features/feat/drop")
+    assert resp.status_code == 200
+    assert resp.json()["changed"] is False
+
+
+def test_drop_404_missing_feature(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post("/api/projects/proj/features/no-such/drop")
+    assert resp.status_code == 404
+
+
+def test_drop_409_invalid_transition_from_done(temp_db: Path) -> None:
+    _seed_bare_feature(temp_db, "feat", status="done")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post("/api/projects/proj/features/feat/drop")
+    assert resp.status_code == 409
+
+
+def test_drop_400_non_object_body(temp_db: Path) -> None:
+    _seed_bare_feature(temp_db, "feat", status="available")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post("/api/projects/proj/features/feat/drop", json=[])
+    assert resp.status_code == 400
+
+
+def test_drop_400_invalid_json_body(temp_db: Path) -> None:
+    _seed_bare_feature(temp_db, "feat", status="available")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post(
+            "/api/projects/proj/features/feat/drop",
+            content=b"not-json",
+            headers={"Content-Type": "application/json"},
+        )
+    assert resp.status_code == 400
+
+
+def test_drop_broadcasts_on_change(temp_db: Path) -> None:
+    _seed_bare_feature(temp_db, "feat", status="available")
+    app = create_app(db_path=temp_db)
+    with TestClient(app) as client:
+        app.state.broadcaster = MagicMock()
+        resp = client.post("/api/projects/proj/features/feat/drop")
+    assert resp.status_code == 200
+    app.state.broadcaster.broadcast.assert_called_once()
+
+
+def test_drop_no_broadcast_on_noop(temp_db: Path) -> None:
+    _seed_bare_feature(temp_db, "feat", status="archived")
+    app = create_app(db_path=temp_db)
+    with TestClient(app) as client:
+        app.state.broadcaster = MagicMock()
+        resp = client.post("/api/projects/proj/features/feat/drop")
+    assert resp.status_code == 200
+    assert resp.json()["changed"] is False
+    app.state.broadcaster.broadcast.assert_not_called()
