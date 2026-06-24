@@ -507,6 +507,114 @@ aside.comments-rail h3 {
 /* Synthesis doc bottom padding to clear the action bar */
 .synthesis-doc { padding-bottom: 80px; }
 
+/* Data tables: <table> with standard <thead>/<tbody>/<tr>/<th>/<td> */
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0 0 14px;
+  font-size: 0.95rem;
+}
+thead tr {
+  background: var(--surface);
+  border-bottom: 2px solid var(--border-strong);
+}
+th {
+  text-align: left;
+  padding: 8px 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  font-size: 0.88rem;
+}
+td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+tbody tr:last-child td { border-bottom: none; }
+
+/* h4: sub-sub-heading, one level below h3 */
+section h4 {
+  font-size: 0.95rem;
+  margin: 16px 0 6px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+/* Pull quotes and highlighted excerpts */
+blockquote {
+  margin: 14px 0;
+  padding: 10px 16px;
+  border-left: 3px solid var(--accent);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-style: italic;
+  border-radius: 0 4px 4px 0;
+}
+blockquote p:last-child { margin-bottom: 0; }
+
+/* Section separator */
+hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 28px 0;
+}
+
+/* Definition/glossary lists */
+dl { margin: 0 0 14px; }
+dt { font-weight: 600; color: var(--text); margin-top: 10px; }
+dd { margin-left: 20px; color: var(--text-muted); margin-bottom: 4px; }
+
+/* User-story cards: <ol class="stories"> with <li> children carrying .actor/.want/.scenario */
+ol.stories { list-style: none; padding: 0; margin: 0 0 14px; }
+ol.stories > li {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px 16px;
+  margin-bottom: 10px;
+  font-size: 0.93rem;
+  line-height: 1.6;
+}
+.actor { color: var(--accent); font-weight: 600; }
+.want { color: var(--text); }
+.scenario { color: var(--text-muted); font-style: italic; }
+
+/* Alternatives list: <ol class="alternatives"> with .alt-title/.alt-source/.alt-reason per item */
+ol.alternatives { list-style: none; padding: 0; margin: 0 0 14px; }
+ol.alternatives > li {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px 16px;
+  margin-bottom: 10px;
+}
+.alt-title { font-weight: 600; color: var(--text); display: block; margin-bottom: 4px; }
+.alt-source { font-size: 0.85rem; color: var(--text-faint); display: block; margin-bottom: 6px; }
+.alt-reason { color: var(--text-muted); font-size: 0.9rem; }
+
+/* Vision statement callout block */
+.vision-statement {
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-left: 4px solid var(--accent);
+  border-radius: 4px;
+  padding: 16px 20px;
+  margin: 0 0 14px;
+  font-size: 1.05rem;
+  line-height: 1.6;
+}
+
+/* Open-questions list */
+.questions {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px 16px;
+  margin: 0 0 14px;
+}
+
 /* Diff view */
 ins {
   background: rgba(74, 222, 128, 0.18);
