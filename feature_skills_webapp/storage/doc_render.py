@@ -244,6 +244,23 @@ def css_has_brace_error(css: str) -> bool:
     return any(node.type == "error" for node in tinycss2.parse_component_value_list(css))
 
 
+# A literal </style> or <!-- in author CSS would break out of the enclosing
+# <style> element (the </style> closes it; <!-- opens an HTML comment). Matches
+# </style even without the '>' — the HTML parser ends the element on </style\s|>.
+_STYLE_BREAKOUT_RE = re.compile(r"</style|<!--", re.IGNORECASE)
+
+
+def css_has_style_breakout(css: str) -> bool:
+    """True if the CSS contains a literal ``</style>`` or ``<!--``.
+
+    Either would let author CSS escape the ``<style>`` element it is injected
+    into and reach the page chrome. Used to reject section-doc ``extra_css`` at
+    the write boundary (the opaque render path neutralises the same sequences
+    via :func:`_neutralise_css` instead, since those docs are already stored).
+    """
+    return bool(_STYLE_BREAKOUT_RE.search(css))
+
+
 def _drop_css_brace_errors(css: str) -> str:
     """Re-serialise the CSS with stray-brace (error) nodes removed.
 

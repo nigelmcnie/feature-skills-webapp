@@ -8,6 +8,7 @@ from feature_skills_webapp.storage.doc_content import ManifestSpec, ParsedConten
 from feature_skills_webapp.storage.doc_diff import DiffSegment, DocDiff, SectionDiff
 from feature_skills_webapp.storage.doc_render import (
     css_has_brace_error,
+    css_has_style_breakout,
     extract_safe_inner,
     extract_safe_inner_with_css,
     parse_feedback_items,
@@ -614,3 +615,21 @@ def test_css_has_brace_error_tolerates_unclosed_block() -> None:
     # An unclosed block is auto-closed by the tokeniser; it cannot break *out*
     # of an enclosing @scope block, so it is not a bleed risk.
     assert css_has_brace_error("table { color: red") is False
+
+
+# ---------------------------------------------------------------------------
+# css_has_style_breakout — </style> / <!-- detection
+# ---------------------------------------------------------------------------
+
+
+def test_css_has_style_breakout_flags_style_close_tag() -> None:
+    assert css_has_style_breakout("table{color:red} </style><script>x</script>") is True
+    assert css_has_style_breakout("table{color:red} </STYLE >") is True  # case-insensitive, no '>'
+
+
+def test_css_has_style_breakout_flags_comment_open() -> None:
+    assert css_has_style_breakout("table{color:red} <!-- swallow") is True
+
+
+def test_css_has_style_breakout_passes_plain_css() -> None:
+    assert css_has_style_breakout("table { border: 1px solid var(--accent) }") is False

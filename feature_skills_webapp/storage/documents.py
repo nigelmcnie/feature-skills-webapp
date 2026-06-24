@@ -12,7 +12,7 @@ from feature_skills_webapp.storage.doc_content import (
     manifest_for,
     serialise,
 )
-from feature_skills_webapp.storage.doc_render import css_has_brace_error
+from feature_skills_webapp.storage.doc_render import css_has_brace_error, css_has_style_breakout
 from feature_skills_webapp.storage.inbox import humanise_type
 from feature_skills_webapp.storage.versions import current_content, record_version
 from feature_skills_webapp.storage.walker import logical_key, upsert_feature, upsert_project
@@ -108,6 +108,12 @@ def build_content(
         raise SubmitError(
             "'extra_css' has an unmatched '}' — a stray closing brace would let it "
             "break out of the scoped style block and affect the page chrome"
+        )
+
+    if normalised_css and css_has_style_breakout(normalised_css):
+        raise SubmitError(
+            "'extra_css' must not contain '</style>' or '<!--' — either would break "
+            "out of the scoped style block and inject markup into the page chrome"
         )
 
     # Build in manifest order: fixed keys first (present only), then sorted repeated-prefix keys

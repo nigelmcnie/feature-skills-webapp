@@ -483,6 +483,23 @@ def test_build_content_extra_css_with_brace_inside_string_accepted() -> None:
     assert c.extra_css == 'td::before{content:"}"}'
 
 
+def test_build_content_extra_css_with_style_close_tag_rejected() -> None:
+    # A literal </style> would terminate the chrome's <style> element and inject
+    # the rest as live markup — reject it at the write boundary.
+    with pytest.raises(SubmitError, match="</style>"):
+        build_content(
+            "requirements",
+            {"problem": "<p>x</p>"},
+            None,
+            "table{color:red} </style><script>alert(1)</script>",
+        )
+
+
+def test_build_content_extra_css_with_comment_open_rejected() -> None:
+    with pytest.raises(SubmitError, match="</style>"):
+        build_content("requirements", {"problem": "<p>x</p>"}, None, "table{color:red} <!-- x")
+
+
 def _submit(
     conn: sqlite3.Connection, extra_css: str = "", *, now: str = "2024-01-01T00:00:00+00:00"
 ) -> SubmitResult:
