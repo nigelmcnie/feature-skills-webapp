@@ -105,6 +105,50 @@ def test_render_section_doc_empty_manifest_renders_stored_order() -> None:
     assert result.index('"z"') < result.index('"a"')
 
 
+def test_render_section_doc_injects_h2_when_body_has_none() -> None:
+    # Agent-submission API stores inner content with no heading; the renderer
+    # must supply the manifest label as an <h2> so the section has a title.
+    content = ParsedContent(
+        shape="sections",
+        sections=(Section(key="alpha", body="<p>Body of alpha</p>"),),
+    )
+    result = render_section_doc(content, _MANIFEST)
+    assert '<section id="alpha"><h2>Alpha</h2><p>Body of alpha</p></section>' in result
+
+
+def test_render_section_doc_does_not_double_inject_when_body_has_h2() -> None:
+    # Walker-era bodies carry their own (often richer) <h2>; leave them untouched.
+    content = ParsedContent(
+        shape="sections",
+        sections=(Section(key="alpha", body="<h2>Alpha and motivation</h2><p>x</p>"),),
+    )
+    result = render_section_doc(content, _MANIFEST)
+    assert "<h2>Alpha and motivation</h2>" in result
+    assert "<h2>Alpha</h2>" not in result
+    assert result.count("<h2") == 1
+
+
+def test_render_section_doc_injects_h2_with_attributes_left_untouched() -> None:
+    # An existing <h2 class="..."> still counts as a heading — no injection.
+    content = ParsedContent(
+        shape="sections",
+        sections=(Section(key="alpha", body='<h2 class="x">Custom</h2><p>y</p>'),),
+    )
+    result = render_section_doc(content, _MANIFEST)
+    assert result.count("<h2") == 1
+    assert "<h2>Alpha</h2>" not in result
+
+
+def test_render_section_doc_injected_label_humanises_unknown_key() -> None:
+    # Keys outside the manifest (e.g. plan phase-N) get a prettified label.
+    content = ParsedContent(
+        shape="sections",
+        sections=(Section(key="phase-1", body="<p>work</p>"),),
+    )
+    result = render_section_doc(content, _MANIFEST)
+    assert "<h2>Phase 1</h2>" in result
+
+
 # ---------------------------------------------------------------------------
 # extract_safe_inner
 # ---------------------------------------------------------------------------

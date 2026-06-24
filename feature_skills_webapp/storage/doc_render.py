@@ -19,16 +19,26 @@ from feature_skills_webapp.storage.doc_content import (
 )
 from feature_skills_webapp.storage.doc_diff import DiffSegment, DocDiff
 
+# A section heading anywhere in the body means the body carries its own <h2>.
+_H2_RE = re.compile(r"<h2[\s/>]", re.IGNORECASE)
+
 
 def render_section_doc(content: ParsedContent, manifest: ManifestSpec) -> Markup:
     """Return inner HTML for <main>: each stored section wrapped in <section id="{key}">.
 
     Sections are ordered by the manifest's section_labels; keys not in the manifest
-    are rendered last in stored order. Section bodies are already inner content (they
-    carry their own <h2>). Returns markupsafe.Markup so autoescape passes it through.
+    are rendered last in stored order.
+
+    Walker-era bodies carry their own <h2> (authored inside each <section>); the
+    agent-submission API stores only inner content keyed by slug, with no heading.
+    For the latter we inject <h2>{manifest label}</h2> so the section has a visible
+    title and the client-side TOC shows the human label instead of falling back to
+    the raw slug id. Bodies that already contain an <h2> are left untouched (no
+    double heading). Returns markupsafe.Markup so autoescape passes it through.
     """
     sections_by_key = {s.key: s for s in content.sections}
     manifest_keys = [k for k, _ in manifest.section_labels]
+    label_map = dict(manifest.section_labels)
 
     ordered: list[str] = []
     seen: set[str] = set()
@@ -47,7 +57,11 @@ def render_section_doc(content: ParsedContent, manifest: ManifestSpec) -> Markup
     parts: list[str] = []
     for key in ordered:
         section = sections_by_key[key]
-        parts.append(f'<section id="{key}">{section.body}</section>')
+        body = section.body
+        if not _H2_RE.search(body):
+            label = str(escape(humanise_section_key(key, label_map)))
+            body = f"<h2>{label}</h2>{body}"
+        parts.append(f'<section id="{key}">{body}</section>')
 
     return Markup("".join(parts))
 
