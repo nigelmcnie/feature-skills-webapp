@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 from feature_skills_webapp.storage.walker import logical_key, slugify
 
-FEATURE_STATUSES: tuple[str, ...] = ("available", "in_progress", "parked", "done")
+FEATURE_STATUSES: tuple[str, ...] = ("available", "in_progress", "parked", "done", "archived")
 
 
 # ---------------------------------------------------------------------------
@@ -233,6 +233,33 @@ def ship_feature(
         (json.dumps({"project": project, "slug": slug}), now),
     )
     return MutationResult(project, slug, "done", changed=True)
+
+
+def drop_feature(
+    conn: sqlite3.Connection,
+    *,
+    project: str,
+    slug: str,
+    now: str,
+) -> MutationResult:
+    slug = slugify(slug)
+    feat = get_feature(conn, project, slug)
+    if feat is None:
+        raise FeatureNotFound(f"{project}/{slug}")
+    if feat["status"] == "archived":
+        return MutationResult(project, slug, "archived", changed=False)
+    if feat["status"] not in ("available", "in_progress"):
+        raise InvalidTransition(f"cannot drop from {feat['status']!r}")
+    conn.execute(
+        "UPDATE features SET status='archived', updated_at=? WHERE id=?",
+        (now, feat["id"]),
+    )
+    conn.execute(
+        "INSERT INTO events (document_id, event_type, payload_json, created_at) "
+        "VALUES (NULL, 'feature_dropped', ?, ?)",
+        (json.dumps({"project": project, "slug": slug}), now),
+    )
+    return MutationResult(project, slug, "archived", changed=True)
 
 
 # ---------------------------------------------------------------------------
