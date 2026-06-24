@@ -24,3 +24,8 @@ reflect your edits until you act:
 - **Dependency changes** (anything in `pyproject.toml`): reinstall *and* restart,
   or the service crash-loops on `ModuleNotFoundError` —
   `uv tool install --editable . --reinstall && systemctl --user restart feature-skills-webapp`.
+
+**Never run `uv tool install` from a worktree.** The install pins the editable
+source to whichever directory it ran from. If that directory is a worktree, the
+service breaks (500 on every page) when the worktree is removed. Always run
+from the main checkout. To confirm: `cat ~/.local/share/uv/tools/feature-skills-webapp/uv-receipt.toml`.
