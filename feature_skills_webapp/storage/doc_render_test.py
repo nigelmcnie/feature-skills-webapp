@@ -8,6 +8,7 @@ from feature_skills_webapp.storage.doc_content import ManifestSpec, ParsedConten
 from feature_skills_webapp.storage.doc_diff import DiffSegment, DocDiff, SectionDiff
 from feature_skills_webapp.storage.doc_render import (
     extract_safe_inner,
+    extract_safe_inner_with_css,
     parse_feedback_items,
     render_diff,
     render_section_doc,
@@ -484,3 +485,83 @@ def test_render_diff_manifest_ordering() -> None:
     alpha_pos = result.index('id="alpha"')
     beta_pos = result.index('id="beta"')
     assert alpha_pos < beta_pos
+
+
+# ---------------------------------------------------------------------------
+# extract_safe_inner_with_css — scope-and-keep + containment
+# ---------------------------------------------------------------------------
+
+_OPAQUE_WITH_STYLE = """\
+<!DOCTYPE html><html><body>
+<main class="document">
+<style>table { border: 1px solid red }</style>
+<p>Hello</p>
+</main>
+</body></html>
+"""
+
+_OPAQUE_WITH_IMPORT = """\
+<!DOCTYPE html><html><body>
+<main class="document">
+<style>@import url("foo.css"); @charset "UTF-8"; @namespace svg "http://x";
+table { color: blue }</style>
+<p>Content</p>
+</main>
+</body></html>
+"""
+
+_OPAQUE_WITH_SCRIPT = """\
+<!DOCTYPE html><html><body>
+<main class="document">
+<style>p { color: green }</style>
+<script>alert(1)</script>
+<p>Safe</p>
+</main>
+</body></html>
+"""
+
+
+def test_extract_safe_inner_with_css_captures_style_text() -> None:
+    inner, css = extract_safe_inner_with_css(_OPAQUE_WITH_STYLE)
+    assert "table" in css
+    assert "border" in css
+
+
+def test_extract_safe_inner_with_css_style_not_in_body() -> None:
+    inner, _ = extract_safe_inner_with_css(_OPAQUE_WITH_STYLE)
+    assert "<style>" not in str(inner)
+    assert "Hello" in str(inner)
+
+
+def test_extract_safe_inner_with_css_drops_import_charset_namespace() -> None:
+    _, css = extract_safe_inner_with_css(_OPAQUE_WITH_IMPORT)
+    assert "@import" not in css
+    assert "@charset" not in css
+    assert "@namespace" not in css
+    assert "color: blue" in css
+
+
+def test_extract_safe_inner_with_css_still_strips_script() -> None:
+    inner, _ = extract_safe_inner_with_css(_OPAQUE_WITH_SCRIPT)
+    assert "<script>" not in str(inner)
+    assert "alert" not in str(inner)
+    assert "Safe" in str(inner)
+
+
+def test_extract_safe_inner_with_css_neutralises_style_close_tag() -> None:
+    # A literal </style> in the CSS must not terminate the <style> element early.
+    html = (
+        "<!DOCTYPE html><html><body><main class='document'>"
+        "<style>p { color: red } </style> .evil { display:none }</style>"
+        "<p>ok</p></main></body></html>"
+    )
+    _, css = extract_safe_inner_with_css(html)
+    # The literal </style> must have been neutralised, not left as-is.
+    assert "</style>" not in css
+
+
+def test_extract_safe_inner_with_css_no_style_returns_empty_string() -> None:
+    html = "<!DOCTYPE html><html><body><main class='document'><p>x</p></main></body></html>"
+    inner, css = extract_safe_inner_with_css(html)
+    assert css == ""
+    assert "x" in str(inner)

@@ -443,3 +443,79 @@ def test_reconcile_safety_api_doc_not_marked_missing(tmp_path: Path):
         (api_result.document_id,),
     ).fetchall()
     assert missing_events == []
+
+
+# ---------------------------------------------------------------------------
+# extra_css — build_content validation + event exactness
+# ---------------------------------------------------------------------------
+
+
+def test_build_content_extra_css_stored() -> None:
+    c = build_content("requirements", {"problem": "<p>x</p>"}, None, "table{color:red}")
+    assert c.extra_css == "table{color:red}"
+
+
+def test_build_content_extra_css_whitespace_normalises_to_empty() -> None:
+    c = build_content("requirements", {"problem": "<p>x</p>"}, None, "   \n  ")
+    assert c.extra_css == ""
+
+
+def test_build_content_extra_css_absent_is_empty() -> None:
+    c = build_content("requirements", {"problem": "<p>x</p>"}, None, None)
+    assert c.extra_css == ""
+
+
+def test_build_content_extra_css_rejected_for_opaque() -> None:
+    with pytest.raises(SubmitError, match="opaque"):
+        build_content("requirements-feedback", None, "<p>body</p>", "p{color:red}")
+
+
+def _submit(
+    conn: sqlite3.Connection, extra_css: str = "", *, now: str = "2024-01-01T00:00:00+00:00"
+) -> SubmitResult:
+    content = build_content("requirements", {"problem": "<p>x</p>"}, None, extra_css or None)
+    with transaction(conn):
+        return submit_document(
+            conn,
+            project="proj",
+            feature="feat",
+            doc_type="requirements",
+            instance=1,
+            content=content,
+            actor="agent",
+            now=now,
+        )
+
+
+def _events(conn: sqlite3.Connection, doc_id: int, event_type: str) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT id FROM events WHERE document_id=? AND event_type=?",
+        (doc_id, event_type),
+    ).fetchall()
+
+
+def test_extra_css_used_event_on_insert(tmp_path: Path) -> None:
+    conn = temp_conn(tmp_path)
+    result = _submit(conn, "table{border:1px solid red}")
+    assert len(_events(conn, result.document_id, "extra_css_used")) == 1
+
+
+def test_extra_css_used_event_on_change(tmp_path: Path) -> None:
+    conn = temp_conn(tmp_path)
+    _submit(conn, now="2024-01-01T00:00:00+00:00")
+    result = _submit(conn, "p{color:blue}", now="2024-01-02T00:00:00+00:00")
+    assert len(_events(conn, result.document_id, "extra_css_used")) == 1
+
+
+def test_no_extra_css_used_event_when_empty(tmp_path: Path) -> None:
+    conn = temp_conn(tmp_path)
+    result = _submit(conn, "")
+    assert _events(conn, result.document_id, "extra_css_used") == []
+
+
+def test_no_extra_css_used_event_on_identical_reput(tmp_path: Path) -> None:
+    conn = temp_conn(tmp_path)
+    result = _submit(conn, "table{color:red}", now="2024-01-01T00:00:00+00:00")
+    result2 = _submit(conn, "table{color:red}", now="2024-01-02T00:00:00+00:00")
+    assert result2.changed is False
+    assert len(_events(conn, result.document_id, "extra_css_used")) == 1  # only the insert

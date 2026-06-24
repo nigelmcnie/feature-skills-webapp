@@ -484,3 +484,44 @@ def test_static_doc_css_returns_200() -> None:
     assert resp.status_code == 200
     assert "text/css" in resp.headers["content-type"]
     assert "table {" in resp.text
+
+
+# ---------------------------------------------------------------------------
+# extra_css round-trip: PUT with extra_css → GET echoes it → re-PUT identical
+# ---------------------------------------------------------------------------
+
+
+def test_extra_css_round_trips_in_get(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        client.put(
+            _PUT_URL, json={"sections": {"problem": "<p>x</p>"}, "extra_css": "table{color:red}"}
+        )
+        resp = client.get(_GET_URL)
+    assert resp.status_code == 200
+    assert resp.json()["extra_css"] == "table{color:red}"
+
+
+def test_extra_css_identical_reput_no_new_version(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        client.put(
+            _PUT_URL, json={"sections": {"problem": "<p>x</p>"}, "extra_css": "table{color:red}"}
+        )
+        resp = client.put(
+            _PUT_URL, json={"sections": {"problem": "<p>x</p>"}, "extra_css": "table{color:red}"}
+        )
+    assert resp.json()["changed"] is False
+    assert resp.json()["version_num"] == 1
+
+
+def test_extra_css_absent_on_put_echoed_empty(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        client.put(_PUT_URL, json={"sections": {"problem": "<p>x</p>"}})
+        resp = client.get(_GET_URL)
+    assert resp.json()["extra_css"] == ""
+
+
+def test_extra_css_non_string_rejected(temp_db: Path) -> None:
+    client = TestClient(create_app(db_path=temp_db))
+    resp = client.put(_PUT_URL, json={"sections": {"problem": "<p>x</p>"}, "extra_css": 42})
+    assert resp.status_code == 400
+    assert "extra_css" in resp.json()["error"]

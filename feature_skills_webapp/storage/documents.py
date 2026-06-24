@@ -54,14 +54,19 @@ def build_content(
     doc_type: str,
     sections: dict[str, str] | None,
     body: str | None,
+    extra_css: str | None = None,
 ) -> ParsedContent:
     """Validate against manifest_for(doc_type) and build ParsedContent, else SubmitError.
 
-    Opaque docs: require `body`, forbid `sections`.
+    Opaque docs: require `body`, forbid `sections` and `extra_css`.
     Section docs: require `sections`, forbid `body`; reject unknown keys; enforce MAX_BODY_BYTES.
     Sections are stored in manifest order (fixed keys first, then repeated-prefix keys sorted).
+    extra_css: whitespace-only normalises to ""; size-bounded by MAX_BODY_BYTES.
     """
     spec = manifest_for(doc_type)
+
+    # Normalise extra_css: absent/whitespace-only → ""
+    normalised_css = (extra_css or "").strip()
 
     if spec.shape == "opaque":
         if sections is not None:
@@ -70,6 +75,8 @@ def build_content(
             raise SubmitError("'body' is required for opaque doc types")
         if len(body.encode()) > MAX_BODY_BYTES:
             raise SubmitError("'body' exceeds 1 MB")
+        if normalised_css:
+            raise SubmitError("'extra_css' is not accepted for opaque doc types")
         return ParsedContent(shape="opaque", sections=(Section(key="", body=body),))
 
     # sections shape
@@ -93,6 +100,9 @@ def build_content(
         if len(val.encode()) > MAX_BODY_BYTES:
             raise SubmitError(f"section {key!r} exceeds 1 MB")
 
+    if normalised_css and len(normalised_css.encode()) > MAX_BODY_BYTES:
+        raise SubmitError("'extra_css' exceeds 1 MB")
+
     # Build in manifest order: fixed keys first (present only), then sorted repeated-prefix keys
     built: list[Section] = []
     for k in spec.expected_keys:
@@ -101,7 +111,7 @@ def build_content(
     for key in sorted(k for k in sections if any(k.startswith(p) for p in spec.repeated_prefixes)):
         built.append(Section(key=key, body=sections[key]))
 
-    return ParsedContent(shape="sections", sections=tuple(built))
+    return ParsedContent(shape="sections", sections=tuple(built), extra_css=normalised_css)
 
 
 def submit_document(
@@ -151,6 +161,12 @@ def submit_document(
             "VALUES (?, 'created', ?, ?)",
             (doc_id, json.dumps({"type": doc_type, "feature": feature}), now),
         )
+        if content.extra_css:
+            conn.execute(
+                "INSERT INTO events (document_id, event_type, payload_json, created_at) "
+                "VALUES (?, 'extra_css_used', ?, ?)",
+                (doc_id, json.dumps({"type": doc_type, "feature": feature}), now),
+            )
         return SubmitResult(
             document_id=doc_id,
             logical_key=lkey,
@@ -185,6 +201,12 @@ def submit_document(
             "VALUES (?, 'updated', ?, ?)",
             (doc_id, json.dumps({"type": doc_type, "feature": feature}), now),
         )
+        if content.extra_css:
+            conn.execute(
+                "INSERT INTO events (document_id, event_type, payload_json, created_at) "
+                "VALUES (?, 'extra_css_used', ?, ?)",
+                (doc_id, json.dumps({"type": doc_type, "feature": feature}), now),
+            )
         return SubmitResult(
             document_id=doc_id,
             logical_key=lkey,

@@ -13,7 +13,7 @@ from feature_skills_webapp.storage.doc_content import manifest_for
 from feature_skills_webapp.storage.doc_diff import diff_contents
 from feature_skills_webapp.storage.doc_render import (
     FeedbackItem,
-    extract_safe_inner,
+    extract_safe_inner_with_css,
     parse_feedback_items,
     render_diff,
     render_section_doc,
@@ -100,6 +100,7 @@ async def doc_shell(request: Request) -> Response:
 
         # Determine render mode and build body_html
         body_html: Markup = Markup("")
+        scoped_css: str = ""
         mode: str
         feedback_items: list[FeedbackItem] = []
         synthesis_responses: dict[int, str] = {}
@@ -131,7 +132,7 @@ async def doc_shell(request: Request) -> Response:
             if content is None:
                 mode = "raw-fallback"
             elif content.shape == "opaque":
-                body_html = extract_safe_inner(content.sections[0].body)
+                body_html, scoped_css = extract_safe_inner_with_css(content.sections[0].body)
                 mode = "native"
             else:
                 manifest = manifest_for(row["type"])
@@ -155,6 +156,9 @@ async def doc_shell(request: Request) -> Response:
                 else:
                     body_html = render_section_doc(content, manifest)
                     mode = "native"
+                # For section docs in native mode, use extra_css from content
+                if mode == "native":
+                    scoped_css = content.extra_css
 
         comments_prefill: list[dict[str, object]] = []
         if mode == "native" and is_commentable:
@@ -179,6 +183,7 @@ async def doc_shell(request: Request) -> Response:
             "available": available,
             "mode": mode,
             "body_html": body_html,
+            "scoped_css": scoped_css,
             "feedback_items": feedback_items,
             "synthesis_responses": synthesis_responses,
             "synthesis_flags": synthesis_flags,

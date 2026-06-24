@@ -657,3 +657,35 @@ def test_humanise_section_key_unknown_multiword_is_sentence_case() -> None:
 
 def test_humanise_section_key_handles_underscores() -> None:
     assert humanise_section_key("key_decisions", {}) == "Key decisions"
+
+
+# ---------------------------------------------------------------------------
+# extra_css — serialise round-trip and byte-equality stability
+# ---------------------------------------------------------------------------
+
+
+def test_serialise_extra_css_omitted_when_empty() -> None:
+    c = ParsedContent(shape="sections", sections=(Section(key="k", body="<p>x</p>"),))
+    payload = json.loads(serialise(c))
+    assert "extra_css" not in payload
+
+
+def test_serialise_extra_css_present_when_set() -> None:
+    c = ParsedContent(
+        shape="sections",
+        sections=(Section(key="k", body="<p>x</p>"),),
+        extra_css="table { border: 1px solid red }",
+    )
+    payload = json.loads(serialise(c))
+    assert payload["extra_css"] == "table { border: 1px solid red }"
+
+
+def test_serialise_existing_rows_unchanged() -> None:
+    # A ParsedContent with no extra_css must serialise identically to the old format
+    # so no spurious version is cut when existing rows are re-saved.
+    c = ParsedContent(shape="sections", sections=(Section(key="k", body="<p>x</p>"),))
+    serialised = serialise(c)
+    # Must not contain extra_css key at all
+    assert "extra_css" not in serialised
+    # Must be the exact compact JSON that was previously produced
+    assert serialised == '{"shape":"sections","sections":[{"key":"k","body":"<p>x</p>"}]}'

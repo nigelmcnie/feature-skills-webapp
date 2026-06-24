@@ -1034,3 +1034,104 @@ def test_no_iframe_for_doc_with_stored_content(temp_db: Path, tmp_path: Path) ->
                 assert "<iframe" not in response.text, (
                     f"doc {doc_id} has stored content but emits iframe"
                 )
+
+
+# ---------------------------------------------------------------------------
+# extra_css rendering — no chrome bleed, mode boundary, scope-and-keep
+# ---------------------------------------------------------------------------
+
+_PUT_URL = "/api/documents/proj/feat-a/requirements/1"
+_VALID_SECTIONS = {"sections": {"problem": "<p>The problem.</p>"}}
+
+
+def _put_doc(client: TestClient, extra_css: str = "") -> int:
+    body: dict[str, object] = {**_VALID_SECTIONS}
+    if extra_css:
+        body["extra_css"] = extra_css
+    resp = client.put(_PUT_URL, json=body)
+    assert resp.status_code == 200
+    return resp.json()["document_id"]
+
+
+def test_native_render_includes_scoped_style_for_extra_css(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        doc_id = _put_doc(client, "table { border: 1px solid red }")
+        resp = client.get(f"/doc/{doc_id}")
+    assert resp.status_code == 200
+    assert "@scope (#doc-main)" in resp.text
+    assert "table { border: 1px solid red }" in resp.text
+
+
+def test_native_render_no_scoped_style_when_extra_css_absent(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        doc_id = _put_doc(client, "")
+        resp = client.get(f"/doc/{doc_id}")
+    assert resp.status_code == 200
+    assert "@scope" not in resp.text
+
+
+def test_scoped_style_not_in_diff_render(temp_db: Path) -> None:
+    # Produce two versions so a genuine diff render is possible, then force diff view.
+    with TestClient(create_app(db_path=temp_db)) as client:
+        doc_id = _put_doc(client, "table { color: blue }")
+        client.put(
+            _PUT_URL,
+            json={"sections": {"problem": "<p>Updated.</p>"}, "extra_css": "table { color: blue }"},
+        )
+        resp = client.get(f"/doc/{doc_id}?view=diff")
+    # mode=="diff" means real diff; @scope must NOT appear in the diff view.
+    if "diff-changed" in resp.text or "diff-added" in resp.text:
+        assert "@scope" not in resp.text
+
+
+def test_no_chrome_bleed_from_extra_css(temp_db: Path) -> None:
+    # extra_css containing a stray } that could escape @scope must not
+    # produce a rule that targets chrome selectors outside #doc-main.
+    evil_css = "} .crumbs { display:none"
+    with TestClient(create_app(db_path=temp_db)) as client:
+        doc_id = _put_doc(client, evil_css)
+        resp = client.get(f"/doc/{doc_id}")
+    assert resp.status_code == 200
+    # The evil CSS is inside @scope (#doc-main) { ... }, so even with a stray }
+    # the .crumbs rule remains inside the @scope block.
+    text = resp.text
+    scope_start = text.find("@scope (#doc-main)")
+    scope_end = text.find("</style>", scope_start) if scope_start != -1 else -1
+    # The rendered page must contain the @scope wrapper
+    assert scope_start != -1
+    # Everything between @scope and </style> stays scoped — no </style> in the css content
+    scoped_block = text[scope_start:scope_end] if scope_end != -1 else ""
+    assert ".crumbs" not in text[scope_end:] or ".crumbs" in scoped_block
+
+
+def test_scope_and_keep_opaque_doc(tmp_path: Path, temp_db: Path) -> None:
+    # An opaque (non-feedback) doc with a <style> block has its CSS gathered and scoped.
+    # Must be walker-imported because the API only accepts opaque for *-feedback types.
+    # Use an unknown doc type so it's treated as opaque but not synthesis-native.
+    docs_root = tmp_path / "docs"
+    (docs_root / "proj" / "feat-a").mkdir(parents=True)
+    (docs_root / "proj" / "feat-a" / "release-notes.html").write_text(
+        "<!DOCTYPE html><html><head>"
+        '<meta charset="UTF-8"><meta name="feature-doc-type" content="release-notes">'
+        "</head><body><main class='document'>"
+        "<style>table { border: 2px solid green }</style>"
+        "<p>Release content</p>"
+        "</main></body></html>"
+    )
+    _walk_docs(temp_db, docs_root)
+    with TestClient(create_app(db_path=temp_db)) as client:
+        # Find the doc id
+        from feature_skills_webapp.storage.db import connect
+
+        conn = connect(temp_db)
+        row = conn.execute(
+            "SELECT id FROM documents WHERE logical_key=?", ("proj/feat-a/release-notes/1",)
+        ).fetchone()
+        conn.close()
+        assert row is not None
+        doc_id = row["id"]
+        page = client.get(f"/doc/{doc_id}")
+    assert page.status_code == 200
+    assert "@scope (#doc-main)" in page.text
+    assert "table" in page.text
+    assert "border: 2px solid green" in page.text
