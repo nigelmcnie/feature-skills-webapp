@@ -819,6 +819,21 @@ def test_feedback_native_renders_feedback_items(temp_db: Path, tmp_path: Path) -
     assert 'id="synthesis-submit-btn"' in response.text
 
 
+def test_feedback_native_toc_not_server_rendered(temp_db: Path, tmp_path: Path) -> None:
+    # The TOC is built client-side by doc.js buildToc(), which *appends* to
+    # #toc-list. If the template also server-renders entries, the Contents menu
+    # is duplicated. Assert the server leaves #toc-list empty (no TOC anchors),
+    # matching native/diff modes — doc.js is the single source of the TOC.
+    docs_root = _make_feedback_docs_root_with_tiers(tmp_path)
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
+        doc_id = _doc_id_by_type(temp_db, "requirements-feedback")
+        response = client.get(f"/doc/{doc_id}")
+    assert response.status_code == 200
+    assert '<ul id="toc-list"></ul>' in response.text
+    assert "data-toc-id" not in response.text
+
+
 def test_feedback_native_prefill_responses(temp_db: Path, tmp_path: Path) -> None:
     docs_root = _make_feedback_docs_root_with_tiers(tmp_path)
     with TestClient(create_app(db_path=temp_db)) as client:

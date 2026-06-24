@@ -136,13 +136,10 @@
 <div class="layout" id="layout">
   <nav class="toc" aria-label="Document sections">
     <h3>Contents</h3>
-    <ul id="toc-list">
-      {% for tier_key, tier_label in tiers %}
-        {% if feedback_items | selectattr("tier", "equalto", tier_key) | list %}
-        <li><a href="#tier-{{ tier_key }}" data-toc-id="tier-{{ tier_key }}">{{ tier_label }}</a></li>
-        {% endif %}
-      {% endfor %}
-    </ul>
+    <!-- Left empty: doc.js buildToc() populates this from the rendered
+         section[id]s. Server-rendering entries here too would duplicate the
+         menu, since buildToc() appends rather than replaces. -->
+    <ul id="toc-list"></ul>
   </nav>
 
   <main class="document synthesis-doc" id="doc-main">
