@@ -555,3 +555,66 @@ def test_release_no_broadcast_on_noop(temp_db: Path) -> None:
     assert resp.status_code == 200
     assert resp.json()["changed"] is False
     app.state.broadcaster.broadcast.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# park handler
+# ---------------------------------------------------------------------------
+
+
+def test_park_503_no_db() -> None:
+    client = TestClient(create_app(db_path=None))
+    resp = client.post("/api/projects/proj/features/feat/park")
+    assert resp.status_code == 503
+
+
+def test_park_200_transitions_to_parked(temp_db: Path) -> None:
+    _seed_bare_feature(temp_db, "feat", status="available")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post("/api/projects/proj/features/feat/park")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "parked"
+    assert data["changed"] is True
+
+
+def test_park_200_noop_when_already_parked(temp_db: Path) -> None:
+    _seed_bare_feature(temp_db, "feat", status="parked")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post("/api/projects/proj/features/feat/park")
+    assert resp.status_code == 200
+    assert resp.json()["changed"] is False
+
+
+def test_park_404_missing_feature(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post("/api/projects/proj/features/no-such/park")
+    assert resp.status_code == 404
+
+
+def test_park_409_invalid_transition_from_done(temp_db: Path) -> None:
+    _seed_bare_feature(temp_db, "feat", status="done")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post("/api/projects/proj/features/feat/park")
+    assert resp.status_code == 409
+
+
+def test_park_broadcasts_on_change(temp_db: Path) -> None:
+    _seed_bare_feature(temp_db, "feat", status="available")
+    app = create_app(db_path=temp_db)
+    with TestClient(app) as client:
+        app.state.broadcaster = MagicMock()
+        resp = client.post("/api/projects/proj/features/feat/park")
+    assert resp.status_code == 200
+    app.state.broadcaster.broadcast.assert_called_once()
+
+
+def test_park_no_broadcast_on_noop(temp_db: Path) -> None:
+    _seed_bare_feature(temp_db, "feat", status="parked")
+    app = create_app(db_path=temp_db)
+    with TestClient(app) as client:
+        app.state.broadcaster = MagicMock()
+        resp = client.post("/api/projects/proj/features/feat/park")
+    assert resp.status_code == 200
+    assert resp.json()["changed"] is False
+    app.state.broadcaster.broadcast.assert_not_called()

@@ -82,6 +82,26 @@
     </section>
     {% endif %}
 
+    {% if inbox.parked %}
+    <section class="category">
+      <h2>Parked</h2>
+      <ul class="card-list">
+        {% for card in inbox.parked %}
+        <li class="card">
+          <a class="card-project" href="/project/{{ card.project | urlencode }}"
+             aria-label="{{ card.project }}">{{ card.project }}</a>
+          {% if card.feature %}
+          <a class="card-feature" href="/project/{{ card.project | urlencode }}/feature/{{ card.feature | urlencode }}"
+             aria-label="{{ card.feature }}">{{ card.feature }}</a>
+          {% endif %}
+          <span class="card-label badge-{{ card.badge }}">{{ card.label }}</span>
+          {% if card.last_activity %}<span class="card-time">{{ card.last_activity[:10] }}</span>{% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% endif %}
+
     {% if inbox.recently_shipped %}
     <section class="category">
       <h2>Recently shipped</h2>

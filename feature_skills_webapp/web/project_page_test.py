@@ -250,3 +250,44 @@ def test_project_page_does_not_stamp_read_state(temp_db: Path, tmp_path: Path) -
         count = conn.execute("SELECT COUNT(*) AS n FROM read_state").fetchone()["n"]
         conn.close()
     assert count == 0
+
+
+# ---- parked features ----
+
+
+def test_project_page_parked_feature_appears_in_parked_group(temp_db: Path, tmp_path: Path) -> None:
+    docs_root = make_docs_root_available_only(tmp_path)
+    with TestClient(create_app(db_path=temp_db)) as client:
+        client.post("/api/projects/proj1/features/feat-a/capture", json={})
+        client.post("/api/projects/proj1/features/feat-a/park")
+        _walk_docs(temp_db, docs_root)
+        resp = client.get("/project/proj1")
+    assert resp.status_code == 200
+    assert "Parked" in resp.text
+    assert "feat-a" in resp.text
+    # Parked section should appear; Available section should be absent (no available features)
+    assert "In progress" not in resp.text
+
+
+def test_project_page_parked_feature_absent_from_available(temp_db: Path, tmp_path: Path) -> None:
+    docs_root = make_docs_root_multi(tmp_path)
+    with TestClient(create_app(db_path=temp_db)) as client:
+        # feat-active → in_progress, feat-available → park it, feat-done → done
+        client.post("/api/projects/proj1/features/feat-active/capture", json={})
+        client.post("/api/projects/proj1/features/feat-active/claim", json={"owner": "Alice"})
+        client.post("/api/projects/proj1/features/feat-available/capture", json={})
+        client.post("/api/projects/proj1/features/feat-available/park")
+        client.post("/api/projects/proj1/features/feat-done/capture", json={})
+        client.post("/api/projects/proj1/features/feat-done/claim", json={"owner": "Bob"})
+        client.post("/api/projects/proj1/features/feat-done/ship", json={})
+        _walk_docs(temp_db, docs_root)
+        resp = client.get("/project/proj1")
+    assert resp.status_code == 200
+    text = resp.text
+    # feat-available should appear under Parked, not Available
+    parked_idx = text.index("Parked")
+    available_section = text.find("Available")
+    feat_available_idx = text.index("feat-available")
+    assert feat_available_idx > parked_idx
+    # Available section should not exist (no available features)
+    assert available_section == -1

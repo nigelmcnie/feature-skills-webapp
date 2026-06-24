@@ -166,6 +166,24 @@
   </section>
   {% endif %}
 
+  {% if parked %}
+  <section class="feat-group">
+    <h2>Parked</h2>
+    <ul class="feat-list">
+      {% for feat in parked %}
+      <li>
+        <a class="feat-row" href="/project/{{ project | urlencode }}/feature/{{ feat.slug | urlencode }}"
+           aria-label="{{ feat.slug }}">
+          <span class="feat-slug">{{ feat.slug }}</span>
+          {% if feat.owner %}<span class="feat-owner">{{ feat.owner }}</span>{% endif %}
+          {% if feat.last_activity %}<span class="feat-activity">{{ feat.last_activity[:10] }}</span>{% endif %}
+        </a>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
   {% if done %}
   <section class="feat-group done-group">
     <h2>Done</h2>
@@ -184,7 +202,7 @@
   </section>
   {% endif %}
 
-  {% if not in_progress and not available and not done %}
+  {% if not in_progress and not available and not parked and not done %}
   <p style="color: var(--text-faint); font-size: 0.9rem;">No features yet.</p>
   {% endif %}
 

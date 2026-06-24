@@ -70,6 +70,7 @@ class InboxCard:
 class Inbox:
     new_since: list[InboxCard]
     in_progress: list[InboxCard]
+    parked: list[InboxCard]
     recently_shipped: list[InboxCard]
     awaiting_input: list[InboxCard]
 
@@ -77,7 +78,11 @@ class Inbox:
     def is_empty(self) -> bool:
         """True when no category has any cards — drives the inbox's all-empty state."""
         return not (
-            self.new_since or self.in_progress or self.recently_shipped or self.awaiting_input
+            self.new_since
+            or self.in_progress
+            or self.parked
+            or self.recently_shipped
+            or self.awaiting_input
         )
 
 
@@ -231,6 +236,26 @@ def in_progress(conn: sqlite3.Connection, project_id: int | None = None) -> list
     ]
 
 
+def parked(conn: sqlite3.Connection, project_id: int | None = None) -> list[InboxCard]:
+    sql = (
+        "SELECT p.name AS project, f.slug AS feature, "
+        "  (SELECT MAX(e.created_at) FROM events e "
+        "   JOIN documents d ON e.document_id = d.id "
+        "   WHERE d.feature_id = f.id AND d.status='active') AS last_activity "
+        "FROM features f JOIN projects p ON f.project_id = p.id "
+        "WHERE f.status = 'parked'"
+    )
+    params: list[object] = []
+    if project_id is not None:
+        sql += " AND f.project_id = ?"  # noqa: S608
+        params.append(project_id)
+    sql += " ORDER BY COALESCE(last_activity,'') DESC, f.slug"
+    return [
+        _feature_card(r, label="Parked", badge="parked")
+        for r in conn.execute(sql, params).fetchall()
+    ]
+
+
 def recently_shipped(
     conn: sqlite3.Connection,
     project: str | None = None,
@@ -282,11 +307,12 @@ def build_inbox(conn: sqlite3.Connection, project: str | None = None) -> Inbox:
     if project is not None:
         row = conn.execute("SELECT id FROM projects WHERE name = ?", (project,)).fetchone()
         if row is None:
-            return Inbox([], [], [], [])
+            return Inbox([], [], [], [], [])
         project_id = row["id"]
     return Inbox(
         new_since=new_since_last_visit(conn, project_id),
         in_progress=in_progress(conn, project_id),
+        parked=parked(conn, project_id),
         recently_shipped=recently_shipped(conn, project),
         awaiting_input=awaiting_input(conn, project_id),
     )
