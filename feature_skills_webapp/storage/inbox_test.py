@@ -1192,3 +1192,72 @@ def test_new_since_href_plain_for_formatting_only(tmp_path: Path) -> None:
     cards = new_since_last_visit(conn)
     card = next(c for c in cards if c.document_id == doc_id)
     assert card.href == f"/doc/{doc_id}"
+
+
+# ---------------------------------------------------------------------------
+# archived-feature exclusion (new_since_last_visit + awaiting_input)
+# ---------------------------------------------------------------------------
+
+
+def _seed_archived_feature_with_doc(
+    conn: sqlite3.Connection,
+    project_name: str,
+    feature_slug: str,
+    doc_type: str,
+    *,
+    ts: str = "2020-06-01T00:00:00+00:00",
+) -> int:
+    """Seed an archived feature with one active document of the given type.
+
+    Returns the document_id. The document has an unread event so it would
+    surface in new_since_last_visit if the feature were not archived.
+    """
+    conn.execute(
+        "INSERT INTO projects (name, created_at) VALUES (?, ?) ON CONFLICT(name) DO NOTHING",
+        (project_name, ts),
+    )
+    proj_id = conn.execute("SELECT id FROM projects WHERE name = ?", (project_name,)).fetchone()[
+        "id"
+    ]
+    conn.execute(
+        "INSERT INTO features (project_id, slug, status, created_at, updated_at) "
+        "VALUES (?, ?, 'archived', ?, ?) ON CONFLICT(project_id, slug) DO NOTHING",
+        (proj_id, feature_slug, ts, ts),
+    )
+    feat_id = conn.execute(
+        "SELECT id FROM features WHERE project_id = ? AND slug = ?", (proj_id, feature_slug)
+    ).fetchone()["id"]
+    source = f"/docs/{project_name}/{feature_slug}/{doc_type}-1.html"
+    conn.execute(
+        "INSERT INTO documents (project_id, feature_id, type, status, source_path, "
+        "metadata_json, source_mtime, created_at, updated_at) "
+        "VALUES (?, ?, ?, 'active', ?, '{}', ?, ?, ?)",
+        (proj_id, feat_id, doc_type, source, ts, ts, ts),
+    )
+    doc_id = conn.execute("SELECT id FROM documents WHERE source_path = ?", (source,)).fetchone()[
+        "id"
+    ]
+    conn.execute(
+        "INSERT INTO events (document_id, event_type, payload_json, created_at) "
+        "VALUES (?, 'created', '{}', ?)",
+        (doc_id, ts),
+    )
+    return doc_id
+
+
+def test_new_since_excludes_archived_feature_active_doc(tmp_path: Path) -> None:
+    conn = temp_conn(tmp_path)
+    with transaction(conn):
+        doc_id = _seed_archived_feature_with_doc(conn, "proj", "dropped-feat", "context")
+    cards = new_since_last_visit(conn)
+    assert not any(c.document_id == doc_id for c in cards)
+
+
+def test_awaiting_input_excludes_archived_feature_feedback_doc(tmp_path: Path) -> None:
+    conn = temp_conn(tmp_path)
+    with transaction(conn):
+        doc_id = _seed_archived_feature_with_doc(
+            conn, "proj", "dropped-feat", "requirements-feedback"
+        )
+    cards = awaiting_input(conn)
+    assert not any(c.document_id == doc_id for c in cards)

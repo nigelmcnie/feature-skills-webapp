@@ -291,3 +291,37 @@ def test_project_page_parked_feature_absent_from_available(temp_db: Path, tmp_pa
     assert feat_available_idx > parked_idx
     # Available section should not exist (no available features)
     assert available_section == -1
+
+
+# ---- Archived section ----
+
+
+def test_project_page_archived_section_present_with_dropped_feature(
+    temp_db: Path, tmp_path: Path
+) -> None:
+    docs_root = make_docs_root_multi(tmp_path)
+    with TestClient(create_app(db_path=temp_db)) as client:
+        # Set up feat-active (in_progress) and feat-done (done); drop feat-available
+        client.post("/api/projects/proj1/features/feat-active/capture", json={"notes": ""})
+        client.post("/api/projects/proj1/features/feat-active/claim", json={"owner": "Alice"})
+        client.post("/api/projects/proj1/features/feat-available/capture", json={"notes": ""})
+        client.post("/api/projects/proj1/features/feat-done/capture", json={"notes": ""})
+        client.post("/api/projects/proj1/features/feat-done/claim", json={"owner": "Bob"})
+        client.post("/api/projects/proj1/features/feat-done/ship", json={"outcome": "Shipped."})
+        client.post("/api/projects/proj1/features/feat-available/drop")
+        _walk_docs(temp_db, docs_root)
+        resp = client.get("/project/proj1")
+    assert resp.status_code == 200
+    html = resp.text
+    # Archived section is present and contains the dropped slug
+    assert "Archived" in html
+    assert "feat-available" in html
+    # Dropped slug appears after the Archived heading, not in the live groups
+    assert html.index("Archived") < html.index("feat-available")
+    # Available section is absent (no available features remain)
+    assert ">Available<" not in html
+    # The other live groups are still present
+    assert "In progress" in html
+    assert "Done" in html
+    assert "feat-active" in html
+    assert "feat-done" in html

@@ -177,7 +177,7 @@ def new_since_last_visit(
         "FROM documents d "
         "JOIN projects p ON d.project_id = p.id "
         "JOIN features  f ON d.feature_id = f.id "
-        "WHERE d.status = 'active' AND EXISTS ("
+        "WHERE d.status = 'active' AND f.status IS NOT 'archived' AND EXISTS ("
         "  SELECT 1 FROM events e WHERE e.document_id = d.id "
         "  AND e.created_at > COALESCE("
         "    (SELECT last_read_at FROM read_state WHERE document_id = d.id), '')) "
@@ -286,7 +286,7 @@ def awaiting_input(conn: sqlite3.Connection, project_id: int | None = None) -> l
         "FROM documents d "
         "JOIN projects p ON d.project_id = p.id "
         "JOIN features  f ON d.feature_id = f.id "
-        "WHERE d.status = 'active' AND d.type LIKE ? "
+        "WHERE d.status = 'active' AND f.status IS NOT 'archived' AND d.type LIKE ? "
         "  AND NOT EXISTS (SELECT 1 FROM synthesis_responses sr WHERE sr.document_id = d.id)"
     )
     params: list[object] = [f"%{FEEDBACK_SUFFIX}"]

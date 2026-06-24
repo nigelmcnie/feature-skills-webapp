@@ -15,6 +15,7 @@ from feature_skills_webapp.storage.tracker import (
     InvalidTransition,
     capture_feature,
     claim_feature,
+    drop_feature,
     get_feature,
     get_project,
     list_feature_documents,
@@ -809,3 +810,85 @@ def test_normalise_reports_collision_without_mutating(tmp_path: Path) -> None:
     # both rows still present, unchanged
     slugs = {r["slug"] for r in conn.execute("SELECT slug FROM features").fetchall()}
     assert slugs == {"Synthesis verify+retry v2", "synthesis-verify-retry-v2"}
+
+
+# ---------------------------------------------------------------------------
+# drop_feature
+# ---------------------------------------------------------------------------
+
+
+def test_drop_available_transitions_to_archived(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    now = "2024-01-01T00:00:00+00:00"
+    pid = _seed_project(conn, "proj")
+    _seed_feature(conn, pid, "feat", status="available")
+    with transaction(conn):
+        result = drop_feature(conn, project="proj", slug="feat", now=now)
+    assert result.status == "archived"
+    assert result.changed is True
+    feat = get_feature(conn, "proj", "feat")
+    assert feat is not None
+    assert feat["status"] == "archived"
+    event = conn.execute(
+        "SELECT payload_json FROM events WHERE event_type='feature_dropped'"
+    ).fetchone()
+    assert event is not None
+    payload = json.loads(event["payload_json"])
+    assert payload["project"] == "proj"
+    assert payload["slug"] == "feat"
+
+
+def test_drop_in_progress_transitions_to_archived_and_retains_owner(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    now = "2024-01-01T00:00:00+00:00"
+    pid = _seed_project(conn, "proj")
+    _seed_feature(conn, pid, "feat", status="in_progress", owner="Alice")
+    with transaction(conn):
+        result = drop_feature(conn, project="proj", slug="feat", now=now)
+    assert result.status == "archived"
+    assert result.changed is True
+    feat = get_feature(conn, "proj", "feat")
+    assert feat is not None
+    assert feat["status"] == "archived"
+    assert feat["owner"] == "Alice"  # owner retained
+    event = conn.execute(
+        "SELECT event_type FROM events WHERE event_type='feature_dropped'"
+    ).fetchone()
+    assert event is not None
+
+
+def test_drop_done_raises_invalid_transition_no_event(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    now = "2024-01-01T00:00:00+00:00"
+    pid = _seed_project(conn, "proj")
+    _seed_feature(conn, pid, "feat", status="done")
+    before = conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
+    with pytest.raises(InvalidTransition), transaction(conn):
+        drop_feature(conn, project="proj", slug="feat", now=now)
+    after = conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
+    assert after == before  # no event emitted
+    feat = get_feature(conn, "proj", "feat")
+    assert feat is not None
+    assert feat["status"] == "done"  # status unchanged
+
+
+def test_drop_already_archived_is_noop(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    now = "2024-01-01T00:00:00+00:00"
+    pid = _seed_project(conn, "proj")
+    _seed_feature(conn, pid, "feat", status="archived")
+    before = conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
+    with transaction(conn):
+        result = drop_feature(conn, project="proj", slug="feat", now=now)
+    after = conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
+    assert result.changed is False
+    assert result.status == "archived"
+    assert after == before  # no event emitted
+
+
+def test_drop_missing_feature_raises_feature_not_found(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    now = "2024-01-01T00:00:00+00:00"
+    _seed_project(conn, "proj")
+    with pytest.raises(FeatureNotFound), transaction(conn):
+        drop_feature(conn, project="proj", slug="no-such", now=now)
