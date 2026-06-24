@@ -215,7 +215,7 @@ def ship_feature(
         raise FeatureNotFound(f"{project}/{slug}")
     if feat["status"] == "done":
         return MutationResult(project, slug, "done", changed=False)
-    if feat["status"] != "in_progress":
+    if feat["status"] not in ("in_progress", "available"):
         raise InvalidTransition(f"cannot ship from {feat['status']!r}")
     if outcome is not None:
         conn.execute(

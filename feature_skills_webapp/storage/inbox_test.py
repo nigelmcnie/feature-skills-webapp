@@ -567,6 +567,17 @@ def test_recently_shipped_project_filter_by_name(tmp_path: Path) -> None:
     assert cards_b[0].project == "proj-b"
 
 
+def test_recently_shipped_includes_backfilled_available_feature(tmp_path: Path) -> None:
+    conn = temp_conn(tmp_path)
+    now = datetime.now(tz=UTC)
+    ts = (now - timedelta(days=5)).isoformat()
+    with transaction(conn):
+        _insert_shipped_event(conn, "proj", "backfilled-feat", ts)
+    cards = recently_shipped(conn, within_days=30)
+    slugs = {c.feature for c in cards}
+    assert "backfilled-feat" in slugs
+
+
 # --- build_inbox ---
 
 

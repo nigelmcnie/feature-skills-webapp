@@ -449,8 +449,18 @@ def test_ship_404_missing_feature(temp_db: Path) -> None:
     assert resp.status_code == 404
 
 
-def test_ship_409_invalid_transition(temp_db: Path) -> None:
+def test_ship_200_backfill_available_to_done(temp_db: Path) -> None:
     _seed_bare_feature(temp_db, "feat", status="available")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post("/api/projects/proj/features/feat/ship", json={})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "done"
+    assert data["changed"] is True
+
+
+def test_ship_409_invalid_transition_from_parked(temp_db: Path) -> None:
+    _seed_bare_feature(temp_db, "feat", status="parked")
     with TestClient(create_app(db_path=temp_db)) as client:
         resp = client.post("/api/projects/proj/features/feat/ship", json={})
     assert resp.status_code == 409
