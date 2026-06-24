@@ -18,6 +18,7 @@ from feature_skills_webapp.storage.inbox import (
     in_progress,
     mark_new_since_read,
     new_since_last_visit,
+    parked,
     recently_shipped,
 )
 from feature_skills_webapp.storage.versions import record_version
@@ -383,6 +384,76 @@ def test_in_progress_project_filter(tmp_path: Path) -> None:
     assert "feat-a-1" not in slugs_b
 
 
+# --- parked ---
+
+
+def test_parked_returns_only_parked_features(tmp_path: Path) -> None:
+    conn = temp_conn(tmp_path)
+    now = "2024-01-01T00:00:00+00:00"
+    conn.execute("INSERT INTO projects (name, created_at) VALUES ('proj', ?)", (now,))
+    pid = conn.execute("SELECT id FROM projects WHERE name='proj'").fetchone()["id"]
+    for slug, status in [
+        ("feat-parked", "parked"),
+        ("feat-avail", "available"),
+        ("feat-done", "done"),
+    ]:
+        conn.execute(
+            "INSERT INTO features (project_id, slug, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+            (pid, slug, status, now, now),
+        )
+    cards = parked(conn)
+    slugs = {c.feature for c in cards}
+    assert "feat-parked" in slugs
+    assert "feat-avail" not in slugs
+    assert "feat-done" not in slugs
+
+
+def test_parked_badge_is_parked(tmp_path: Path) -> None:
+    conn = temp_conn(tmp_path)
+    now = "2024-01-01T00:00:00+00:00"
+    conn.execute("INSERT INTO projects (name, created_at) VALUES ('proj', ?)", (now,))
+    pid = conn.execute("SELECT id FROM projects WHERE name='proj'").fetchone()["id"]
+    conn.execute(
+        "INSERT INTO features (project_id, slug, status, created_at, updated_at) VALUES (?, 'feat', 'parked', ?, ?)",
+        (pid, now, now),
+    )
+    cards = parked(conn)
+    assert len(cards) == 1
+    assert cards[0].badge == "parked"
+    assert cards[0].label == "Parked"
+
+
+def test_build_inbox_parked_feature_appears_in_parked_not_in_progress(tmp_path: Path) -> None:
+    conn = temp_conn(tmp_path)
+    now = "2024-01-01T00:00:00+00:00"
+    conn.execute("INSERT INTO projects (name, created_at) VALUES ('proj', ?)", (now,))
+    pid = conn.execute("SELECT id FROM projects WHERE name='proj'").fetchone()["id"]
+    conn.execute(
+        "INSERT INTO features (project_id, slug, status, created_at, updated_at) VALUES (?, 'parked-feat', 'parked', ?, ?)",
+        (pid, now, now),
+    )
+    inbox = build_inbox(conn)
+    parked_slugs = {c.feature for c in inbox.parked}
+    in_prog_slugs = {c.feature for c in inbox.in_progress}
+    shipped_slugs = {c.feature for c in inbox.recently_shipped}
+    assert "parked-feat" in parked_slugs
+    assert "parked-feat" not in in_prog_slugs
+    assert "parked-feat" not in shipped_slugs
+
+
+def test_build_inbox_is_empty_false_with_only_parked_feature(tmp_path: Path) -> None:
+    conn = temp_conn(tmp_path)
+    now = "2024-01-01T00:00:00+00:00"
+    conn.execute("INSERT INTO projects (name, created_at) VALUES ('proj', ?)", (now,))
+    pid = conn.execute("SELECT id FROM projects WHERE name='proj'").fetchone()["id"]
+    conn.execute(
+        "INSERT INTO features (project_id, slug, status, created_at, updated_at) VALUES (?, 'feat', 'parked', ?, ?)",
+        (pid, now, now),
+    )
+    inbox = build_inbox(conn)
+    assert not inbox.is_empty
+
+
 # --- recently_shipped ---
 
 
@@ -528,7 +599,7 @@ def test_build_inbox_unknown_project_returns_empty(tmp_path: Path) -> None:
     with transaction(conn):
         _seed(conn)
     inbox = build_inbox(conn, project="no-such-project")
-    assert inbox == Inbox([], [], [], [])
+    assert inbox == Inbox([], [], [], [], [])
     # Verify it's truly empty, not unfiltered
     assert inbox.new_since == []
     assert inbox.in_progress == []

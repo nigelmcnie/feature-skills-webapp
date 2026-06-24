@@ -29,6 +29,7 @@ async def project_page(request: Request) -> Response:
 
     in_progress = [f for f in feats if f["status"] == "in_progress"]
     available = [f for f in feats if f["status"] == "available"]
+    parked = [f for f in feats if f["status"] == "parked"]
     done = [f for f in feats if f["status"] == "done"]
 
     def _feat(f: sqlite3.Row) -> dict[str, object]:
@@ -45,6 +46,7 @@ async def project_page(request: Request) -> Response:
             "project": proj["name"],
             "in_progress": [_feat(f) for f in in_progress],
             "available": [_feat(f) for f in available],
+            "parked": [_feat(f) for f in parked],
             "done": [_feat(f) for f in done],
             "tracker_id": tracker["id"] if tracker else None,
             "findings": findings,

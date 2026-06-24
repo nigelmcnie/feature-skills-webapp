@@ -21,6 +21,7 @@ from feature_skills_webapp.storage.tracker import (
     list_features,
     list_projects,
     normalise_feature_slugs,
+    park_feature,
     release_feature,
     ship_feature,
 )
@@ -572,6 +573,113 @@ def test_release_missing_feature_raises_feature_not_found(tmp_path: Path) -> Non
     _seed_project(conn, "proj")
     with pytest.raises(FeatureNotFound), transaction(conn):
         release_feature(conn, project="proj", slug="no-such", now=now)
+
+
+# ---------------------------------------------------------------------------
+# park_feature
+# ---------------------------------------------------------------------------
+
+
+def test_park_available_transitions_to_parked(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    now = "2024-01-01T00:00:00+00:00"
+    pid = _seed_project(conn, "proj")
+    _seed_feature(conn, pid, "feat", status="available", owner="Alice")
+    with transaction(conn):
+        result = park_feature(conn, project="proj", slug="feat", now=now)
+    assert result.status == "parked"
+    assert result.changed is True
+    feat = get_feature(conn, "proj", "feat")
+    assert feat is not None
+    assert feat["status"] == "parked"
+    assert feat["owner"] is None
+    event = conn.execute(
+        "SELECT payload_json FROM events WHERE event_type='feature_parked'"
+    ).fetchone()
+    assert event is not None
+    payload = json.loads(event["payload_json"])
+    assert payload["owner"] == "Alice"
+    assert payload["project"] == "proj"
+    assert payload["slug"] == "feat"
+
+
+def test_park_in_progress_transitions_to_parked(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    now = "2024-01-01T00:00:00+00:00"
+    pid = _seed_project(conn, "proj")
+    _seed_feature(conn, pid, "feat", status="in_progress", owner="Bob")
+    with transaction(conn):
+        result = park_feature(conn, project="proj", slug="feat", now=now)
+    assert result.status == "parked"
+    assert result.changed is True
+    feat = get_feature(conn, "proj", "feat")
+    assert feat is not None
+    assert feat["status"] == "parked"
+    assert feat["owner"] is None
+    event = conn.execute(
+        "SELECT payload_json FROM events WHERE event_type='feature_parked'"
+    ).fetchone()
+    assert event is not None
+    payload = json.loads(event["payload_json"])
+    assert payload["owner"] == "Bob"
+
+
+def test_park_already_parked_is_noop(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    now = "2024-01-01T00:00:00+00:00"
+    pid = _seed_project(conn, "proj")
+    _seed_feature(conn, pid, "feat", status="parked")
+    before = conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
+    with transaction(conn):
+        result = park_feature(conn, project="proj", slug="feat", now=now)
+    after = conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
+    assert result.changed is False
+    assert result.status == "parked"
+    assert after == before
+
+
+def test_park_done_feature_raises_invalid_transition(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    now = "2024-01-01T00:00:00+00:00"
+    pid = _seed_project(conn, "proj")
+    _seed_feature(conn, pid, "feat", status="done")
+    with pytest.raises(InvalidTransition), transaction(conn):
+        park_feature(conn, project="proj", slug="feat", now=now)
+    feat = get_feature(conn, "proj", "feat")
+    assert feat is not None
+    assert feat["status"] == "done"
+
+
+def test_park_missing_feature_raises_feature_not_found(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    now = "2024-01-01T00:00:00+00:00"
+    _seed_project(conn, "proj")
+    with pytest.raises(FeatureNotFound), transaction(conn):
+        park_feature(conn, project="proj", slug="no-such", now=now)
+
+
+def test_claim_parked_feature_resumes_as_in_progress(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    now = "2024-01-01T00:00:00+00:00"
+    pid = _seed_project(conn, "proj")
+    _seed_feature(conn, pid, "feat", status="parked")
+    with transaction(conn):
+        result = claim_feature(conn, project="proj", slug="feat", owner="Charlie", now=now)
+    assert result.status == "in_progress"
+    assert result.changed is True
+    feat = get_feature(conn, "proj", "feat")
+    assert feat is not None
+    assert feat["status"] == "in_progress"
+    assert feat["owner"] == "Charlie"
+    event = conn.execute(
+        "SELECT event_type FROM events WHERE event_type='feature_claimed'"
+    ).fetchone()
+    assert event is not None
+    # No feature_resumed event — resume reuses feature_claimed
+    resumed = conn.execute(
+        "SELECT event_type FROM events WHERE event_type='feature_resumed'"
+    ).fetchone()
+    assert resumed is None
 
 
 # --- guard: slug normalisation on the mutation/lookup boundary ---

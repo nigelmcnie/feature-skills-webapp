@@ -232,3 +232,16 @@ def test_feature_page_does_not_stamp_read_state(temp_db: Path, tmp_path: Path) -
         count = conn.execute("SELECT COUNT(*) AS n FROM read_state").fetchone()["n"]
         conn.close()
     assert count == 0
+
+
+# ---- parked status ----
+
+
+def test_feature_page_renders_parked_status(temp_db: Path, tmp_path: Path) -> None:
+    docs_root = make_docs_root(tmp_path)
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
+        client.post("/api/projects/proj1/features/feat-a/park")
+        resp = client.get("/project/proj1/feature/feat-a")
+    assert resp.status_code == 200
+    assert "parked" in resp.text

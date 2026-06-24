@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 from feature_skills_webapp.storage.walker import logical_key, slugify
 
-FEATURE_STATUSES: tuple[str, ...] = ("available", "in_progress", "done")
+FEATURE_STATUSES: tuple[str, ...] = ("available", "in_progress", "parked", "done")
 
 
 # ---------------------------------------------------------------------------
@@ -131,7 +131,7 @@ def claim_feature(
         raise FeatureNotFound(f"{project}/{slug}")
     if feat["status"] == "in_progress":
         return MutationResult(project, slug, "in_progress", changed=False)
-    if feat["status"] != "available":
+    if feat["status"] not in ("available", "parked"):
         raise InvalidTransition(f"cannot claim from {feat['status']!r}")
     conn.execute(
         "UPDATE features SET status='in_progress', owner=?, updated_at=? WHERE id=?",
@@ -143,6 +143,34 @@ def claim_feature(
         (json.dumps({"project": project, "slug": slug, "owner": owner}), now),
     )
     return MutationResult(project, slug, "in_progress", changed=True)
+
+
+def park_feature(
+    conn: sqlite3.Connection,
+    *,
+    project: str,
+    slug: str,
+    now: str,
+) -> MutationResult:
+    slug = slugify(slug)
+    feat = get_feature(conn, project, slug)
+    if feat is None:
+        raise FeatureNotFound(f"{project}/{slug}")
+    if feat["status"] == "parked":
+        return MutationResult(project, slug, "parked", changed=False)
+    if feat["status"] == "done":
+        raise InvalidTransition(f"cannot park from {feat['status']!r}")
+    owner = feat["owner"]
+    conn.execute(
+        "UPDATE features SET status='parked', owner=NULL, updated_at=? WHERE id=?",
+        (now, feat["id"]),
+    )
+    conn.execute(
+        "INSERT INTO events (document_id, event_type, payload_json, created_at) "
+        "VALUES (NULL, 'feature_parked', ?, ?)",
+        (json.dumps({"project": project, "slug": slug, "owner": owner}), now),
+    )
+    return MutationResult(project, slug, "parked", changed=True)
 
 
 def release_feature(
