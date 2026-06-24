@@ -4,8 +4,7 @@
 
 | Feature | Owner | Notes |
 |---|---|---|
-| [tracker-drop-verb](docs/features/tracker-drop-verb/requirements.md) | Nigel McNie | Add a durable drop/archive path to the tracker API: capture/claim/ship cannot remove a feature, so a dropped feature lingers as available in the DB and re-surfaces on every features.md merge-export (hit during skills-api-cutover review — synthesis-count-integrity-guard). Options: a drop/archive verb + an archived status the Available bucket excludes, or a delete endpoint. Surfaced by feature-skills-webapp review 2026-06-21. |
-| [tracker-lifecycle-transitions](docs/features/tracker-lifecycle-transitions/context.md) | Nigel | Complete the tracker lifecycle: a non-terminal parked status (deferred-but-alive) and a release/unclaim transition (in_progress->available, the inverse of claim). Both hit while parking a kea feature this session - parking used a doc-body banner, and releasing back to Available needed a hand-edit of the SQLite features row. Distinct from but must reconcile with tracker-drop-verb (terminal drop/archive). See /doc/285. |
+| [tracker-feature-notes-update](docs/features/tracker-feature-notes-update/requirements.md) | Nigel | No way to update an existing feature's tracker note. capture is 409-on-exists; claim/ship do not touch notes; and the document PUT auto-creates the feature row with EMPTY notes, so PUT-before-capture strands a noteless feature. Surfaced building the kea backlog 2026-06-24. |
 
 ## Available
 
@@ -14,9 +13,7 @@
 | retro-recurrence-trend | Split from retro-findings-capture: surface a finding's recurrence depth ("raised in N retros") as an explicit trend and feed it back into the /feature-retro prompt to nudge persistent findings toward becoming tracked features. Design once retro-findings-capture has run in anger. |
 | [event-driven-synthesis-wait](docs/features/event-driven-synthesis-wait/context.md) | Replace the skills' 5s busy-poll of GET /synthesis-response with an event-driven wait (blocking long-poll backed by the existing broadcaster/SSE), so the agent makes one call, idles silently, and wakes on submission — killing the hourly "still polling" re-announce on long waits. |
 | synthesis-count-integrity-guard | Assert the webapp rendered every authored synthesis item before the review/plan/requirements flow treats a blank response as "agreed". Defence-in-depth half of the PR #37 feedback-parser fix (never built); guards the "blank = agreed" assumption as more of the process auto-proceeds. Cross-repo (webapp exposes/validates the parsed count; skills assert it). Surfaced by the agent-submission-api retro. |
-| tracker-feature-notes-update | No way to update an existing feature's tracker note. capture is 409-on-exists; claim/ship do not touch notes; and the document PUT auto-creates the feature row with EMPTY notes, so PUT-before-capture strands a noteless feature. Surfaced building the kea backlog 2026-06-24. |
 | tracker-suggested-order | Model the editorial Suggested order so it is API-updatable, not hand-edited prose in features.md. Today the project-owner ordering that feature-choice reads has no app/skill write path — an agent must hand-edit the features.md prose (the merge-export only preserves it). Surfaced capturing the kea backlog 2026-06-24. |
-| vtest |  |
 
 ## Suggested order
 
@@ -55,3 +52,5 @@ Completed or obsoleted; kept here for context.
 | [webapp-skeleton](docs/features/webapp-skeleton/context.md) | **Shipped.** Supervised Starlette server on `127.0.0.1:8800` with a Jinja placeholder page and a DB-backed `/healthz` readiness check; migrated SQLite carrying the full §4 schema (per-request connections, WAL, `events` SET-NULL audit semantics, FK indexes); systemd user unit with a working crash-loop cap; kea-style test harness (xdist + pytest-socket, per-worker DB). Three phase PRs + one review-fix round; 27 tests, ruff/ty clean. |
 | [skills-api-cutover](docs/features/skills-api-cutover/context.md) | Shipped. |
 | [doc-presentation-contract](docs/features/doc-presentation-contract/context.md) | Shipped. |
+| [tracker-drop-verb](docs/features/tracker-drop-verb/requirements.md) | Shipped. |
+| [tracker-lifecycle-transitions](docs/features/tracker-lifecycle-transitions/context.md) | Shipped. |
