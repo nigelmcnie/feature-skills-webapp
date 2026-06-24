@@ -7,6 +7,8 @@ from markupsafe import Markup
 from feature_skills_webapp.storage.doc_content import ManifestSpec, ParsedContent, Section
 from feature_skills_webapp.storage.doc_diff import DiffSegment, DocDiff, SectionDiff
 from feature_skills_webapp.storage.doc_render import (
+    css_has_brace_error,
+    css_has_style_breakout,
     extract_safe_inner,
     extract_safe_inner_with_css,
     parse_feedback_items,
@@ -565,3 +567,69 @@ def test_extract_safe_inner_with_css_no_style_returns_empty_string() -> None:
     inner, css = extract_safe_inner_with_css(html)
     assert css == ""
     assert "x" in str(inner)
+
+
+def test_extract_safe_inner_with_css_drops_stray_brace_from_legacy_style() -> None:
+    # A malformed opaque <style> with a stray } can't be rejected (the doc is
+    # already stored), so the gathered CSS must have the break-out removed —
+    # what survives stays brace-balanced and therefore inside @scope.
+    html = (
+        "<!DOCTYPE html><html><body><main class='document'>"
+        "<style>} .crumbs { display:none }</style><p>x</p></main></body></html>"
+    )
+    _, css = extract_safe_inner_with_css(html)
+    assert not css_has_brace_error(css)
+
+
+def test_extract_safe_inner_with_css_keeps_brace_inside_string() -> None:
+    # A } inside a string is structural-safe — gathering must not mangle it.
+    html = (
+        "<!DOCTYPE html><html><body><main class='document'>"
+        '<style>td::before { content: "}" }</style><p>x</p></main></body></html>'
+    )
+    _, css = extract_safe_inner_with_css(html)
+    assert "content" in css
+    assert not css_has_brace_error(css)
+
+
+# ---------------------------------------------------------------------------
+# css_has_brace_error — string/comment-aware stray-brace detection
+# ---------------------------------------------------------------------------
+
+
+def test_css_has_brace_error_flags_stray_closing_brace() -> None:
+    assert css_has_brace_error("} .crumbs { display:none }") is True
+    assert css_has_brace_error(".a{} } .crumbs{display:none}") is True
+
+
+def test_css_has_brace_error_passes_well_formed_css() -> None:
+    assert css_has_brace_error("table { border: 1px solid red }") is False
+
+
+def test_css_has_brace_error_ignores_brace_inside_string() -> None:
+    # The } here is part of a CSS string value, not a structural close.
+    assert css_has_brace_error('td::before { content: "}" }') is False
+
+
+def test_css_has_brace_error_tolerates_unclosed_block() -> None:
+    # An unclosed block is auto-closed by the tokeniser; it cannot break *out*
+    # of an enclosing @scope block, so it is not a bleed risk.
+    assert css_has_brace_error("table { color: red") is False
+
+
+# ---------------------------------------------------------------------------
+# css_has_style_breakout — </style> / <!-- detection
+# ---------------------------------------------------------------------------
+
+
+def test_css_has_style_breakout_flags_style_close_tag() -> None:
+    assert css_has_style_breakout("table{color:red} </style><script>x</script>") is True
+    assert css_has_style_breakout("table{color:red} </STYLE >") is True  # case-insensitive, no '>'
+
+
+def test_css_has_style_breakout_flags_comment_open() -> None:
+    assert css_has_style_breakout("table{color:red} <!-- swallow") is True
+
+
+def test_css_has_style_breakout_passes_plain_css() -> None:
+    assert css_has_style_breakout("table { border: 1px solid var(--accent) }") is False

@@ -986,6 +986,24 @@ def test_classify_reason_no_qualifying_events_returns_none(tmp_path: Path) -> No
     assert reason is None
 
 
+def test_classify_reason_extra_css_used_event_is_not_surfaced(tmp_path: Path) -> None:
+    """An `extra_css_used` event alone must NOT re-surface a doc in the inbox.
+
+    The promotion ratchet is write-only telemetry: it is neither a content nor a
+    comment event. This pins the deliberate fall-through so that adding
+    `extra_css_used` to `_CONTENT_EVENTS`/`_COMMENT_EVENTS` later would go red.
+    """
+    conn = temp_conn(tmp_path)
+    T_read = "2020-01-01T00:00:00+00:00"
+    T_event = "2020-06-01T00:00:00+00:00"  # event AFTER the read baseline
+    with transaction(conn):
+        doc_id = _seed_reason_doc(conn)
+        _add_event(conn, doc_id, "extra_css_used", T_event)
+
+    reason = classify_reason(conn, doc_id, "requirements", last_read=T_read)
+    assert reason is None
+
+
 # --- new_since_last_visit: href ---
 
 

@@ -1071,37 +1071,39 @@ def test_native_render_no_scoped_style_when_extra_css_absent(temp_db: Path) -> N
 
 
 def test_scoped_style_not_in_diff_render(temp_db: Path) -> None:
-    # Produce two versions so a genuine diff render is possible, then force diff view.
+    # Pin a GENUINE diff: v1 → read (baseline) → v2 with a real textual change,
+    # then view=diff. The diff-changed assertion fails loudly if it falls back to
+    # native, so the @scope-absent assertion can be unconditional.
     with TestClient(create_app(db_path=temp_db)) as client:
         doc_id = _put_doc(client, "table { color: blue }")
+        client.get(f"/doc/{doc_id}")  # establish the read baseline after v1
         client.put(
             _PUT_URL,
-            json={"sections": {"problem": "<p>Updated.</p>"}, "extra_css": "table { color: blue }"},
+            json={
+                "sections": {"problem": "<p>Genuinely changed text.</p>"},
+                "extra_css": "table { color: blue }",
+            },
         )
         resp = client.get(f"/doc/{doc_id}?view=diff")
-    # mode=="diff" means real diff; @scope must NOT appear in the diff view.
-    if "diff-changed" in resp.text or "diff-added" in resp.text:
-        assert "@scope" not in resp.text
-
-
-def test_no_chrome_bleed_from_extra_css(temp_db: Path) -> None:
-    # extra_css containing a stray } that could escape @scope must not
-    # produce a rule that targets chrome selectors outside #doc-main.
-    evil_css = "} .crumbs { display:none"
-    with TestClient(create_app(db_path=temp_db)) as client:
-        doc_id = _put_doc(client, evil_css)
-        resp = client.get(f"/doc/{doc_id}")
     assert resp.status_code == 200
-    # The evil CSS is inside @scope (#doc-main) { ... }, so even with a stray }
-    # the .crumbs rule remains inside the @scope block.
-    text = resp.text
-    scope_start = text.find("@scope (#doc-main)")
-    scope_end = text.find("</style>", scope_start) if scope_start != -1 else -1
-    # The rendered page must contain the @scope wrapper
-    assert scope_start != -1
-    # Everything between @scope and </style> stays scoped — no </style> in the css content
-    scoped_block = text[scope_start:scope_end] if scope_end != -1 else ""
-    assert ".crumbs" not in text[scope_end:] or ".crumbs" in scoped_block
+    assert 'class="diff-changed"' in resp.text  # a real diff render, not a native fallback
+    assert "@scope" not in resp.text  # scoped style is never injected in diff mode
+
+
+def test_extra_css_with_stray_brace_rejected_at_write(temp_db: Path) -> None:
+    # The chrome-bleed defence is enforced at the write boundary: extra_css with a
+    # stray } (which would close @scope early and let a rule target the chrome) is
+    # rejected, so it can never be stored or rendered. Asserts the observable
+    # outcome (400 + the doc is not created), not the shape of the emitted markup.
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.put(
+            _PUT_URL,
+            json={**_VALID_SECTIONS, "extra_css": "} .crumbs { display:none }"},
+        )
+        assert resp.status_code == 400
+        assert "}" in resp.json()["error"]
+        # The rejected write left no document behind.
+        assert client.get(_PUT_URL).status_code == 404
 
 
 def test_scope_and_keep_opaque_doc(tmp_path: Path, temp_db: Path) -> None:
