@@ -5,9 +5,11 @@ No DB dependency — safe to import and unit-test without any schema.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from html.parser import HTMLParser
 
+import tinycss2
 from markupsafe import Markup, escape
 
 from feature_skills_webapp.storage.doc_content import (
@@ -226,9 +228,34 @@ def extract_safe_inner(html: str) -> Markup:
 
 
 # Unscopable document-level CSS at-rules that must be dropped before @scope wrapping.
-_UNSCOPABLE_AT_RULE_RE = __import__("re").compile(
-    r"@(import|charset|namespace)\b[^;]*;", __import__("re").IGNORECASE
-)
+_UNSCOPABLE_AT_RULE_RE = re.compile(r"@(import|charset|namespace)\b[^;]*;", re.IGNORECASE)
+
+
+def css_has_brace_error(css: str) -> bool:
+    """True if the CSS has a stray/unmatched closing brace.
+
+    Such a brace would let author CSS break out of an enclosing
+    ``@scope (#doc-main) { ... }`` block and bleed into the shell chrome.
+    Uses tinycss2's component-value tokeniser, so braces inside strings or
+    comments (e.g. ``content: "}"``) are correctly ignored and an unclosed
+    block (which cannot break *out*) is tolerated — only a stray ``}`` at the
+    top level surfaces as an error node.
+    """
+    return any(node.type == "error" for node in tinycss2.parse_component_value_list(css))
+
+
+def _drop_css_brace_errors(css: str) -> str:
+    """Re-serialise the CSS with stray-brace (error) nodes removed.
+
+    Best-effort sanitiser for CSS we cannot reject at a write boundary (the
+    gathered ``<style>`` of an already-stored opaque doc): dropping the stray
+    ``}`` token keeps the remaining rules but prevents the break-out, so what
+    survives stays inside the ``@scope`` block.
+    """
+    nodes = tinycss2.parse_component_value_list(css)
+    if not any(node.type == "error" for node in nodes):
+        return css
+    return "".join(node.serialize() for node in nodes if node.type != "error")
 
 
 class _StyleCapturingInnerParser(_SafeInnerParser):
@@ -281,8 +308,6 @@ def _neutralise_css(css: str) -> str:
     stand-ins so they can't terminate the enclosing <style> tag or open an
     HTML comment that swallows subsequent content.
     """
-    import re
-
     css = re.sub(r"</style>", r"<\\/style>", css, flags=re.IGNORECASE)
     css = css.replace("<!--", "<!\\-\\-")
     return css
@@ -303,6 +328,9 @@ def extract_safe_inner_with_css(html: str) -> tuple[Markup, str]:
     raw_css = parser.gathered_css()
     # Drop @import, @charset, @namespace before scoping.
     cleaned = _UNSCOPABLE_AT_RULE_RE.sub("", raw_css).strip()
+    # Drop stray closing braces so a malformed legacy <style> can't break out
+    # of the @scope block (we can't reject it — the doc is already stored).
+    cleaned = _drop_css_brace_errors(cleaned)
     return Markup(parser.result()), _neutralise_css(cleaned)
 
 

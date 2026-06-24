@@ -470,6 +470,19 @@ def test_build_content_extra_css_rejected_for_opaque() -> None:
         build_content("requirements-feedback", None, "<p>body</p>", "p{color:red}")
 
 
+def test_build_content_extra_css_with_stray_brace_rejected() -> None:
+    # A leading/stray } would close the @scope block early and let the rule
+    # bleed into the page chrome — reject it at the write boundary.
+    with pytest.raises(SubmitError, match="unmatched '}'"):
+        build_content("requirements", {"problem": "<p>x</p>"}, None, "} .crumbs { display:none }")
+
+
+def test_build_content_extra_css_with_brace_inside_string_accepted() -> None:
+    # A } inside a CSS string is not a structural brace — must not be rejected.
+    c = build_content("requirements", {"problem": "<p>x</p>"}, None, 'td::before{content:"}"}')
+    assert c.extra_css == 'td::before{content:"}"}'
+
+
 def _submit(
     conn: sqlite3.Connection, extra_css: str = "", *, now: str = "2024-01-01T00:00:00+00:00"
 ) -> SubmitResult:
