@@ -134,6 +134,17 @@ async def get_document(request: Request) -> JSONResponse:
     )
 
 
+_PRESENTATION = {
+    "stylesheet_url": "/static/doc.css",
+    "extra_css": (
+        "Optional top-level field on document writes. Scoped to the document body and"
+        " flagged for review. Base stylesheet rules still apply per-property; extra_css"
+        " layers on top — to adjust an existing rule, match its specificity (or add new"
+        " properties). Use only when the stylesheet vocabulary doesn't cover what you need."
+    ),
+}
+
+
 async def get_manifest(request: Request) -> JSONResponse:
     """Return the section manifest for a doc type. No DB required."""
     doc_type: str = request.path_params["doc_type"]
@@ -144,6 +155,7 @@ async def get_manifest(request: Request) -> JSONResponse:
             "shape": spec.shape,
             "sections": [{"key": k, "label": lbl} for k, lbl in spec.section_labels],
             "repeated_prefixes": list(spec.repeated_prefixes),
+            "presentation": _PRESENTATION,
         }
     )
 

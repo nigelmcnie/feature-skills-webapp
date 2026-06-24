@@ -445,3 +445,42 @@ def test_get_synthesis_503_db_not_configured() -> None:
     client = TestClient(create_app(db_path=None))
     resp = client.get(_SYNTHESIS_URL)
     assert resp.status_code == 503
+
+
+# ---------------------------------------------------------------------------
+# Presentation contract pointer in manifest
+# ---------------------------------------------------------------------------
+
+
+def test_manifest_has_presentation_stylesheet_url() -> None:
+    client = TestClient(create_app(db_path=None))
+    resp = client.get("/api/manifests/requirements")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["presentation"]["stylesheet_url"] == "/static/doc.css"
+
+
+def test_manifest_presentation_extra_css_affordance_present() -> None:
+    client = TestClient(create_app(db_path=None))
+    resp = client.get("/api/manifests/plan")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "extra_css" in data["presentation"]
+    assert isinstance(data["presentation"]["extra_css"], str)
+    assert len(data["presentation"]["extra_css"]) > 0
+
+
+def test_manifest_presentation_consistent_across_doc_types() -> None:
+    client = TestClient(create_app(db_path=None))
+    for doc_type in ("requirements", "plan", "context"):
+        resp = client.get(f"/api/manifests/{doc_type}")
+        assert resp.status_code == 200
+        assert resp.json()["presentation"]["stylesheet_url"] == "/static/doc.css"
+
+
+def test_static_doc_css_returns_200() -> None:
+    client = TestClient(create_app(db_path=None))
+    resp = client.get("/static/doc.css")
+    assert resp.status_code == 200
+    assert "text/css" in resp.headers["content-type"]
+    assert "table {" in resp.text
