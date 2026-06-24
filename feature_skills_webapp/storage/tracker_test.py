@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -20,6 +21,7 @@ from feature_skills_webapp.storage.tracker import (
     list_features,
     list_projects,
     normalise_feature_slugs,
+    release_feature,
     ship_feature,
 )
 
@@ -496,6 +498,80 @@ def test_ship_missing_feature_raises_feature_not_found(tmp_path: Path) -> None:
     _seed_project(conn, "proj")
     with pytest.raises(FeatureNotFound), transaction(conn):
         ship_feature(conn, project="proj", slug="no-such", outcome=None, now=now)
+
+
+# ---------------------------------------------------------------------------
+# release_feature
+# ---------------------------------------------------------------------------
+
+
+def test_release_in_progress_transitions_to_available(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    now = "2024-01-01T00:00:00+00:00"
+    pid = _seed_project(conn, "proj")
+    _seed_feature(conn, pid, "feat", status="in_progress", owner="Alice")
+    with transaction(conn):
+        result = release_feature(conn, project="proj", slug="feat", now=now)
+    assert result.status == "available"
+    assert result.changed is True
+    feat = get_feature(conn, "proj", "feat")
+    assert feat is not None
+    assert feat["status"] == "available"
+    assert feat["owner"] is None
+    event = conn.execute(
+        "SELECT payload_json FROM events WHERE event_type='feature_released'"
+    ).fetchone()
+    assert event is not None
+    payload = json.loads(event["payload_json"])
+    assert payload["owner"] == "Alice"
+    assert payload["project"] == "proj"
+    assert payload["slug"] == "feat"
+
+
+def test_release_already_available_is_noop(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    now = "2024-01-01T00:00:00+00:00"
+    pid = _seed_project(conn, "proj")
+    _seed_feature(conn, pid, "feat", status="available")
+    before = conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
+    with transaction(conn):
+        result = release_feature(conn, project="proj", slug="feat", now=now)
+    after = conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
+    assert result.changed is False
+    assert result.status == "available"
+    assert after == before
+
+
+def test_release_done_feature_raises_invalid_transition(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    now = "2024-01-01T00:00:00+00:00"
+    pid = _seed_project(conn, "proj")
+    _seed_feature(conn, pid, "feat", status="done")
+    before = conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
+    with pytest.raises(InvalidTransition), transaction(conn):
+        release_feature(conn, project="proj", slug="feat", now=now)
+    after = conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
+    assert after == before
+    feat = get_feature(conn, "proj", "feat")
+    assert feat is not None
+    assert feat["status"] == "done"
+
+
+def test_release_parked_feature_raises_invalid_transition(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    now = "2024-01-01T00:00:00+00:00"
+    pid = _seed_project(conn, "proj")
+    _seed_feature(conn, pid, "feat", status="parked")
+    with pytest.raises(InvalidTransition), transaction(conn):
+        release_feature(conn, project="proj", slug="feat", now=now)
+
+
+def test_release_missing_feature_raises_feature_not_found(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    now = "2024-01-01T00:00:00+00:00"
+    _seed_project(conn, "proj")
+    with pytest.raises(FeatureNotFound), transaction(conn):
+        release_feature(conn, project="proj", slug="no-such", now=now)
 
 
 # --- guard: slug normalisation on the mutation/lookup boundary ---

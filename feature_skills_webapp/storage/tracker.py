@@ -145,6 +145,34 @@ def claim_feature(
     return MutationResult(project, slug, "in_progress", changed=True)
 
 
+def release_feature(
+    conn: sqlite3.Connection,
+    *,
+    project: str,
+    slug: str,
+    now: str,
+) -> MutationResult:
+    slug = slugify(slug)
+    feat = get_feature(conn, project, slug)
+    if feat is None:
+        raise FeatureNotFound(f"{project}/{slug}")
+    if feat["status"] == "available":
+        return MutationResult(project, slug, "available", changed=False)
+    if feat["status"] != "in_progress":
+        raise InvalidTransition(f"cannot release from {feat['status']!r}")
+    owner = feat["owner"]
+    conn.execute(
+        "UPDATE features SET status='available', owner=NULL, updated_at=? WHERE id=?",
+        (now, feat["id"]),
+    )
+    conn.execute(
+        "INSERT INTO events (document_id, event_type, payload_json, created_at) "
+        "VALUES (NULL, 'feature_released', ?, ?)",
+        (json.dumps({"project": project, "slug": slug, "owner": owner}), now),
+    )
+    return MutationResult(project, slug, "available", changed=True)
+
+
 def ship_feature(
     conn: sqlite3.Connection,
     *,

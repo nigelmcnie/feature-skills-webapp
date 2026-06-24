@@ -17,6 +17,7 @@ from feature_skills_webapp.storage.tracker import (
     list_feature_documents,
     list_features,
     list_projects,
+    release_feature,
     ship_feature,
 )
 from feature_skills_webapp.web.db_dep import request_conn
@@ -131,6 +132,32 @@ async def claim_handler(request: Request) -> JSONResponse:
     try:
         with request_conn(request.app) as conn, transaction(conn):
             result = claim_feature(conn, project=project, slug=slug, owner=owner, now=now_iso())
+    except FeatureNotFound:
+        return JSONResponse({"error": "feature not found"}, status_code=404)
+    except InvalidTransition as exc:
+        return JSONResponse({"error": str(exc)}, status_code=409)
+
+    if result.changed:
+        request.app.state.broadcaster.broadcast()
+    return JSONResponse(
+        {
+            "project": result.project,
+            "slug": result.slug,
+            "status": result.status,
+            "changed": result.changed,
+        }
+    )
+
+
+async def release_handler(request: Request) -> JSONResponse:
+    if request.app.state.db_path is None:
+        return JSONResponse({"error": "db not configured"}, status_code=503)
+    project = request.path_params["project"]
+    slug = request.path_params["feature"]
+
+    try:
+        with request_conn(request.app) as conn, transaction(conn):
+            result = release_feature(conn, project=project, slug=slug, now=now_iso())
     except FeatureNotFound:
         return JSONResponse({"error": "feature not found"}, status_code=404)
     except InvalidTransition as exc:
