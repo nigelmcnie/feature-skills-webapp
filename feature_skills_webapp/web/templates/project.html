@@ -184,6 +184,21 @@
   </section>
   {% endif %}
 
+  {% if archived %}
+  <details class="feat-group done-group">
+    <summary><h2 style="display:inline">Archived</h2></summary>
+    <ul class="feat-list">
+      {% for feat in archived %}
+      <li><a class="feat-row" href="/project/{{ project | urlencode }}/feature/{{ feat.slug | urlencode }}"
+             aria-label="{{ feat.slug }}">
+        <span class="feat-slug">{{ feat.slug }}</span>
+        {% if feat.owner %}<span class="feat-owner">{{ feat.owner }}</span>{% endif %}
+      </a></li>
+      {% endfor %}
+    </ul>
+  </details>
+  {% endif %}
+
   {% if not in_progress and not available and not done %}
   <p style="color: var(--text-faint); font-size: 0.9rem;">No features yet.</p>
   {% endif %}
