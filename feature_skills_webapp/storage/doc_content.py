@@ -43,6 +43,7 @@ class ParsedContent:
     sections: tuple[Section, ...]
     # shape="sections" with empty sections tuple is the sentinel for "no <main> found"
     # or "zero sections" — the importer logs these but doesn't abort.
+    extra_css: str = ""  # scoped author CSS; default "" keeps existing rows byte-identical
 
 
 @dataclass(frozen=True)
@@ -255,12 +256,14 @@ def serialise(content: ParsedContent) -> str:
     Not semantic normalisation — attribute order and whitespace are preserved
     as authored (via get_starttag_text()), so a resave that only reorders
     attributes would cut a harmless spurious version.
+
+    extra_css is omitted when empty so existing rows' serialised form stays
+    byte-identical and no spurious version is cut on the next save.
     """
-    return json.dumps(
-        {
-            "shape": content.shape,
-            "sections": [{"key": s.key, "body": s.body} for s in content.sections],
-        },
-        separators=(",", ":"),
-        ensure_ascii=False,
-    )
+    payload: dict[str, object] = {
+        "shape": content.shape,
+        "sections": [{"key": s.key, "body": s.body} for s in content.sections],
+    }
+    if content.extra_css:
+        payload["extra_css"] = content.extra_css
+    return json.dumps(payload, separators=(",", ":"), ensure_ascii=False)

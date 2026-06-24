@@ -5,6 +5,7 @@
 {% if mode in ("native", "synthesis-native", "diff") %}
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11/build/styles/atom-one-dark.min.css">
 <link rel="stylesheet" href="/static/doc.css?v={{ css_v }}">
+{% if mode == "native" and scoped_css %}<style>@scope (#doc-main) { {{ scoped_css|safe }} }</style>{% endif %}
 {% else %}
 <style>
   :root { --bar-h: 48px; --bg:#1c1917; --surface:#292524; --border:#44403c;

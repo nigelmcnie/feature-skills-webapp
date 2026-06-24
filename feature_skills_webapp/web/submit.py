@@ -60,9 +60,13 @@ async def put_document(request: Request) -> JSONResponse:
         return JSONResponse({"error": "'actor' must be a string"}, status_code=400)
     actor: str = actor_raw or "agent"
 
+    extra_css_raw = body.get("extra_css")
+    if extra_css_raw is not None and not isinstance(extra_css_raw, str):
+        return JSONResponse({"error": "'extra_css' must be a string"}, status_code=400)
+
     try:
         validate_writable(doc_type, feat, instance)
-        content = build_content(doc_type, body.get("sections"), body.get("body"))
+        content = build_content(doc_type, body.get("sections"), body.get("body"), extra_css_raw)
     except SubmitError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
 
@@ -121,6 +125,7 @@ async def get_document(request: Request) -> JSONResponse:
 
     shape = manifest_for(doc_type).shape if cur is None else cur.shape
     sections = [] if cur is None else [{"key": s.key, "body": s.body} for s in cur.sections]
+    extra_css = "" if cur is None else cur.extra_css
     return JSONResponse(
         {
             "logical_key": lkey,
@@ -128,6 +133,7 @@ async def get_document(request: Request) -> JSONResponse:
             "doc_type": doc_type,
             "shape": shape,
             "sections": sections,
+            "extra_css": extra_css,
             "version_num": ver_row["ver"],
             "url": f"/doc/{doc_id}",
         }

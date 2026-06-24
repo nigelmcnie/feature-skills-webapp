@@ -225,6 +225,87 @@ def extract_safe_inner(html: str) -> Markup:
     return Markup(parser.result())
 
 
+# Unscopable document-level CSS at-rules that must be dropped before @scope wrapping.
+_UNSCOPABLE_AT_RULE_RE = __import__("re").compile(
+    r"@(import|charset|namespace)\b[^;]*;", __import__("re").IGNORECASE
+)
+
+
+class _StyleCapturingInnerParser(_SafeInnerParser):
+    """Like _SafeInnerParser but captures <style> text instead of discarding it.
+
+    <script> and <head> are still stripped. <style> elements are collected into
+    _style_buf; their tags are NOT emitted into the main body buffer.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._in_style: bool = False
+        self._style_depth: int = 0
+        self._style_buf: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        # Intercept <style> before the parent skip logic runs.
+        if self._skip_tag is None and tag == "style":
+            self._in_style = True
+            self._style_depth = 1
+            return
+        if self._in_style:
+            self._style_depth += 1
+            return
+        super().handle_starttag(tag, attrs)
+
+    def handle_endtag(self, tag: str) -> None:
+        if self._in_style:
+            if tag == "style":
+                self._style_depth -= 1
+                if self._style_depth == 0:
+                    self._in_style = False
+            return
+        super().handle_endtag(tag)
+
+    def handle_data(self, data: str) -> None:
+        if self._in_style:
+            self._style_buf.append(data)
+            return
+        super().handle_data(data)
+
+    def gathered_css(self) -> str:
+        return "".join(self._style_buf)
+
+
+def _neutralise_css(css: str) -> str:
+    """Prevent author CSS from breaking out of a <style> element.
+
+    Replaces literal </style> (case-insensitive) and <!-- with harmless
+    stand-ins so they can't terminate the enclosing <style> tag or open an
+    HTML comment that swallows subsequent content.
+    """
+    import re
+
+    css = re.sub(r"</style>", r"<\\/style>", css, flags=re.IGNORECASE)
+    css = css.replace("<!--", "<!\\-\\-")
+    return css
+
+
+def extract_safe_inner_with_css(html: str) -> tuple[Markup, str]:
+    """Return (inner_html, author_css) for an opaque doc body.
+
+    inner_html: inner content of <main class="document"> or <body>, with
+      <script>/<head> stripped and <style> elements removed from the body
+      (their text is captured separately).
+    author_css: gathered <style> text with unscopable at-rules (@import,
+      @charset, @namespace) dropped, and </style>/<!-- neutralised so the
+      CSS is safe to re-emit inside a <style> element.
+    """
+    parser = _StyleCapturingInnerParser()
+    parser.feed(html)
+    raw_css = parser.gathered_css()
+    # Drop @import, @charset, @namespace before scoping.
+    cleaned = _UNSCOPABLE_AT_RULE_RE.sub("", raw_css).strip()
+    return Markup(parser.result()), _neutralise_css(cleaned)
+
+
 @dataclass(frozen=True)
 class FeedbackItem:
     item_num: int

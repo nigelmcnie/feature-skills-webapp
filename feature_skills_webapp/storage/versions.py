@@ -49,6 +49,7 @@ def current_content(conn: sqlite3.Connection, document_id: int) -> ParsedContent
     return ParsedContent(
         shape=data["shape"],
         sections=tuple(Section(key=s["key"], body=s["body"]) for s in data["sections"]),
+        extra_css=data.get("extra_css", ""),
     )
 
 
@@ -71,6 +72,7 @@ def content_at_or_before(
     return ParsedContent(
         shape=data["shape"],
         sections=tuple(Section(key=s["key"], body=s["body"]) for s in data["sections"]),
+        extra_css=data.get("extra_css", ""),
     )
 
 
