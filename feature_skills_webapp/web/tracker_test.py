@@ -725,3 +725,95 @@ def test_drop_no_broadcast_on_noop(temp_db: Path) -> None:
     assert resp.status_code == 200
     assert resp.json()["changed"] is False
     app.state.broadcaster.broadcast.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# note handler
+# ---------------------------------------------------------------------------
+
+
+def _seed_bare_feature_with_notes(db: Path, slug: str, notes: str | None) -> None:
+    conn = connect(db)
+    now = "2024-01-01T00:00:00+00:00"
+    conn.execute("INSERT OR IGNORE INTO projects (name, created_at) VALUES ('proj', ?)", (now,))
+    pid = conn.execute("SELECT id FROM projects WHERE name='proj'").fetchone()["id"]
+    conn.execute(
+        "INSERT INTO features (project_id, slug, status, notes, created_at, updated_at) "
+        "VALUES (?, ?, 'available', ?, ?, ?)",
+        (pid, slug, notes, now, now),
+    )
+    conn.commit()
+    conn.close()
+
+
+def test_note_update_503_no_db() -> None:
+    client = TestClient(create_app(db_path=None))
+    resp = client.post("/api/projects/proj/features/feat/note", json={"notes": "x"})
+    assert resp.status_code == 503
+
+
+def test_note_update_200_changes_note(temp_db: Path) -> None:
+    _seed_bare_feature_with_notes(temp_db, "feat", "old note")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post(
+            "/api/projects/proj/features/feat/note",
+            json={"notes": "new note"},
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["project"] == "proj"
+    assert data["slug"] == "feat"
+    assert data["status"] == "available"
+    assert data["changed"] is True
+
+
+def test_note_update_404_missing_feature(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post(
+            "/api/projects/proj/features/no-such/note",
+            json={"notes": "x"},
+        )
+    assert resp.status_code == 404
+
+
+def test_note_update_400_missing_notes_key(temp_db: Path) -> None:
+    _seed_bare_feature(temp_db, "feat")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post("/api/projects/proj/features/feat/note", json={})
+    assert resp.status_code == 400
+    assert "notes" in resp.json()["error"]
+
+
+def test_note_update_400_non_string_notes(temp_db: Path) -> None:
+    _seed_bare_feature(temp_db, "feat")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post("/api/projects/proj/features/feat/note", json={"notes": 5})
+    assert resp.status_code == 400
+
+
+def test_note_update_400_non_object_body(temp_db: Path) -> None:
+    _seed_bare_feature(temp_db, "feat")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post("/api/projects/proj/features/feat/note", json=[])
+    assert resp.status_code == 400
+
+
+def test_note_update_broadcasts_on_change(temp_db: Path) -> None:
+    _seed_bare_feature_with_notes(temp_db, "feat", "old")
+    app = create_app(db_path=temp_db)
+    with TestClient(app) as client:
+        app.state.broadcaster = MagicMock()
+        resp = client.post("/api/projects/proj/features/feat/note", json={"notes": "new"})
+    assert resp.status_code == 200
+    app.state.broadcaster.broadcast.assert_called_once()
+
+
+def test_note_update_no_broadcast_on_noop(temp_db: Path) -> None:
+    _seed_bare_feature_with_notes(temp_db, "feat", "same")
+    app = create_app(db_path=temp_db)
+    with TestClient(app) as client:
+        app.state.broadcaster = MagicMock()
+        resp = client.post("/api/projects/proj/features/feat/note", json={"notes": "same"})
+    assert resp.status_code == 200
+    assert resp.json()["changed"] is False
+    app.state.broadcaster.broadcast.assert_not_called()

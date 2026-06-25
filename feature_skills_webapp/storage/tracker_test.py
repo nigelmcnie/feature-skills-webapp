@@ -25,6 +25,7 @@ from feature_skills_webapp.storage.tracker import (
     park_feature,
     release_feature,
     ship_feature,
+    update_feature_note,
 )
 
 
@@ -892,3 +893,94 @@ def test_drop_missing_feature_raises_feature_not_found(tmp_path: Path) -> None:
     _seed_project(conn, "proj")
     with pytest.raises(FeatureNotFound), transaction(conn):
         drop_feature(conn, project="proj", slug="no-such", now=now)
+
+
+# ---------------------------------------------------------------------------
+# update_feature_note
+# ---------------------------------------------------------------------------
+
+
+def test_update_feature_note_changes_note_and_emits_event(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    now = "2024-01-01T00:00:00+00:00"
+    pid = _seed_project(conn, "proj")
+    _seed_feature(conn, pid, "feat", status="available", notes="old")
+    with transaction(conn):
+        result = update_feature_note(conn, project="proj", slug="feat", notes="new", now=now)
+    assert result.changed is True
+    assert result.status == "available"
+    feat = get_feature(conn, "proj", "feat")
+    assert feat is not None
+    assert feat["notes"] == "new"
+    event = conn.execute(
+        "SELECT event_type FROM events WHERE event_type='feature_note_updated'"
+    ).fetchone()
+    assert event is not None
+
+
+def test_update_feature_note_identical_is_noop(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    now = "2024-01-01T00:00:00+00:00"
+    pid = _seed_project(conn, "proj")
+    _seed_feature(conn, pid, "feat", notes="same")
+    before = conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
+    with transaction(conn):
+        result = update_feature_note(conn, project="proj", slug="feat", notes="same", now=now)
+    after = conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
+    assert result.changed is False
+    assert after == before
+
+
+def test_update_feature_note_done_preserves_status(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    now = "2024-01-01T00:00:00+00:00"
+    pid = _seed_project(conn, "proj")
+    _seed_feature(conn, pid, "feat", status="done", notes="old")
+    with transaction(conn):
+        result = update_feature_note(conn, project="proj", slug="feat", notes="updated", now=now)
+    assert result.changed is True
+    assert result.status == "done"
+    feat = get_feature(conn, "proj", "feat")
+    assert feat is not None
+    assert feat["status"] == "done"
+    assert feat["notes"] == "updated"
+
+
+def test_update_feature_note_missing_raises_feature_not_found(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    now = "2024-01-01T00:00:00+00:00"
+    _seed_project(conn, "proj")
+    with pytest.raises(FeatureNotFound), transaction(conn):
+        update_feature_note(conn, project="proj", slug="no-such", notes="x", now=now)
+
+
+def test_update_feature_note_fills_null(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    now = "2024-01-01T00:00:00+00:00"
+    pid = _seed_project(conn, "proj")
+    _seed_feature(conn, pid, "feat", notes=None)
+    with transaction(conn):
+        result = update_feature_note(conn, project="proj", slug="feat", notes="filled", now=now)
+    assert result.changed is True
+    feat = get_feature(conn, "proj", "feat")
+    assert feat is not None
+    assert feat["notes"] == "filled"
+
+
+def test_update_feature_note_empty_clears_and_empty_again_is_noop(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    now = "2024-01-01T00:00:00+00:00"
+    pid = _seed_project(conn, "proj")
+    _seed_feature(conn, pid, "feat", notes="something")
+    with transaction(conn):
+        result = update_feature_note(conn, project="proj", slug="feat", notes="", now=now)
+    assert result.changed is True
+    feat = get_feature(conn, "proj", "feat")
+    assert feat is not None
+    assert feat["notes"] == ""
+    before = conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
+    with transaction(conn):
+        result2 = update_feature_note(conn, project="proj", slug="feat", notes="", now=now)
+    after = conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
+    assert result2.changed is False
+    assert after == before
