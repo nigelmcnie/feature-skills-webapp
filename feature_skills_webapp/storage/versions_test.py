@@ -10,6 +10,7 @@ from feature_skills_webapp.storage.doc_content import ParsedContent, Section
 from feature_skills_webapp.storage.versions import (
     backfill_logical_keys,
     content_at_or_before,
+    content_at_version,
     current_content,
     record_version,
 )
@@ -186,6 +187,37 @@ def test_content_at_or_before_none_when_baseline_before_all_versions(tmp_path: P
     doc_id = _seed_doc(conn)
     record_version(conn, doc_id, _make_content("v1"), actor="test", now="2025-06-01T00:00:00+00:00")
     assert content_at_or_before(conn, doc_id, "2025-01-01T00:00:00+00:00") is None
+
+
+# --- content_at_version ---
+
+
+def test_content_at_version_none_for_none_version_num(tmp_path: Path) -> None:
+    conn = _temp_conn(tmp_path)
+    doc_id = _seed_doc(conn)
+    record_version(conn, doc_id, _make_content("v1"), actor="test", now=now_iso())
+    assert content_at_version(conn, doc_id, None) is None
+
+
+def test_content_at_version_none_for_missing_version(tmp_path: Path) -> None:
+    conn = _temp_conn(tmp_path)
+    doc_id = _seed_doc(conn)
+    record_version(conn, doc_id, _make_content("v1"), actor="test", now=now_iso())
+    assert content_at_version(conn, doc_id, 99) is None
+
+
+def test_content_at_version_returns_correct_version(tmp_path: Path) -> None:
+    conn = _temp_conn(tmp_path)
+    doc_id = _seed_doc(conn)
+    t = now_iso()
+    record_version(conn, doc_id, _make_content("v1"), actor="test", now=t)
+    record_version(conn, doc_id, _make_content("v2"), actor="test", now=t)
+    got1 = content_at_version(conn, doc_id, 1)
+    assert got1 is not None
+    assert got1.sections[0].body == "<p>v1</p>"
+    got2 = content_at_version(conn, doc_id, 2)
+    assert got2 is not None
+    assert got2.sections[0].body == "<p>v2</p>"
 
 
 def test_current_content_round_trips_opaque(tmp_path: Path) -> None:
@@ -458,3 +490,25 @@ def test_backfill_repoints_comments_to_survivor(tmp_path: Path) -> None:
     assert len(rows) == 1
     assert rows[0]["document_id"] == survivor_id
     assert rows[0]["text"] == "a note"
+
+
+def test_backfill_merge_carries_acked_version(tmp_path: Path) -> None:
+    """_merge_read_state takes MAX(acked_version) so the higher baseline survives the merge."""
+    conn = _conn_no_backfill(tmp_path)
+    survivor_id, loser_id = _seed_collision_pair(conn)
+    # Give both rows a read_state, with different acked_versions.
+    conn.execute(
+        "INSERT INTO read_state (document_id, last_read_at, acked_version) VALUES (?, ?, ?)",
+        (survivor_id, "2026-01-01T00:00:00+00:00", 1),
+    )
+    conn.execute(
+        "INSERT INTO read_state (document_id, last_read_at, acked_version) VALUES (?, ?, ?)",
+        (loser_id, "2026-01-02T00:00:00+00:00", 3),
+    )
+    backfill_logical_keys(conn)
+    row = conn.execute(
+        "SELECT acked_version FROM read_state WHERE document_id=?", (survivor_id,)
+    ).fetchone()
+    assert row is not None
+    # Loser had acked_version=3, which is higher — it must win the MAX merge.
+    assert row["acked_version"] == 3

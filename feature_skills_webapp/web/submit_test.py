@@ -525,3 +525,44 @@ def test_extra_css_non_string_rejected(temp_db: Path) -> None:
     resp = client.put(_PUT_URL, json={"sections": {"summary": "<p>x</p>"}, "extra_css": 42})
     assert resp.status_code == 400
     assert "extra_css" in resp.json()["error"]
+
+
+# ---------------------------------------------------------------------------
+# url field: ?view=diff for updates
+# ---------------------------------------------------------------------------
+
+
+def test_put_url_plain_for_created_doc(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.put(_PUT_URL, json=_VALID_BODY)
+    data = resp.json()
+    assert data["created"] is True
+    assert data["url"] == f"/doc/{data['document_id']}"
+
+
+def test_put_url_diff_view_for_update(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        client.put(_PUT_URL, json=_VALID_BODY)
+        resp = client.put(_PUT_URL, json={"sections": {"summary": "<p>Updated.</p>"}})
+    data = resp.json()
+    assert data["created"] is False
+    assert data["url"] == f"/doc/{data['document_id']}?view=diff"
+
+
+def test_get_document_url_plain_for_single_version(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        client.put(_PUT_URL, json=_VALID_BODY)
+        resp = client.get(_GET_URL)
+    data = resp.json()
+    assert data["version_num"] == 1
+    assert data["url"] == f"/doc/{data['document_id']}"
+
+
+def test_get_document_url_diff_view_for_multi_version(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        client.put(_PUT_URL, json=_VALID_BODY)
+        client.put(_PUT_URL, json={"sections": {"summary": "<p>Updated.</p>"}})
+        resp = client.get(_GET_URL)
+    data = resp.json()
+    assert data["version_num"] == 2
+    assert data["url"] == f"/doc/{data['document_id']}?view=diff"

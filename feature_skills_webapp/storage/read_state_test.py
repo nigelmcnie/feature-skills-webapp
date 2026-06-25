@@ -7,9 +7,13 @@ from datetime import datetime
 from pathlib import Path
 
 from feature_skills_webapp.storage.db import connect, migrate, now_iso
+from feature_skills_webapp.storage.doc_content import ParsedContent, Section
 from feature_skills_webapp.storage.read_state import (
+    acked_version,
+    has_unreviewed_changes,
     last_read_at,
     mark_all_read,
+    mark_diff_seen,
     mark_documents_read,
     mark_read,
     unread_document_ids,
@@ -303,3 +307,138 @@ def test_last_read_at_reflects_latest_after_double_mark(tmp_path: Path) -> None:
     assert first is not None
     assert second is not None
     assert second >= first
+
+
+# --- acked_version ---
+
+
+def test_acked_version_returns_none_for_no_row(tmp_path: Path) -> None:
+    conn = temp_conn(tmp_path)
+    with conn:
+        ids = _seed(conn)
+    assert acked_version(conn, ids["doc_a"]) is None
+
+
+def test_acked_version_returns_set_value(tmp_path: Path) -> None:
+    conn = temp_conn(tmp_path)
+    with conn:
+        ids = _seed(conn)
+    conn.execute(
+        "INSERT INTO read_state (document_id, last_read_at, acked_version) VALUES (?, ?, 3)",
+        (ids["doc_a"], "2026-01-01T00:00:00+00:00"),
+    )
+    assert acked_version(conn, ids["doc_a"]) == 3
+
+
+# --- mark_diff_seen ---
+
+
+def _make_content() -> ParsedContent:
+    return ParsedContent(shape="sections", sections=(Section(key="overview", body="<p>x</p>"),))
+
+
+def test_mark_diff_seen_inserts_row_with_max_version(tmp_path: Path) -> None:
+    from feature_skills_webapp.storage.versions import record_version
+
+    conn = temp_conn(tmp_path)
+    with conn:
+        ids = _seed(conn)
+    record_version(
+        conn, ids["doc_a"], _make_content(), actor="test", now="2026-01-01T00:00:00+00:00"
+    )
+    record_version(
+        conn, ids["doc_a"], _make_content(), actor="test", now="2026-01-02T00:00:00+00:00"
+    )
+    mark_diff_seen(conn, ids["doc_a"])
+    assert acked_version(conn, ids["doc_a"]) == 2
+
+
+def test_mark_diff_seen_updates_existing_acked_version(tmp_path: Path) -> None:
+    from feature_skills_webapp.storage.versions import record_version
+
+    conn = temp_conn(tmp_path)
+    with conn:
+        ids = _seed(conn)
+    record_version(
+        conn, ids["doc_a"], _make_content(), actor="test", now="2026-01-01T00:00:00+00:00"
+    )
+    mark_diff_seen(conn, ids["doc_a"])
+    assert acked_version(conn, ids["doc_a"]) == 1
+    record_version(
+        conn, ids["doc_a"], _make_content(), actor="test", now="2026-01-02T00:00:00+00:00"
+    )
+    mark_diff_seen(conn, ids["doc_a"])
+    assert acked_version(conn, ids["doc_a"]) == 2
+
+
+def test_mark_diff_seen_no_versions_sets_zero(tmp_path: Path) -> None:
+    conn = temp_conn(tmp_path)
+    with conn:
+        ids = _seed(conn)
+    mark_diff_seen(conn, ids["doc_a"])
+    # No versions → MAX(version_num) is NULL, COALESCE(..., 0) = 0 → stored as 0
+    row = conn.execute(
+        "SELECT acked_version FROM read_state WHERE document_id=?", (ids["doc_a"],)
+    ).fetchone()
+    assert row is not None
+    assert row["acked_version"] == 0
+
+
+# --- has_unreviewed_changes ---
+
+
+def test_has_unreviewed_changes_false_when_no_versions(tmp_path: Path) -> None:
+    conn = temp_conn(tmp_path)
+    with conn:
+        ids = _seed(conn)
+    assert has_unreviewed_changes(conn, ids["doc_a"]) is False
+
+
+def test_has_unreviewed_changes_true_when_acked_behind_latest(tmp_path: Path) -> None:
+    from feature_skills_webapp.storage.versions import record_version
+
+    conn = temp_conn(tmp_path)
+    with conn:
+        ids = _seed(conn)
+    record_version(
+        conn, ids["doc_a"], _make_content(), actor="test", now="2026-01-01T00:00:00+00:00"
+    )
+    record_version(
+        conn, ids["doc_a"], _make_content(), actor="test", now="2026-01-02T00:00:00+00:00"
+    )
+    conn.execute(
+        "INSERT INTO read_state (document_id, last_read_at, acked_version) VALUES (?, ?, 1)",
+        (ids["doc_a"], "2026-01-01T00:00:00+00:00"),
+    )
+    assert has_unreviewed_changes(conn, ids["doc_a"]) is True
+
+
+def test_has_unreviewed_changes_false_when_acked_equals_latest(tmp_path: Path) -> None:
+    from feature_skills_webapp.storage.versions import record_version
+
+    conn = temp_conn(tmp_path)
+    with conn:
+        ids = _seed(conn)
+    record_version(
+        conn, ids["doc_a"], _make_content(), actor="test", now="2026-01-01T00:00:00+00:00"
+    )
+    record_version(
+        conn, ids["doc_a"], _make_content(), actor="test", now="2026-01-02T00:00:00+00:00"
+    )
+    conn.execute(
+        "INSERT INTO read_state (document_id, last_read_at, acked_version) VALUES (?, ?, 2)",
+        (ids["doc_a"], "2026-01-02T00:00:00+00:00"),
+    )
+    assert has_unreviewed_changes(conn, ids["doc_a"]) is False
+
+
+def test_has_unreviewed_changes_true_when_no_read_state_and_has_versions(tmp_path: Path) -> None:
+    from feature_skills_webapp.storage.versions import record_version
+
+    conn = temp_conn(tmp_path)
+    with conn:
+        ids = _seed(conn)
+    record_version(
+        conn, ids["doc_a"], _make_content(), actor="test", now="2026-01-01T00:00:00+00:00"
+    )
+    assert has_unreviewed_changes(conn, ids["doc_a"]) is True

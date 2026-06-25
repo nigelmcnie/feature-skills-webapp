@@ -9,8 +9,13 @@ from typing import Literal
 
 from feature_skills_webapp.storage.doc_content import humanise_section_key, manifest_for
 from feature_skills_webapp.storage.doc_diff import diff_contents
-from feature_skills_webapp.storage.read_state import last_read_at, mark_documents_read
-from feature_skills_webapp.storage.versions import content_at_or_before, current_content
+from feature_skills_webapp.storage.read_state import (
+    UNREVIEWED_CHANGES_SQL,
+    acked_version,
+    last_read_at,
+    mark_documents_read,
+)
+from feature_skills_webapp.storage.versions import content_at_version, current_content
 from feature_skills_webapp.storage.walker import FEEDBACK_SUFFIX
 
 SHIPPED_RECENT_DAYS = 30
@@ -117,7 +122,6 @@ def _shipped_card(r: sqlite3.Row) -> InboxCard:
     )
 
 
-_CONTENT_EVENTS = frozenset({"created", "updated", "reactivated"})
 _COMMENT_EVENTS = frozenset({"comment_submitted", "comment_integrated"})
 
 
@@ -126,20 +130,19 @@ def classify_reason(
 ) -> InboxReason | None:
     """Classify why a doc re-surfaced in the inbox.
 
-    Returns the reason, or None if no qualifying events exist beyond the baseline.
+    Checks version state first (acked_version vs latest), then falls through to
+    comment events keyed off last_read_at. Returns None if no qualifying reason.
     """
-    baseline = last_read or ""
-    rows = conn.execute(
-        "SELECT event_type FROM events WHERE document_id = ? AND created_at > ?",
-        (document_id, baseline),
-    ).fetchall()
-    if not rows:
-        return None
+    acked = acked_version(conn, document_id)
+    latest_row = conn.execute(
+        "SELECT COALESCE(MAX(version_num), 0) AS latest "
+        "FROM document_versions WHERE document_id = ?",
+        (document_id,),
+    ).fetchone()
+    latest = latest_row["latest"] if latest_row else 0
 
-    event_types = {r["event_type"] for r in rows}
-
-    if event_types & _CONTENT_EVENTS:
-        prior = content_at_or_before(conn, document_id, baseline)
+    if latest > (acked or 0):
+        prior = content_at_version(conn, document_id, acked)
         if prior is None:
             return InboxReason(kind="new", label="New")
         curr = current_content(conn, document_id)
@@ -161,9 +164,17 @@ def classify_reason(
             label = "Updated — " + ", ".join(names) + f" +{n - 2} more"
         return InboxReason(kind="content", label=label, changed_count=n, has_diff=True)
 
+    # Fall through: check for comment events since last_read_at.
+    baseline = last_read or ""
+    rows = conn.execute(
+        "SELECT event_type FROM events WHERE document_id = ? AND created_at > ?",
+        (document_id, baseline),
+    ).fetchall()
+    if not rows:
+        return None
+    event_types = {r["event_type"] for r in rows}
     if event_types & _COMMENT_EVENTS:
         return InboxReason(kind="comments", label="Comments added")
-
     return None
 
 
@@ -177,10 +188,12 @@ def new_since_last_visit(
         "FROM documents d "
         "JOIN projects p ON d.project_id = p.id "
         "JOIN features  f ON d.feature_id = f.id "
-        "WHERE d.status = 'active' AND f.status IS NOT 'archived' AND EXISTS ("
+        "WHERE d.status = 'active' AND f.status IS NOT 'archived' "
+        "AND ( EXISTS ("
         "  SELECT 1 FROM events e WHERE e.document_id = d.id "
         "  AND e.created_at > COALESCE("
-        "    (SELECT last_read_at FROM read_state WHERE document_id = d.id), '')) "
+        "    (SELECT last_read_at FROM read_state WHERE document_id = d.id), ''))"
+        f" OR {UNREVIEWED_CHANGES_SQL} ) "  # noqa: S608
         "AND NOT (d.type LIKE ? AND NOT EXISTS ("
         "  SELECT 1 FROM synthesis_responses sr WHERE sr.document_id = d.id))"
     )

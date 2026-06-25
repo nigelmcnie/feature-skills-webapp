@@ -91,6 +91,7 @@
 
   <main class="document" id="doc-main">
     {% if no_diff_note %}<p class="diff-note">{{ no_diff_note }}</p>{% endif %}
+    {% if unreviewed_banner %}<p class="diff-note">This document changed since you last reviewed it. <a href="/doc/{{ doc_id }}?view=diff">View changes</a></p>{% endif %}
     {{ body_html }}
   </main>
 

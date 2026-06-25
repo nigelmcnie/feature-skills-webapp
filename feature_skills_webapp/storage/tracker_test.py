@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from feature_skills_webapp.storage.db import connect, migrate, transaction
+from feature_skills_webapp.storage.db import MIGRATIONS_DIR, connect, migrate, transaction
 from feature_skills_webapp.storage.tracker import (
     FeatureExists,
     FeatureNotFound,
@@ -280,7 +280,20 @@ def test_list_feature_documents_ordered_by_type_then_instance(tmp_path: Path) ->
 
 
 def test_migration_backfills_null_status(tmp_path: Path) -> None:
-    conn = _conn(tmp_path)
+    # Build a pre-0005 DB so migrate() runs 0005 (and 0006) from scratch on real data.
+    only_v4 = tmp_path / "migrations_v4"
+    only_v4.mkdir()
+    for name in [
+        "0001_init.sql",
+        "0002_documents_status.sql",
+        "0003_versioned_content.sql",
+        "0004_retro_findings.sql",
+    ]:
+        (only_v4 / name).write_text((MIGRATIONS_DIR / name).read_text())
+
+    conn = connect(tmp_path / "test.db")
+    migrate(conn, migrations_dir=only_v4)
+
     pid = _seed_project(conn, "proj")
     # Force a NULL status row (bypassing the default) to simulate pre-migration state.
     conn.execute(
@@ -292,11 +305,9 @@ def test_migration_backfills_null_status(tmp_path: Path) -> None:
         "SELECT status FROM features WHERE slug='feat' AND project_id=?", (pid,)
     ).fetchone()
     assert row["status"] is None
-    # Rewind the schema version so the real migrate() runner re-applies 0005
-    # (and only 0005) — pins that the migration is wired in and numbered, not
-    # just that the backfill SQL is correct.
-    conn.execute("DELETE FROM schema_version WHERE version = 5")
-    assert migrate(conn) == 5
+
+    # Full migrate() applies 0005 (backfill) and 0006 (acked_version column).
+    assert migrate(conn) == 6
     row = conn.execute(
         "SELECT status FROM features WHERE slug='feat' AND project_id=?", (pid,)
     ).fetchone()
