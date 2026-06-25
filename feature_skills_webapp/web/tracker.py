@@ -23,6 +23,7 @@ from feature_skills_webapp.storage.tracker import (
     park_feature,
     release_feature,
     ship_feature,
+    update_feature_note,
 )
 from feature_skills_webapp.web.db_dep import request_conn
 
@@ -229,6 +230,39 @@ async def ship_handler(request: Request) -> JSONResponse:
     except InvalidTransition as exc:
         return JSONResponse({"error": str(exc)}, status_code=409)
 
+    if result.changed:
+        request.app.state.broadcaster.broadcast()
+    return JSONResponse(
+        {
+            "project": result.project,
+            "slug": result.slug,
+            "status": result.status,
+            "changed": result.changed,
+        }
+    )
+
+
+async def note_handler(request: Request) -> JSONResponse:
+    if request.app.state.db_path is None:
+        return JSONResponse({"error": "db not configured"}, status_code=503)
+    project = request.path_params["project"]
+    slug = request.path_params["feature"]
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid JSON"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "body must be a JSON object"}, status_code=400)
+    notes = body.get("notes")
+    if not isinstance(notes, str):
+        return JSONResponse({"error": "'notes' must be a string"}, status_code=400)
+    try:
+        with request_conn(request.app) as conn, transaction(conn):
+            result = update_feature_note(
+                conn, project=project, slug=slug, notes=notes, now=now_iso()
+            )
+    except FeatureNotFound:
+        return JSONResponse({"error": "feature not found"}, status_code=404)
     if result.changed:
         request.app.state.broadcaster.broadcast()
     return JSONResponse(

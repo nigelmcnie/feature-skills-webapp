@@ -262,6 +262,32 @@ def drop_feature(
     return MutationResult(project, slug, "archived", changed=True)
 
 
+def update_feature_note(
+    conn: sqlite3.Connection,
+    *,
+    project: str,
+    slug: str,
+    notes: str,
+    now: str,
+) -> MutationResult:
+    slug = slugify(slug)
+    feat = get_feature(conn, project, slug)
+    if feat is None:
+        raise FeatureNotFound(f"{project}/{slug}")
+    if feat["notes"] == notes:
+        return MutationResult(project, slug, feat["status"], changed=False)
+    conn.execute(
+        "UPDATE features SET notes=?, updated_at=? WHERE id=?",
+        (notes, now, feat["id"]),
+    )
+    conn.execute(
+        "INSERT INTO events (document_id, event_type, payload_json, created_at) "
+        "VALUES (NULL, 'feature_note_updated', ?, ?)",
+        (json.dumps({"project": project, "slug": slug}), now),
+    )
+    return MutationResult(project, slug, feat["status"], changed=True)
+
+
 # ---------------------------------------------------------------------------
 # Maintenance: one-off slug backfill
 # ---------------------------------------------------------------------------
