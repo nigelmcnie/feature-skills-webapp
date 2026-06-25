@@ -11,7 +11,7 @@ from starlette.testclient import TestClient
 from feature_skills_webapp.web.app import create_app
 
 _PUT_URL = "/api/documents/proj/feat-a/requirements/1"
-_VALID_BODY = {"sections": {"problem": "<p>The problem.</p>"}}
+_VALID_BODY = {"sections": {"summary": "<p>The summary.</p>"}}
 
 
 # --- happy path ---
@@ -41,7 +41,7 @@ def test_put_doc_fetchable_at_url(temp_db: Path) -> None:
 def test_put_second_submit_with_change(temp_db: Path) -> None:
     with TestClient(create_app(db_path=temp_db)) as client:
         client.put(_PUT_URL, json=_VALID_BODY)
-        resp = client.put(_PUT_URL, json={"sections": {"problem": "<p>Updated.</p>"}})
+        resp = client.put(_PUT_URL, json={"sections": {"summary": "<p>Updated.</p>"}})
     assert resp.status_code == 200
     data = resp.json()
     assert data["created"] is False
@@ -187,7 +187,7 @@ _GET_URL = "/api/documents/proj/feat-a/requirements/1"
 
 def test_get_document_round_trips_content(temp_db: Path) -> None:
     with TestClient(create_app(db_path=temp_db)) as client:
-        client.put(_PUT_URL, json={"sections": {"scope": "<p>Sc.</p>", "problem": "<p>Pr.</p>"}})
+        client.put(_PUT_URL, json={"sections": {"scope": "<p>Sc.</p>", "summary": "<p>Pr.</p>"}})
         resp = client.get(_GET_URL)
     assert resp.status_code == 200
     data = resp.json()
@@ -197,18 +197,18 @@ def test_get_document_round_trips_content(temp_db: Path) -> None:
     assert data["version_num"] == 1
     assert "document_id" in data
     assert data["url"] == f"/doc/{data['document_id']}"
-    # sections returned in manifest order (problem before scope)
+    # sections returned in manifest order (summary before scope)
     keys = [s["key"] for s in data["sections"]]
-    assert keys == ["problem", "scope"]
+    assert keys == ["summary", "scope"]
 
 
 def test_get_document_sections_in_manifest_order(temp_db: Path) -> None:
-    # Submit scope before problem; GET must return problem first (manifest order)
+    # Submit scope before summary; GET must return summary first (manifest order)
     with TestClient(create_app(db_path=temp_db)) as client:
-        client.put(_PUT_URL, json={"sections": {"scope": "<p>S</p>", "problem": "<p>P</p>"}})
+        client.put(_PUT_URL, json={"sections": {"scope": "<p>S</p>", "summary": "<p>P</p>"}})
         resp = client.get(_GET_URL)
     keys = [s["key"] for s in resp.json()["sections"]]
-    assert keys.index("problem") < keys.index("scope")
+    assert keys.index("summary") < keys.index("scope")
 
 
 def test_get_document_404_unknown_key(temp_db: Path) -> None:
@@ -313,7 +313,7 @@ def test_get_manifest_requirements_has_expected_keys() -> None:
     resp = client.get("/api/manifests/requirements")
     data = resp.json()
     keys = [s["key"] for s in data["sections"]]
-    assert "problem" in keys
+    assert "summary" in keys
     assert "scope" in keys
 
 
@@ -494,7 +494,7 @@ def test_static_doc_css_returns_200() -> None:
 def test_extra_css_round_trips_in_get(temp_db: Path) -> None:
     with TestClient(create_app(db_path=temp_db)) as client:
         client.put(
-            _PUT_URL, json={"sections": {"problem": "<p>x</p>"}, "extra_css": "table{color:red}"}
+            _PUT_URL, json={"sections": {"summary": "<p>x</p>"}, "extra_css": "table{color:red}"}
         )
         resp = client.get(_GET_URL)
     assert resp.status_code == 200
@@ -504,10 +504,10 @@ def test_extra_css_round_trips_in_get(temp_db: Path) -> None:
 def test_extra_css_identical_reput_no_new_version(temp_db: Path) -> None:
     with TestClient(create_app(db_path=temp_db)) as client:
         client.put(
-            _PUT_URL, json={"sections": {"problem": "<p>x</p>"}, "extra_css": "table{color:red}"}
+            _PUT_URL, json={"sections": {"summary": "<p>x</p>"}, "extra_css": "table{color:red}"}
         )
         resp = client.put(
-            _PUT_URL, json={"sections": {"problem": "<p>x</p>"}, "extra_css": "table{color:red}"}
+            _PUT_URL, json={"sections": {"summary": "<p>x</p>"}, "extra_css": "table{color:red}"}
         )
     assert resp.json()["changed"] is False
     assert resp.json()["version_num"] == 1
@@ -515,13 +515,13 @@ def test_extra_css_identical_reput_no_new_version(temp_db: Path) -> None:
 
 def test_extra_css_absent_on_put_echoed_empty(temp_db: Path) -> None:
     with TestClient(create_app(db_path=temp_db)) as client:
-        client.put(_PUT_URL, json={"sections": {"problem": "<p>x</p>"}})
+        client.put(_PUT_URL, json={"sections": {"summary": "<p>x</p>"}})
         resp = client.get(_GET_URL)
     assert resp.json()["extra_css"] == ""
 
 
 def test_extra_css_non_string_rejected(temp_db: Path) -> None:
     client = TestClient(create_app(db_path=temp_db))
-    resp = client.put(_PUT_URL, json={"sections": {"problem": "<p>x</p>"}, "extra_css": 42})
+    resp = client.put(_PUT_URL, json={"sections": {"summary": "<p>x</p>"}, "extra_css": 42})
     assert resp.status_code == 400
     assert "extra_css" in resp.json()["error"]

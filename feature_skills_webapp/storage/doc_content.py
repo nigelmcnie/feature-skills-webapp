@@ -73,7 +73,6 @@ _MANIFESTS: dict[str, ManifestSpec] = {
         shape="sections",
         section_labels=(
             ("summary", "Summary"),
-            ("problem", "Problem"),
             ("scope", "Scope"),
             ("vision", "Vision"),
             ("non-goals", "Non-goals"),

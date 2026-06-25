@@ -64,7 +64,7 @@ _REQUIREMENTS_HTML = """\
 <body>
 <main class="document">
 <header class="doc-header"><h1>Requirements</h1></header>
-<section id="problem"><p>The problem.</p></section>
+<section id="summary"><p>The summary.</p></section>
 <section id="vision"><p>The vision.</p></section>
 <section id="user-stories"><ul><li>As a user…</li></ul></section>
 <section id="data-model"><p>Schema here.</p></section>
@@ -184,7 +184,7 @@ def test_manifest_for_context_section_labels_ordered() -> None:
 def test_manifest_for_requirements() -> None:
     spec = manifest_for("requirements")
     assert spec.shape == "sections"
-    assert "problem" in spec.expected_keys
+    assert "summary" in spec.expected_keys
     assert "delivery-phases" in spec.expected_keys
 
 
@@ -192,7 +192,7 @@ def test_manifest_for_requirements_section_labels_ordered() -> None:
     spec = manifest_for("requirements")
     keys = [k for k, _ in spec.section_labels]
     assert keys[0] == "summary"
-    assert keys[1] == "problem"
+    assert keys[1] == "scope"
     assert "delivery-phases" in keys
     for key, label in spec.section_labels:
         assert key
@@ -259,7 +259,7 @@ def test_parse_requirements_sections() -> None:
     result = parse_content(_REQUIREMENTS_HTML, spec)
     assert result.shape == "sections"
     keys = [s.key for s in result.sections]
-    assert "problem" in keys
+    assert "summary" in keys
     assert "data-model" in keys
     assert len(keys) > 0
 

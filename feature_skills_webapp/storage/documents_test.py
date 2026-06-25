@@ -22,7 +22,7 @@ from feature_skills_webapp.storage.versions import (
 )
 from feature_skills_webapp.storage.walker import logical_key, walk
 
-_REQUIREMENTS_BODY = "<h2>Problem</h2><p>The problem.</p>"
+_REQUIREMENTS_BODY = "<h2>Summary</h2><p>The summary.</p>"
 
 _REQUIREMENTS_HTML = """\
 <!DOCTYPE html>
@@ -34,7 +34,7 @@ _REQUIREMENTS_HTML = """\
 </head>
 <body>
 <main class="document">
-<section id="problem"><p>The problem.</p></section>
+<section id="summary"><p>The summary.</p></section>
 <section id="scope"><p>The scope.</p></section>
 </main>
 </body>
@@ -61,7 +61,7 @@ def make_submit(
     now: str = "2024-01-01T00:00:00+00:00",
 ) -> SubmitResult:
     if sections is None:
-        sections = {"problem": _REQUIREMENTS_BODY}
+        sections = {"summary": _REQUIREMENTS_BODY}
     content = build_content(doc_type, sections, None)
     with transaction(conn):
         return submit_document(
@@ -124,19 +124,19 @@ def test_validate_writable_allows_instance_gt_1_for_feedback():
 
 def test_build_content_section_doc_manifest_order():
     # Supply keys out of manifest order; expect manifest order in result
-    sections = {"scope": "<p>Scope.</p>", "problem": "<p>Problem.</p>"}
+    sections = {"scope": "<p>Scope.</p>", "summary": "<p>Summary.</p>"}
     result = build_content("requirements", sections, None)
     assert result.shape == "sections"
     assert len(result.sections) == 2
-    assert result.sections[0].key == "problem"  # manifest order: problem before scope
+    assert result.sections[0].key == "summary"  # manifest order: summary before scope
     assert result.sections[1].key == "scope"
 
 
 def test_build_content_section_doc_missing_keys_tolerated():
-    sections = {"problem": "<p>Problem.</p>"}
+    sections = {"summary": "<p>Summary.</p>"}
     result = build_content("requirements", sections, None)
     assert len(result.sections) == 1
-    assert result.sections[0].key == "problem"
+    assert result.sections[0].key == "summary"
 
 
 def test_build_content_section_doc_unknown_key_raises():
@@ -181,7 +181,7 @@ def test_build_content_oversize_body_raises():
 def test_build_content_oversize_section_raises():
     big = "x" * (MAX_BODY_BYTES + 1)
     with pytest.raises(SubmitError, match="exceeds 1 MB"):
-        build_content("requirements", {"problem": big}, None)
+        build_content("requirements", {"summary": big}, None)
 
 
 def test_build_content_plan_repeated_prefix_accepted():
@@ -246,7 +246,7 @@ def test_submit_emits_created_event(tmp_path: Path):
 def test_submit_update_cuts_new_version_and_updated_event(tmp_path: Path):
     conn = temp_conn(tmp_path)
     r1 = make_submit(conn, now="2024-01-01T00:00:00+00:00")
-    r2 = make_submit(conn, sections={"problem": "<p>Changed.</p>"}, now="2024-01-02T00:00:00+00:00")
+    r2 = make_submit(conn, sections={"summary": "<p>Changed.</p>"}, now="2024-01-02T00:00:00+00:00")
 
     assert r1.document_id == r2.document_id
     assert r2.created is False
@@ -353,7 +353,7 @@ def test_convergence_file_import_then_api_submit_same_row(tmp_path: Path):
     file_doc_id = file_row["id"]
 
     # API submit the same identity with different content
-    content = build_content("requirements", {"problem": "<p>API content.</p>"}, None)
+    content = build_content("requirements", {"summary": "<p>API content.</p>"}, None)
     with transaction(conn):
         api_result = submit_document(
             conn,
@@ -381,7 +381,7 @@ def test_convergence_api_submit_different_content_increments_version(tmp_path: P
     conn = temp_conn(tmp_path)
     walk(conn, docs_root, reconcile=False)
 
-    content = build_content("requirements", {"problem": "<p>Different.</p>"}, None)
+    content = build_content("requirements", {"summary": "<p>Different.</p>"}, None)
     with transaction(conn):
         result = submit_document(
             conn,
@@ -417,7 +417,7 @@ def test_reconcile_safety_api_doc_not_marked_missing(tmp_path: Path):
     conn = temp_conn(tmp_path)
 
     # Create an API doc (no file)
-    content = build_content("requirements", {"problem": "<p>API only.</p>"}, None)
+    content = build_content("requirements", {"summary": "<p>API only.</p>"}, None)
     with transaction(conn):
         api_result = submit_document(
             conn,
@@ -451,17 +451,17 @@ def test_reconcile_safety_api_doc_not_marked_missing(tmp_path: Path):
 
 
 def test_build_content_extra_css_stored() -> None:
-    c = build_content("requirements", {"problem": "<p>x</p>"}, None, "table{color:red}")
+    c = build_content("requirements", {"summary": "<p>x</p>"}, None, "table{color:red}")
     assert c.extra_css == "table{color:red}"
 
 
 def test_build_content_extra_css_whitespace_normalises_to_empty() -> None:
-    c = build_content("requirements", {"problem": "<p>x</p>"}, None, "   \n  ")
+    c = build_content("requirements", {"summary": "<p>x</p>"}, None, "   \n  ")
     assert c.extra_css == ""
 
 
 def test_build_content_extra_css_absent_is_empty() -> None:
-    c = build_content("requirements", {"problem": "<p>x</p>"}, None, None)
+    c = build_content("requirements", {"summary": "<p>x</p>"}, None, None)
     assert c.extra_css == ""
 
 
@@ -474,12 +474,12 @@ def test_build_content_extra_css_with_stray_brace_rejected() -> None:
     # A leading/stray } would close the @scope block early and let the rule
     # bleed into the page chrome — reject it at the write boundary.
     with pytest.raises(SubmitError, match="unmatched '}'"):
-        build_content("requirements", {"problem": "<p>x</p>"}, None, "} .crumbs { display:none }")
+        build_content("requirements", {"summary": "<p>x</p>"}, None, "} .crumbs { display:none }")
 
 
 def test_build_content_extra_css_with_brace_inside_string_accepted() -> None:
     # A } inside a CSS string is not a structural brace — must not be rejected.
-    c = build_content("requirements", {"problem": "<p>x</p>"}, None, 'td::before{content:"}"}')
+    c = build_content("requirements", {"summary": "<p>x</p>"}, None, 'td::before{content:"}"}')
     assert c.extra_css == 'td::before{content:"}"}'
 
 
@@ -489,7 +489,7 @@ def test_build_content_extra_css_with_style_close_tag_rejected() -> None:
     with pytest.raises(SubmitError, match="</style>"):
         build_content(
             "requirements",
-            {"problem": "<p>x</p>"},
+            {"summary": "<p>x</p>"},
             None,
             "table{color:red} </style><script>alert(1)</script>",
         )
@@ -497,13 +497,13 @@ def test_build_content_extra_css_with_style_close_tag_rejected() -> None:
 
 def test_build_content_extra_css_with_comment_open_rejected() -> None:
     with pytest.raises(SubmitError, match="</style>"):
-        build_content("requirements", {"problem": "<p>x</p>"}, None, "table{color:red} <!-- x")
+        build_content("requirements", {"summary": "<p>x</p>"}, None, "table{color:red} <!-- x")
 
 
 def _submit(
     conn: sqlite3.Connection, extra_css: str = "", *, now: str = "2024-01-01T00:00:00+00:00"
 ) -> SubmitResult:
-    content = build_content("requirements", {"problem": "<p>x</p>"}, None, extra_css or None)
+    content = build_content("requirements", {"summary": "<p>x</p>"}, None, extra_css or None)
     with transaction(conn):
         return submit_document(
             conn,

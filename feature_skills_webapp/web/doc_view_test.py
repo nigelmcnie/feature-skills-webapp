@@ -57,7 +57,7 @@ REQUIREMENTS_HTML_WITH_SECTIONS = """\
 </head>
 <body>
 <main class="document">
-<section id="problem"><h2>Problem</h2><p>The problem description.</p></section>
+<section id="summary"><h2>Summary</h2><p>The summary description.</p></section>
 <section id="vision"><h2>Vision</h2><p>The vision statement.</p></section>
 </main>
 </body>
@@ -693,7 +693,7 @@ def test_requirements_renders_natively_no_iframe(temp_db: Path, tmp_path: Path) 
         response = client.get(f"/doc/{doc_id}")
     assert response.status_code == 200
     assert "<iframe" not in response.text
-    assert "<h2>Problem</h2>" in response.text
+    assert "<h2>Summary</h2>" in response.text
 
 
 def test_tracker_doc_renders_natively_no_iframe(temp_db: Path, tmp_path: Path) -> None:
@@ -1061,7 +1061,7 @@ def test_no_iframe_for_doc_with_stored_content(temp_db: Path, tmp_path: Path) ->
 # ---------------------------------------------------------------------------
 
 _PUT_URL = "/api/documents/proj/feat-a/requirements/1"
-_VALID_SECTIONS = {"sections": {"problem": "<p>The problem.</p>"}}
+_VALID_SECTIONS = {"sections": {"summary": "<p>The summary.</p>"}}
 
 
 def _put_doc(client: TestClient, extra_css: str = "") -> int:
@@ -1100,7 +1100,7 @@ def test_scoped_style_not_in_diff_render(temp_db: Path) -> None:
         client.put(
             _PUT_URL,
             json={
-                "sections": {"problem": "<p>Genuinely changed text.</p>"},
+                "sections": {"summary": "<p>Genuinely changed text.</p>"},
                 "extra_css": "table { color: blue }",
             },
         )
