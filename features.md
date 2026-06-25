@@ -4,7 +4,6 @@
 
 | Feature | Owner | Notes |
 |---|---|---|
-| [tracker-feature-notes-update](docs/features/tracker-feature-notes-update/requirements.md) | Nigel | No way to update an existing feature's tracker note. capture is 409-on-exists; claim/ship do not touch notes; and the document PUT auto-creates the feature row with EMPTY notes, so PUT-before-capture strands a noteless feature. Surfaced building the kea backlog 2026-06-24. |
 
 ## Available
 
@@ -14,6 +13,7 @@
 | [event-driven-synthesis-wait](docs/features/event-driven-synthesis-wait/context.md) | Replace the skills' 5s busy-poll of GET /synthesis-response with an event-driven wait (blocking long-poll backed by the existing broadcaster/SSE), so the agent makes one call, idles silently, and wakes on submission — killing the hourly "still polling" re-announce on long waits. |
 | synthesis-count-integrity-guard | Assert the webapp rendered every authored synthesis item before the review/plan/requirements flow treats a blank response as "agreed". Defence-in-depth half of the PR #37 feedback-parser fix (never built); guards the "blank = agreed" assumption as more of the process auto-proceeds. Cross-repo (webapp exposes/validates the parsed count; skills assert it). Surfaced by the agent-submission-api retro. |
 | tracker-suggested-order | Model the editorial Suggested order so it is API-updatable, not hand-edited prose in features.md. Today the project-owner ordering that feature-choice reads has no app/skill write path — an agent must hand-edit the features.md prose (the merge-export only preserves it). Surfaced capturing the kea backlog 2026-06-24. |
+| [decouple-diff-baseline](docs/features/decouple-diff-baseline/context.md) |  |
 
 ## Suggested order
 
@@ -54,3 +54,4 @@ Completed or obsoleted; kept here for context.
 | [doc-presentation-contract](docs/features/doc-presentation-contract/context.md) | Shipped. |
 | [tracker-drop-verb](docs/features/tracker-drop-verb/requirements.md) | Shipped. |
 | [tracker-lifecycle-transitions](docs/features/tracker-lifecycle-transitions/context.md) | Shipped. |
+| [tracker-feature-notes-update](docs/features/tracker-feature-notes-update/requirements.md) | Shipped. |
