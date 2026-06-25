@@ -902,9 +902,11 @@ def test_drop_missing_feature_raises_feature_not_found(tmp_path: Path) -> None:
 
 def test_update_feature_note_changes_note_and_emits_event(tmp_path: Path) -> None:
     conn = _conn(tmp_path)
-    now = "2024-01-01T00:00:00+00:00"
+    now = (
+        "2024-06-01T00:00:00+00:00"  # later than the seed timestamp, so updated_at visibly advances
+    )
     pid = _seed_project(conn, "proj")
-    _seed_feature(conn, pid, "feat", status="available", notes="old")
+    fid = _seed_feature(conn, pid, "feat", status="available", notes="old")
     with transaction(conn):
         result = update_feature_note(conn, project="proj", slug="feat", notes="new", now=now)
     assert result.changed is True
@@ -912,23 +914,31 @@ def test_update_feature_note_changes_note_and_emits_event(tmp_path: Path) -> Non
     feat = get_feature(conn, "proj", "feat")
     assert feat is not None
     assert feat["notes"] == "new"
-    event = conn.execute(
-        "SELECT event_type FROM events WHERE event_type='feature_note_updated'"
-    ).fetchone()
-    assert event is not None
+    # Exactly one event, carrying the same payload shape as the sibling mutations.
+    rows = conn.execute(
+        "SELECT payload_json FROM events WHERE event_type='feature_note_updated'"
+    ).fetchall()
+    assert len(rows) == 1
+    assert json.loads(rows[0]["payload_json"]) == {"project": "proj", "slug": "feat"}
+    # updated_at is bumped to `now` on a real change.
+    updated_at = conn.execute("SELECT updated_at FROM features WHERE id=?", (fid,)).fetchone()[0]
+    assert updated_at == now
 
 
 def test_update_feature_note_identical_is_noop(tmp_path: Path) -> None:
     conn = _conn(tmp_path)
-    now = "2024-01-01T00:00:00+00:00"
+    now = "2024-06-01T00:00:00+00:00"  # later than the seed; a no-op must NOT write it
     pid = _seed_project(conn, "proj")
-    _seed_feature(conn, pid, "feat", notes="same")
+    fid = _seed_feature(conn, pid, "feat", notes="same")
     before = conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
     with transaction(conn):
         result = update_feature_note(conn, project="proj", slug="feat", notes="same", now=now)
     after = conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
     assert result.changed is False
     assert after == before
+    # updated_at untouched on a no-op — still the seed timestamp, not `now`.
+    updated_at = conn.execute("SELECT updated_at FROM features WHERE id=?", (fid,)).fetchone()[0]
+    assert updated_at == "2024-01-01T00:00:00+00:00"
 
 
 def test_update_feature_note_done_preserves_status(tmp_path: Path) -> None:
@@ -965,6 +975,25 @@ def test_update_feature_note_fills_null(tmp_path: Path) -> None:
     feat = get_feature(conn, "proj", "feat")
     assert feat is not None
     assert feat["notes"] == "filled"
+
+
+def test_update_feature_note_null_to_empty_is_change(tmp_path: Path) -> None:
+    # A NULL note (Python None) compared against "" must be a real change, not a
+    # silent no-op — pins the None != "" boundary. If get_feature ever coerced
+    # NULL to "", this is the test that would go red.
+    conn = _conn(tmp_path)
+    now = "2024-01-01T00:00:00+00:00"
+    pid = _seed_project(conn, "proj")
+    _seed_feature(conn, pid, "feat", notes=None)
+    before = conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
+    with transaction(conn):
+        result = update_feature_note(conn, project="proj", slug="feat", notes="", now=now)
+    after = conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
+    assert result.changed is True
+    assert after == before + 1
+    feat = get_feature(conn, "proj", "feat")
+    assert feat is not None
+    assert feat["notes"] == ""
 
 
 def test_update_feature_note_empty_clears_and_empty_again_is_noop(tmp_path: Path) -> None:
