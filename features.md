@@ -14,6 +14,7 @@
 | synthesis-count-integrity-guard | Assert the webapp rendered every authored synthesis item before the review/plan/requirements flow treats a blank response as "agreed". Defence-in-depth half of the PR #37 feedback-parser fix (never built); guards the "blank = agreed" assumption as more of the process auto-proceeds. Cross-repo (webapp exposes/validates the parsed count; skills assert it). Surfaced by the agent-submission-api retro. |
 | tracker-suggested-order | Model the editorial Suggested order so it is API-updatable, not hand-edited prose in features.md. Today the project-owner ordering that feature-choice reads has no app/skill write path — an agent must hand-edit the features.md prose (the merge-export only preserves it). Surfaced capturing the kea backlog 2026-06-24. |
 | [surfacing-feedback-signal](docs/features/surfacing-feedback-signal/context.md) |  |
+| [agent-submission-mcp-facade](docs/features/agent-submission-mcp-facade/context.md) | Add a typed MCP facade over the existing agent-submission HTTP operations (documents + tracker + comments/synthesis), so any MCP-capable agent (notably Codex) can drive the workflow as typed tools. Thin shim over one operation set, not a reimplementation; HTTP stays v1; trust model unchanged. Groundwork (logical-key identity) already shipped in versioned-content-store. Key open question: in-process vs separate MCP server. |
 
 ## Suggested order
 
