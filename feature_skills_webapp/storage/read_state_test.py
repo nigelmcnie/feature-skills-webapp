@@ -442,3 +442,46 @@ def test_has_unreviewed_changes_true_when_no_read_state_and_has_versions(tmp_pat
         conn, ids["doc_a"], _make_content(), actor="test", now="2026-01-01T00:00:00+00:00"
     )
     assert has_unreviewed_changes(conn, ids["doc_a"]) is True
+
+
+# --- mark_*_read advance the acked marker ---
+# These pin the load-bearing detail that the bulk "mark read" actions advance
+# acked_version to the latest. Without it, an updated doc would immediately
+# re-surface in the inbox via the version-based surfacing predicate, so the
+# dismiss action would not actually clear it.
+
+
+def test_mark_documents_read_advances_acked_version(tmp_path: Path) -> None:
+    from feature_skills_webapp.storage.versions import record_version
+
+    conn = temp_conn(tmp_path)
+    with conn:
+        ids = _seed(conn)
+    record_version(
+        conn, ids["doc_a"], _make_content(), actor="test", now="2026-01-01T00:00:00+00:00"
+    )
+    record_version(
+        conn, ids["doc_a"], _make_content(), actor="test", now="2026-01-02T00:00:00+00:00"
+    )
+    assert has_unreviewed_changes(conn, ids["doc_a"]) is True
+    mark_documents_read(conn, [ids["doc_a"]])
+    assert acked_version(conn, ids["doc_a"]) == 2
+    assert has_unreviewed_changes(conn, ids["doc_a"]) is False
+
+
+def test_mark_all_read_advances_acked_version(tmp_path: Path) -> None:
+    from feature_skills_webapp.storage.versions import record_version
+
+    conn = temp_conn(tmp_path)
+    with conn:
+        ids = _seed(conn)
+    record_version(
+        conn, ids["doc_a"], _make_content(), actor="test", now="2026-01-01T00:00:00+00:00"
+    )
+    record_version(
+        conn, ids["doc_a"], _make_content(), actor="test", now="2026-01-02T00:00:00+00:00"
+    )
+    assert has_unreviewed_changes(conn, ids["doc_a"]) is True
+    mark_all_read(conn, ids["proj_a"])
+    assert acked_version(conn, ids["doc_a"]) == 2
+    assert has_unreviewed_changes(conn, ids["doc_a"]) is False

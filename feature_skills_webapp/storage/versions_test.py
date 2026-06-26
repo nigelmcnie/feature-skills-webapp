@@ -512,3 +512,21 @@ def test_backfill_merge_carries_acked_version(tmp_path: Path) -> None:
     assert row is not None
     # Loser had acked_version=3, which is higher — it must win the MAX merge.
     assert row["acked_version"] == 3
+
+
+def test_backfill_merge_carries_acked_version_when_survivor_absent(tmp_path: Path) -> None:
+    """When the survivor has no read_state row, the merge's INSERT branch must still carry
+    the loser's acked_version — not only the ON CONFLICT path."""
+    conn = _conn_no_backfill(tmp_path)
+    survivor_id, loser_id = _seed_collision_pair(conn)
+    # Only the loser has a read_state row; the survivor has none, so the merge inserts fresh.
+    conn.execute(
+        "INSERT INTO read_state (document_id, last_read_at, acked_version) VALUES (?, ?, ?)",
+        (loser_id, "2026-01-02T00:00:00+00:00", 3),
+    )
+    backfill_logical_keys(conn)
+    row = conn.execute(
+        "SELECT acked_version FROM read_state WHERE document_id=?", (survivor_id,)
+    ).fetchone()
+    assert row is not None
+    assert row["acked_version"] == 3

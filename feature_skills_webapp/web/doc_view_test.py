@@ -942,6 +942,27 @@ def test_diff_view_shows_diff_for_changed_doc(temp_db: Path, tmp_path: Path) -> 
     assert "<del>" in response.text
 
 
+def test_diff_survives_plain_view_of_update(temp_db: Path, tmp_path: Path) -> None:
+    # The reported regression (doc 307): an agent updates a doc and the developer opens it
+    # plainly (e.g. via a relayed /doc/{id} URL) before clicking "View changes". A plain view
+    # of a multi-version doc must NOT spend the diff baseline — the diff must still show the
+    # change rather than reporting "No text changes since you last read this document."
+    docs_root = _make_plan_root(tmp_path, _PLAN_V1)
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
+        doc_id = _doc_id_by_type(temp_db, "plan")
+        client.get(f"/doc/{doc_id}")  # read v1
+        (tmp_path / "docs" / "proj1" / "feat-a" / "plan.html").write_text(_PLAN_V2)
+        _walk_docs(temp_db, docs_root)
+        client.get(f"/doc/{doc_id}")  # plain view of the UPDATE — must not spend the diff
+        response = client.get(f"/doc/{doc_id}?view=diff")
+    assert response.status_code == 200
+    assert 'class="diff-changed"' in response.text
+    assert "<ins>" in response.text
+    assert "<del>" in response.text
+    assert "No text changes" not in response.text
+
+
 def test_diff_view_note_when_no_prior_version(temp_db: Path, tmp_path: Path) -> None:
     docs_root = _make_plan_root(tmp_path, _PLAN_V1)
     with TestClient(create_app(db_path=temp_db)) as client:
