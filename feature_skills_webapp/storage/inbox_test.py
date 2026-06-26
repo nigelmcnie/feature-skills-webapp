@@ -836,11 +836,19 @@ def _make_sections_content(*sections: tuple[str, str]) -> ParsedContent:
 
 
 def test_classify_reason_new_doc_no_prior_version(tmp_path: Path) -> None:
-    """A content event with no prior version → kind='new', label='New'."""
+    """A doc with one version and no acked_version → kind='new', label='New'."""
     conn = temp_conn(tmp_path)
+    T_v1 = "2020-06-01T00:00:00+00:00"
     with transaction(conn):
         doc_id = _seed_reason_doc(conn)
-        _add_event(conn, doc_id, "created", "2020-06-01T00:00:00+00:00")
+        record_version(
+            conn,
+            doc_id,
+            _make_sections_content(("problem-space", "<p>initial</p>")),
+            actor="test",
+            now=T_v1,
+        )
+        _add_event(conn, doc_id, "created", T_v1)
 
     reason = classify_reason(conn, doc_id, "context", last_read=None)
     assert reason is not None
@@ -875,6 +883,10 @@ def test_classify_reason_content_change_with_sections(tmp_path: Path) -> None:
             now=T_event,
         )
         _add_event(conn, doc_id, "updated", T_event)
+        conn.execute(
+            "INSERT INTO read_state (document_id, last_read_at, acked_version) VALUES (?, ?, 1)",
+            (doc_id, T_read),
+        )
 
     reason = classify_reason(conn, doc_id, "context", last_read=T_read)
     assert reason is not None
@@ -908,6 +920,10 @@ def test_classify_reason_formatting_only(tmp_path: Path) -> None:
             now=T_event,
         )
         _add_event(conn, doc_id, "updated", T_event)
+        conn.execute(
+            "INSERT INTO read_state (document_id, last_read_at, acked_version) VALUES (?, ?, 1)",
+            (doc_id, T_read),
+        )
 
     reason = classify_reason(conn, doc_id, "context", last_read=T_read)
     assert reason is not None
@@ -955,6 +971,10 @@ def test_classify_reason_reactivated_treated_as_content(tmp_path: Path) -> None:
             now=T_event,
         )
         _add_event(conn, doc_id, "reactivated", T_event)
+        conn.execute(
+            "INSERT INTO read_state (document_id, last_read_at, acked_version) VALUES (?, ?, 1)",
+            (doc_id, T_read),
+        )
 
     reason = classify_reason(conn, doc_id, "context", last_read=T_read)
     assert reason is not None
@@ -1015,6 +1035,10 @@ def test_classify_reason_label_overflow_three_sections(tmp_path: Path) -> None:
             now=T_event,
         )
         _add_event(conn, doc_id, "updated", T_event)
+        conn.execute(
+            "INSERT INTO read_state (document_id, last_read_at, acked_version) VALUES (?, ?, 1)",
+            (doc_id, T_read),
+        )
 
     reason = classify_reason(conn, doc_id, "context", last_read=T_read)
     assert reason is not None
@@ -1049,6 +1073,10 @@ def test_classify_reason_plan_phase_key_prettified_fallback(tmp_path: Path) -> N
             now=T_event,
         )
         _add_event(conn, doc_id, "updated", T_event)
+        conn.execute(
+            "INSERT INTO read_state (document_id, last_read_at, acked_version) VALUES (?, ?, 1)",
+            (doc_id, T_read),
+        )
 
     reason = classify_reason(conn, doc_id, "plan", last_read=T_read)
     assert reason is not None
@@ -1113,7 +1141,7 @@ def test_new_since_href_diff_when_has_diff(tmp_path: Path) -> None:
         )
         _add_event(conn, doc_id, "updated", T_event)
         conn.execute(
-            "INSERT INTO read_state (document_id, last_read_at) VALUES (?, ?)",
+            "INSERT INTO read_state (document_id, last_read_at, acked_version) VALUES (?, ?, 1)",
             (doc_id, T_read),
         )
 
@@ -1260,4 +1288,72 @@ def test_awaiting_input_excludes_archived_feature_feedback_doc(tmp_path: Path) -
             conn, "proj", "dropped-feat", "requirements-feedback"
         )
     cards = awaiting_input(conn)
+    assert not any(c.document_id == doc_id for c in cards)
+
+
+# ---------------------------------------------------------------------------
+# new_since_last_visit: UNREVIEWED_CHANGES_SQL OR gate
+# ---------------------------------------------------------------------------
+
+
+def test_new_since_surfaces_doc_with_unreviewed_changes_after_plain_read(
+    tmp_path: Path,
+) -> None:
+    """After a plain read that doesn't advance acked_version, the doc re-surfaces
+    because the UNREVIEWED_CHANGES_SQL OR gate fires (latest > acked)."""
+    conn = temp_conn(tmp_path)
+    T_v1 = "2020-04-01T00:00:00+00:00"
+    T_v2 = "2020-05-01T00:00:00+00:00"
+    T_read = "2020-05-10T00:00:00+00:00"
+    with transaction(conn):
+        doc_id = _seed_reason_doc(conn, doc_type="context")
+        record_version(
+            conn,
+            doc_id,
+            _make_sections_content(("problem-space", "<p>v1</p>")),
+            actor="test",
+            now=T_v1,
+        )
+        record_version(
+            conn,
+            doc_id,
+            _make_sections_content(("problem-space", "<p>v2</p>")),
+            actor="test",
+            now=T_v2,
+        )
+        # Plain read: stamps last_read_at but leaves acked_version at 1 (not 2)
+        conn.execute(
+            "INSERT INTO read_state (document_id, last_read_at, acked_version) VALUES (?, ?, 1)",
+            (doc_id, T_read),
+        )
+
+    cards = new_since_last_visit(conn)
+    assert any(c.document_id == doc_id for c in cards), (
+        "doc must still surface because latest(2) > acked(1)"
+    )
+
+
+def test_new_since_does_not_surface_doc_when_acked_equals_latest_and_no_new_events(
+    tmp_path: Path,
+) -> None:
+    """A doc where acked_version equals latest and there are no new events must not surface."""
+    conn = temp_conn(tmp_path)
+    T_v1 = "2020-04-01T00:00:00+00:00"
+    T_read = "2020-05-01T00:00:00+00:00"
+    with transaction(conn):
+        doc_id = _seed_reason_doc(conn, doc_type="context")
+        record_version(
+            conn,
+            doc_id,
+            _make_sections_content(("problem-space", "<p>v1</p>")),
+            actor="test",
+            now=T_v1,
+        )
+        # Diff was viewed: acked_version matches latest
+        conn.execute(
+            "INSERT INTO read_state (document_id, last_read_at, acked_version) VALUES (?, ?, 1)",
+            (doc_id, T_read),
+        )
+
+    cards = new_since_last_visit(conn)
     assert not any(c.document_id == doc_id for c in cards)

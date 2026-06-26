@@ -92,7 +92,11 @@ async def put_document(request: Request) -> JSONResponse:
             "logical_key": result.logical_key,
             "document_id": result.document_id,
             "version_num": result.version_num,
-            "url": f"/doc/{result.document_id}",
+            "url": (
+                f"/doc/{result.document_id}"
+                if result.created
+                else f"/doc/{result.document_id}?view=diff"
+            ),
             "created": result.created,
             "changed": result.changed,
         }
@@ -135,7 +139,7 @@ async def get_document(request: Request) -> JSONResponse:
             "sections": sections,
             "extra_css": extra_css,
             "version_num": ver_row["ver"],
-            "url": f"/doc/{doc_id}",
+            "url": (f"/doc/{doc_id}?view=diff" if ver_row["ver"] > 1 else f"/doc/{doc_id}"),
         }
     )
 

@@ -53,6 +53,26 @@ def current_content(conn: sqlite3.Connection, document_id: int) -> ParsedContent
     )
 
 
+def content_at_version(
+    conn: sqlite3.Connection, document_id: int, version_num: int | None
+) -> ParsedContent | None:
+    """Return the ParsedContent for a specific version_num, or None if None/absent."""
+    if version_num is None:
+        return None
+    row = conn.execute(
+        "SELECT content_json FROM document_versions WHERE document_id=? AND version_num=?",
+        (document_id, version_num),
+    ).fetchone()
+    if row is None:
+        return None
+    data = json.loads(row["content_json"])
+    return ParsedContent(
+        shape=data["shape"],
+        sections=tuple(Section(key=s["key"], body=s["body"]) for s in data["sections"]),
+        extra_css=data.get("extra_css", ""),
+    )
+
+
 def content_at_or_before(
     conn: sqlite3.Connection, document_id: int, ts: str
 ) -> ParsedContent | None:
@@ -149,15 +169,19 @@ def _resolve_collisions(conn: sqlite3.Connection) -> None:
 
 def _merge_read_state(conn: sqlite3.Connection, survivor_id: int, loser_id: int) -> None:
     row = conn.execute(
-        "SELECT last_read_at FROM read_state WHERE document_id=?", (loser_id,)
+        "SELECT last_read_at, acked_version FROM read_state WHERE document_id=?", (loser_id,)
     ).fetchone()
     if row is None:
         return
     conn.execute(
-        "INSERT INTO read_state (document_id, last_read_at) VALUES (?, ?) "
+        "INSERT INTO read_state (document_id, last_read_at, acked_version) VALUES (?, ?, ?) "
         "ON CONFLICT(document_id) DO UPDATE SET "
-        "last_read_at=MAX(last_read_at, excluded.last_read_at)",
-        (survivor_id, row["last_read_at"]),
+        "last_read_at=MAX(last_read_at, excluded.last_read_at), "
+        "acked_version = NULLIF(MAX("
+        "  COALESCE(read_state.acked_version, 0),"
+        "  COALESCE(excluded.acked_version, 0)"
+        "), 0)",
+        (survivor_id, row["last_read_at"], row["acked_version"]),
     )
 
 

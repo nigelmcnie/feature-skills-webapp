@@ -19,8 +19,13 @@ from feature_skills_webapp.storage.doc_render import (
     render_section_doc,
 )
 from feature_skills_webapp.storage.inbox import doc_type_rank, humanise_type
-from feature_skills_webapp.storage.read_state import last_read_at, mark_read
-from feature_skills_webapp.storage.versions import content_at_or_before, current_content
+from feature_skills_webapp.storage.read_state import (
+    acked_version,
+    has_unreviewed_changes,
+    mark_diff_seen,
+    mark_read,
+)
+from feature_skills_webapp.storage.versions import content_at_version, current_content
 from feature_skills_webapp.storage.walker import FEEDBACK_SUFFIX
 from feature_skills_webapp.web.db_dep import request_conn
 
@@ -108,6 +113,7 @@ async def doc_shell(request: Request) -> Response:
         has_diff_toggle: bool = False
         view: str = request.query_params.get("view") or ""
         no_diff_note: str | None = None
+        unreviewed_banner: bool = False
         if not available:
             mode = "unavailable"
         elif is_synthesis:
@@ -138,8 +144,8 @@ async def doc_shell(request: Request) -> Response:
                 manifest = manifest_for(row["type"])
                 has_diff_toggle = True
                 if view == "diff":
-                    read_ts = last_read_at(conn, doc_id)
-                    prior = content_at_or_before(conn, doc_id, read_ts or "")
+                    acked = acked_version(conn, doc_id)
+                    prior = content_at_version(conn, doc_id, acked)
                     if prior is None:
                         no_diff_note = "No earlier version found — nothing to compare."
                         body_html = render_section_doc(content, manifest)
@@ -153,9 +159,20 @@ async def doc_shell(request: Request) -> Response:
                         else:
                             body_html = render_diff(diff_result, manifest)
                             mode = "diff"
+                    mark_diff_seen(conn, doc_id)
                 else:
                     body_html = render_section_doc(content, manifest)
                     mode = "native"
+                    latest_row = conn.execute(
+                        "SELECT COALESCE(MAX(version_num), 0) AS latest "
+                        "FROM document_versions WHERE document_id=?",
+                        (doc_id,),
+                    ).fetchone()
+                    latest = latest_row["latest"]
+                    if latest == 1:
+                        mark_diff_seen(conn, doc_id)
+                    else:
+                        unreviewed_banner = has_unreviewed_changes(conn, doc_id)
                 # For section docs in native mode, use extra_css from content
                 if mode == "native":
                     scoped_css = content.extra_css
@@ -194,6 +211,7 @@ async def doc_shell(request: Request) -> Response:
             "comments_prefill_json": Markup(json.dumps(comments_prefill)),
             "has_diff_toggle": has_diff_toggle,
             "no_diff_note": no_diff_note,
+            "unreviewed_banner": unreviewed_banner,
             "css_v": _static_v("doc.css"),
             "js_v": _static_v("doc.js"),
             "prev": {"id": prev["id"], "label": humanise_type(prev["type"])} if prev else None,

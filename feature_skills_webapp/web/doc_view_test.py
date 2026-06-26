@@ -1126,6 +1126,80 @@ def test_extra_css_with_stray_brace_rejected_at_write(temp_db: Path) -> None:
         assert client.get(_PUT_URL).status_code == 404
 
 
+# ---------------------------------------------------------------------------
+# acked_version advancement and unreviewed banner
+# ---------------------------------------------------------------------------
+
+
+def test_native_view_single_version_advances_acked_version(temp_db: Path, tmp_path: Path) -> None:
+    """A plain GET of a single-version doc calls mark_diff_seen → acked_version = 1."""
+    from feature_skills_webapp.storage.db import connect
+    from feature_skills_webapp.storage.read_state import acked_version
+
+    docs_root = _make_plan_root(tmp_path, _PLAN_V1)
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
+        doc_id = _doc_id_by_type(temp_db, "plan")
+        client.get(f"/doc/{doc_id}")
+
+    conn = connect(temp_db)
+    av = acked_version(conn, doc_id)
+    conn.close()
+    assert av == 1
+
+
+def test_native_view_multi_version_shows_unreviewed_banner(temp_db: Path, tmp_path: Path) -> None:
+    """Plain GET after a second version is pushed shows the 'View changes' banner."""
+    docs_root = _make_plan_root(tmp_path, _PLAN_V1)
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
+        doc_id = _doc_id_by_type(temp_db, "plan")
+        client.get(f"/doc/{doc_id}")  # acked_version advances to 1
+        # Push v2
+        (tmp_path / "docs" / "proj1" / "feat-a" / "plan.html").write_text(_PLAN_V2)
+        _walk_docs(temp_db, docs_root)
+        response = client.get(f"/doc/{doc_id}")  # plain view, v2 not acked
+    assert response.status_code == 200
+    assert "View changes" in response.text
+    assert f'href="/doc/{doc_id}?view=diff"' in response.text
+
+
+def test_diff_view_advances_acked_version_to_latest(temp_db: Path, tmp_path: Path) -> None:
+    """A ?view=diff GET calls mark_diff_seen → acked_version advances to the latest version."""
+    from feature_skills_webapp.storage.db import connect
+    from feature_skills_webapp.storage.read_state import acked_version
+
+    docs_root = _make_plan_root(tmp_path, _PLAN_V1)
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
+        doc_id = _doc_id_by_type(temp_db, "plan")
+        client.get(f"/doc/{doc_id}")  # acked_version → 1
+        (tmp_path / "docs" / "proj1" / "feat-a" / "plan.html").write_text(_PLAN_V2)
+        _walk_docs(temp_db, docs_root)
+        client.get(f"/doc/{doc_id}?view=diff")  # acked_version → 2
+
+    conn = connect(temp_db)
+    av = acked_version(conn, doc_id)
+    conn.close()
+    assert av == 2
+
+
+def test_unreviewed_banner_absent_after_diff_viewed(temp_db: Path, tmp_path: Path) -> None:
+    """After viewing the diff, the plain view no longer shows the banner."""
+    docs_root = _make_plan_root(tmp_path, _PLAN_V1)
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
+        doc_id = _doc_id_by_type(temp_db, "plan")
+        client.get(f"/doc/{doc_id}")  # acked → 1
+        (tmp_path / "docs" / "proj1" / "feat-a" / "plan.html").write_text(_PLAN_V2)
+        _walk_docs(temp_db, docs_root)
+        client.get(f"/doc/{doc_id}?view=diff")  # acked → 2
+        response = client.get(f"/doc/{doc_id}")  # plain view, already acked
+    assert response.status_code == 200
+    # Banner must not appear — acked_version matches latest
+    assert "This document changed" not in response.text
+
+
 def test_scope_and_keep_opaque_doc(tmp_path: Path, temp_db: Path) -> None:
     # An opaque (non-feedback) doc with a <style> block has its CSS gathered and scoped.
     # Must be walker-imported because the API only accepts opaque for *-feedback types.
