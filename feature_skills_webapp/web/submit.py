@@ -144,6 +144,26 @@ async def get_document(request: Request) -> JSONResponse:
     )
 
 
+_NOTICES = [
+    "api-coherence in progress: document writes will soon require the feature "
+    "(and project) to exist — create them first."
+]
+
+
+def missing_feature_msg(project: str, feature: str) -> str:
+    return (
+        f"feature '{feature}' does not exist in project '{project}'. "
+        f"Create it first: POST /api/projects/{project}/features/{feature}"
+    )
+
+
+def missing_project_msg(project: str) -> str:
+    return (
+        f"project '{project}' does not exist. "
+        f"Create it explicitly first: POST /api/projects/{project}"
+    )
+
+
 _PRESENTATION = {
     "stylesheet_url": "/static/doc.css",
     "extra_css": (
@@ -166,6 +186,7 @@ async def get_manifest(request: Request) -> JSONResponse:
             "sections": [{"key": k, "label": lbl} for k, lbl in spec.section_labels],
             "repeated_prefixes": list(spec.repeated_prefixes),
             "presentation": _PRESENTATION,
+            "notices": _NOTICES,
         }
     )
 

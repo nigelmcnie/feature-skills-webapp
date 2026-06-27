@@ -26,6 +26,7 @@ from feature_skills_webapp.storage.tracker import (
     update_feature_note,
 )
 from feature_skills_webapp.web.db_dep import request_conn
+from feature_skills_webapp.web.submit import _NOTICES
 
 
 async def list_projects_handler(request: Request) -> JSONResponse:
@@ -33,7 +34,7 @@ async def list_projects_handler(request: Request) -> JSONResponse:
         return JSONResponse({"error": "db not configured"}, status_code=503)
     with request_conn(request.app) as conn:
         rows = list_projects(conn)
-    return JSONResponse({"projects": [{"name": r["name"]} for r in rows]})
+    return JSONResponse({"projects": [{"name": r["name"]} for r in rows], "notices": _NOTICES})
 
 
 async def list_features_handler(request: Request) -> JSONResponse:
@@ -52,6 +53,7 @@ async def list_features_handler(request: Request) -> JSONResponse:
                 {"slug": r["slug"], "status": r["status"], "owner": r["owner"], "notes": r["notes"]}
                 for r in feats
             ],
+            "notices": _NOTICES,
         }
     )
 
