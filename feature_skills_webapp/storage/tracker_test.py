@@ -335,6 +335,7 @@ def test_upsert_feature_seeds_available_status(tmp_path: Path) -> None:
 def test_create_creates_available_feature_and_event(tmp_path: Path) -> None:
     conn = _conn(tmp_path)
     now = "2024-01-01T00:00:00+00:00"
+    _seed_project(conn, "proj")
     with transaction(conn):
         result = create_feature(conn, project="proj", slug="new-feat", notes="n", now=now)
     assert result.status == "available"
@@ -352,6 +353,7 @@ def test_create_creates_available_feature_and_event(tmp_path: Path) -> None:
 def test_create_raises_feature_exists_on_duplicate(tmp_path: Path) -> None:
     conn = _conn(tmp_path)
     now = "2024-01-01T00:00:00+00:00"
+    _seed_project(conn, "proj")
     with transaction(conn):
         create_feature(conn, project="proj", slug="feat", notes=None, now=now)
     with pytest.raises(FeatureExists), transaction(conn):
@@ -361,6 +363,7 @@ def test_create_raises_feature_exists_on_duplicate(tmp_path: Path) -> None:
 def test_create_with_no_notes(tmp_path: Path) -> None:
     conn = _conn(tmp_path)
     now = "2024-01-01T00:00:00+00:00"
+    _seed_project(conn, "proj")
     with transaction(conn):
         result = create_feature(conn, project="proj", slug="feat", notes=None, now=now)
     assert result.status == "available"
@@ -717,6 +720,7 @@ def test_claim_parked_feature_resumes_as_in_progress(tmp_path: Path) -> None:
 def test_create_normalises_display_name_to_slug(tmp_path: Path) -> None:
     conn = _conn(tmp_path)
     now = "2024-01-01T00:00:00+00:00"
+    _seed_project(conn, "proj")
     with transaction(conn):
         result = create_feature(
             conn, project="proj", slug="File Classification", notes=None, now=now
@@ -731,6 +735,7 @@ def test_create_of_display_name_then_slug_is_a_duplicate(tmp_path: Path) -> None
     # become two rows. Without slugify the second create would not collide.
     conn = _conn(tmp_path)
     now = "2024-01-01T00:00:00+00:00"
+    _seed_project(conn, "proj")
     with transaction(conn):
         create_feature(conn, project="proj", slug="File classification", notes=None, now=now)
     with pytest.raises(FeatureExists), transaction(conn):

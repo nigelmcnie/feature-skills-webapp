@@ -22,6 +22,7 @@ from feature_skills_webapp.storage.walker import (
     logical_key,
     parse_doc,
     slugify,
+    upsert_project,
     walk,
 )
 
@@ -1225,6 +1226,7 @@ def test_keystone_anti_clobber_walk_does_not_overwrite_api_status(tmp_path: Path
     now = "2025-01-01T00:00:00+00:00"
 
     # Use the tracker API to capture then claim — status becomes in_progress.
+    upsert_project(conn, "proj1", now)
     create_feature(conn, project="proj1", slug="my-feature", notes="test", now=now)
     claim_feature(conn, project="proj1", slug="my-feature", owner="Alice", now=now)
 

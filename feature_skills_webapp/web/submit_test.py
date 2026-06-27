@@ -16,6 +16,7 @@ _VALID_BODY = {"sections": {"summary": "<p>The summary.</p>"}}
 
 def _create_feature_a(client: TestClient) -> None:
     """Seed proj/feat-a via the API — required before any PUT /api/documents/proj/feat-a/…."""
+    client.post("/api/projects/proj")
     resp = client.post("/api/projects/proj/features/feat-a", json={})
     assert resp.status_code == 200
 
@@ -173,10 +174,19 @@ def test_put_400_instance_2_for_non_feedback(temp_db: Path) -> None:
 
 def test_put_404_feature_not_found(temp_db: Path) -> None:
     with TestClient(create_app(db_path=temp_db)) as client:
+        client.post("/api/projects/proj")
         resp = client.put("/api/documents/proj/nonexistent/requirements/1", json=_VALID_BODY)
     assert resp.status_code == 404
     assert "nonexistent" in resp.json()["error"]
     assert "POST /api/projects/proj/features/nonexistent" in resp.json()["error"]
+
+
+def test_put_404_project_not_found(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.put("/api/documents/no-proj/feat/requirements/1", json=_VALID_BODY)
+    assert resp.status_code == 404
+    assert "no-proj" in resp.json()["error"]
+    assert "POST /api/projects/no-proj" in resp.json()["error"]
 
 
 # --- 503 ---
