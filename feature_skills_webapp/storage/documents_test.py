@@ -456,11 +456,31 @@ def test_reconcile_safety_api_doc_not_marked_missing(tmp_path: Path):
 def test_submit_raises_feature_not_found_when_feature_absent(tmp_path: Path):
     conn = temp_conn(tmp_path)
     content = build_content("requirements", {"summary": "<p>x</p>"}, None)
+    now = "2024-01-01T00:00:00+00:00"
+    upsert_project(conn, "proj", now)
     with pytest.raises(FeatureNotFound), transaction(conn):
         submit_document(
             conn,
             project="proj",
             feature="nonexistent",
+            doc_type="requirements",
+            instance=1,
+            content=content,
+            actor="agent",
+            now=now,
+        )
+
+
+def test_submit_raises_project_not_found_when_project_absent(tmp_path: Path):
+    conn = temp_conn(tmp_path)
+    content = build_content("requirements", {"summary": "<p>x</p>"}, None)
+    from feature_skills_webapp.storage.tracker import ProjectNotFound
+
+    with pytest.raises(ProjectNotFound), transaction(conn):
+        submit_document(
+            conn,
+            project="nonexistent",
+            feature=None,
             doc_type="requirements",
             instance=1,
             content=content,

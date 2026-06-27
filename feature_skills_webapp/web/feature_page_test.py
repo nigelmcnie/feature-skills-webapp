@@ -209,6 +209,7 @@ def test_feature_page_no_docs_renders_empty_hint(temp_db: Path, tmp_path: Path) 
     with TestClient(create_app(db_path=temp_db)) as client:
         # No HTML docs in the feature dir, so the walker won't create the feature row;
         # create it explicitly via the tracker API.
+        client.post("/api/projects/proj1")
         client.post("/api/projects/proj1/features/feat-a", json={"notes": ""})
         _walk_docs(temp_db, docs_root)
         resp = client.get("/project/proj1/feature/feat-a")

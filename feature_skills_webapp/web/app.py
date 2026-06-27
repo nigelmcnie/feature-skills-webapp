@@ -37,8 +37,10 @@ from feature_skills_webapp.web.synthesis import post_synthesis_response
 from feature_skills_webapp.web.tracker import (
     claim_handler,
     create_feature_handler,
+    create_project_handler,
     drop_handler,
     get_feature_handler,
+    get_project_handler,
     list_documents_handler,
     list_features_handler,
     list_projects_handler,
@@ -118,6 +120,16 @@ def create_app(db_path: Path | None) -> Starlette:
             ),
             Route("/api/manifests/{doc_type}", get_manifest),
             Route("/api/projects", list_projects_handler),
+            Route(
+                "/api/projects/{project}",
+                get_project_handler,
+                methods=["GET"],
+            ),
+            Route(
+                "/api/projects/{project}",
+                create_project_handler,
+                methods=["POST"],
+            ),
             Route("/api/projects/{project}/features", list_features_handler),
             Route(
                 "/api/projects/{project}/features/{feature}",

@@ -161,6 +161,7 @@ def test_project_page_features_grouped_by_status(temp_db: Path, tmp_path: Path) 
     with TestClient(create_app(db_path=temp_db)) as client:
         # Set up tracker state via API before discover so the walker's INSERT OR IGNORE
         # does not overwrite these statuses.
+        client.post("/api/projects/proj1")
         client.post("/api/projects/proj1/features/feat-active", json={"notes": ""})
         client.post("/api/projects/proj1/features/feat-active/claim", json={"owner": "Alice"})
         client.post("/api/projects/proj1/features/feat-available", json={"notes": ""})
@@ -258,6 +259,7 @@ def test_project_page_does_not_stamp_read_state(temp_db: Path, tmp_path: Path) -
 def test_project_page_parked_feature_appears_in_parked_group(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_docs_root_available_only(tmp_path)
     with TestClient(create_app(db_path=temp_db)) as client:
+        client.post("/api/projects/proj1")
         client.post("/api/projects/proj1/features/feat-a", json={})
         client.post("/api/projects/proj1/features/feat-a/park")
         _walk_docs(temp_db, docs_root)
@@ -273,6 +275,7 @@ def test_project_page_parked_feature_absent_from_available(temp_db: Path, tmp_pa
     docs_root = make_docs_root_multi(tmp_path)
     with TestClient(create_app(db_path=temp_db)) as client:
         # feat-active → in_progress, feat-available → park it, feat-done → done
+        client.post("/api/projects/proj1")
         client.post("/api/projects/proj1/features/feat-active", json={})
         client.post("/api/projects/proj1/features/feat-active/claim", json={"owner": "Alice"})
         client.post("/api/projects/proj1/features/feat-available", json={})
@@ -302,6 +305,7 @@ def test_project_page_archived_section_present_with_dropped_feature(
     docs_root = make_docs_root_multi(tmp_path)
     with TestClient(create_app(db_path=temp_db)) as client:
         # Set up feat-active (in_progress) and feat-done (done); drop feat-available
+        client.post("/api/projects/proj1")
         client.post("/api/projects/proj1/features/feat-active", json={"notes": ""})
         client.post("/api/projects/proj1/features/feat-active/claim", json={"owner": "Alice"})
         client.post("/api/projects/proj1/features/feat-available", json={"notes": ""})

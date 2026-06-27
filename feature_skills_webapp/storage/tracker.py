@@ -24,6 +24,18 @@ def get_project(conn: sqlite3.Connection, name: str) -> sqlite3.Row | None:
     return conn.execute("SELECT id, name FROM projects WHERE name=?", (name,)).fetchone()
 
 
+def get_project_row(conn: sqlite3.Connection, name: str) -> sqlite3.Row | None:
+    return conn.execute("SELECT id, name, repo_path FROM projects WHERE name=?", (name,)).fetchone()
+
+
+def require_project(conn: sqlite3.Connection, name: str) -> int:
+    """Return the project id for name, raising ProjectNotFound if absent."""
+    row = conn.execute("SELECT id FROM projects WHERE name=?", (name,)).fetchone()
+    if row is None:
+        raise ProjectNotFound(name)
+    return row["id"]
+
+
 def list_features(conn: sqlite3.Connection, project_id: int) -> list[sqlite3.Row]:
     return conn.execute(
         "SELECT f.slug, f.status, f.owner, f.notes, "
@@ -78,6 +90,12 @@ def list_feature_documents(conn: sqlite3.Connection, feature_id: int) -> list[sq
 class TrackerError(Exception): ...
 
 
+class ProjectExists(TrackerError): ...
+
+
+class ProjectNotFound(TrackerError): ...
+
+
 class FeatureNotFound(TrackerError): ...
 
 
@@ -100,6 +118,21 @@ class MutationResult:
 # ---------------------------------------------------------------------------
 
 
+def create_project(
+    conn: sqlite3.Connection,
+    *,
+    name: str,
+    now: str,
+) -> None:
+    existing = conn.execute("SELECT 1 FROM projects WHERE name=?", (name,)).fetchone()
+    if existing is not None:
+        raise ProjectExists(name)
+    conn.execute(
+        "INSERT INTO projects (name, created_at) VALUES (?, ?)",
+        (name, now),
+    )
+
+
 def create_feature(
     conn: sqlite3.Connection,
     *,
@@ -108,10 +141,8 @@ def create_feature(
     notes: str | None,
     now: str,
 ) -> MutationResult:
-    from feature_skills_webapp.storage.walker import upsert_project
-
     slug = slugify(slug)
-    project_id = upsert_project(conn, project, now)
+    project_id = require_project(conn, project)
     existing = conn.execute(
         "SELECT 1 FROM features WHERE project_id=? AND slug=?", (project_id, slug)
     ).fetchone()

@@ -283,6 +283,7 @@ def test_index_unread_card_has_doc_link_and_aria_label(temp_db: Path, tmp_path: 
 def test_index_in_progress_card_not_wrapped_in_anchor(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_docs_root(tmp_path)
     with TestClient(create_app(db_path=temp_db)) as client:
+        client.post("/api/projects/proj1")
         client.post("/api/projects/proj1/features/feat-a", json={"notes": ""})
         client.post("/api/projects/proj1/features/feat-a/claim", json={"owner": "Alice"})
         _walk_docs(temp_db, docs_root)
@@ -1086,6 +1087,7 @@ _VALID_SECTIONS = {"sections": {"summary": "<p>The summary.</p>"}}
 
 
 def _put_doc(client: TestClient, extra_css: str = "") -> int:
+    client.post("/api/projects/proj")
     client.post("/api/projects/proj/features/feat-a", json={})
     body: dict[str, object] = {**_VALID_SECTIONS}
     if extra_css:

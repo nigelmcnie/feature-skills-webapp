@@ -12,11 +12,15 @@ from feature_skills_webapp.storage.tracker import (
     FeatureExists,
     FeatureNotFound,
     InvalidTransition,
+    ProjectExists,
+    ProjectNotFound,
     claim_feature,
     create_feature,
+    create_project,
     drop_feature,
     get_feature,
     get_project,
+    get_project_row,
     list_feature_documents,
     list_features,
     list_projects,
@@ -26,7 +30,31 @@ from feature_skills_webapp.storage.tracker import (
     update_feature_note,
 )
 from feature_skills_webapp.web.db_dep import request_conn
-from feature_skills_webapp.web.submit import _NOTICES
+from feature_skills_webapp.web.submit import _NOTICES, missing_project_msg
+
+
+async def create_project_handler(request: Request) -> JSONResponse:
+    if request.app.state.db_path is None:
+        return JSONResponse({"error": "db not configured"}, status_code=503)
+    name = request.path_params["project"]
+    try:
+        with request_conn(request.app) as conn, transaction(conn):
+            create_project(conn, name=name, now=now_iso())
+    except ProjectExists:
+        return JSONResponse({"error": "project already exists"}, status_code=409)
+    request.app.state.broadcaster.broadcast()
+    return JSONResponse({"project": name})
+
+
+async def get_project_handler(request: Request) -> JSONResponse:
+    if request.app.state.db_path is None:
+        return JSONResponse({"error": "db not configured"}, status_code=503)
+    name = request.path_params["project"]
+    with request_conn(request.app) as conn:
+        row = get_project_row(conn, name)
+    if row is None:
+        return JSONResponse({"error": "project not found"}, status_code=404)
+    return JSONResponse({"project": row["name"], "repo_path": row["repo_path"]})
 
 
 async def list_projects_handler(request: Request) -> JSONResponse:
@@ -108,6 +136,8 @@ async def create_feature_handler(request: Request) -> JSONResponse:
             result = create_feature(conn, project=project, slug=slug, notes=notes, now=now_iso())
     except FeatureExists:
         return JSONResponse({"error": "feature already exists"}, status_code=409)
+    except ProjectNotFound:
+        return JSONResponse({"error": missing_project_msg(project)}, status_code=404)
 
     request.app.state.broadcaster.broadcast()
     return JSONResponse(
