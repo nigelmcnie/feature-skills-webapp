@@ -13,9 +13,9 @@ from feature_skills_webapp.storage.read_state import (
     has_unreviewed_changes,
     last_read_at,
     mark_all_read,
-    mark_diff_seen,
     mark_documents_read,
     mark_read,
+    mark_version_seen,
     unread_document_ids,
 )
 
@@ -330,14 +330,14 @@ def test_acked_version_returns_set_value(tmp_path: Path) -> None:
     assert acked_version(conn, ids["doc_a"]) == 3
 
 
-# --- mark_diff_seen ---
+# --- mark_version_seen ---
 
 
 def _make_content() -> ParsedContent:
     return ParsedContent(shape="sections", sections=(Section(key="overview", body="<p>x</p>"),))
 
 
-def test_mark_diff_seen_inserts_row_with_max_version(tmp_path: Path) -> None:
+def test_mark_version_seen_inserts_row_with_max_version(tmp_path: Path) -> None:
     from feature_skills_webapp.storage.versions import record_version
 
     conn = temp_conn(tmp_path)
@@ -349,11 +349,11 @@ def test_mark_diff_seen_inserts_row_with_max_version(tmp_path: Path) -> None:
     record_version(
         conn, ids["doc_a"], _make_content(), actor="test", now="2026-01-02T00:00:00+00:00"
     )
-    mark_diff_seen(conn, ids["doc_a"])
+    mark_version_seen(conn, ids["doc_a"])
     assert acked_version(conn, ids["doc_a"]) == 2
 
 
-def test_mark_diff_seen_updates_existing_acked_version(tmp_path: Path) -> None:
+def test_mark_version_seen_updates_existing_acked_version(tmp_path: Path) -> None:
     from feature_skills_webapp.storage.versions import record_version
 
     conn = temp_conn(tmp_path)
@@ -362,20 +362,20 @@ def test_mark_diff_seen_updates_existing_acked_version(tmp_path: Path) -> None:
     record_version(
         conn, ids["doc_a"], _make_content(), actor="test", now="2026-01-01T00:00:00+00:00"
     )
-    mark_diff_seen(conn, ids["doc_a"])
+    mark_version_seen(conn, ids["doc_a"])
     assert acked_version(conn, ids["doc_a"]) == 1
     record_version(
         conn, ids["doc_a"], _make_content(), actor="test", now="2026-01-02T00:00:00+00:00"
     )
-    mark_diff_seen(conn, ids["doc_a"])
+    mark_version_seen(conn, ids["doc_a"])
     assert acked_version(conn, ids["doc_a"]) == 2
 
 
-def test_mark_diff_seen_no_versions_sets_zero(tmp_path: Path) -> None:
+def test_mark_version_seen_no_versions_sets_zero(tmp_path: Path) -> None:
     conn = temp_conn(tmp_path)
     with conn:
         ids = _seed(conn)
-    mark_diff_seen(conn, ids["doc_a"])
+    mark_version_seen(conn, ids["doc_a"])
     # No versions → MAX(version_num) is NULL, COALESCE(..., 0) = 0 → stored as 0
     row = conn.execute(
         "SELECT acked_version FROM read_state WHERE document_id=?", (ids["doc_a"],)
