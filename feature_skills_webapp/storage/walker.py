@@ -13,8 +13,22 @@ from html.parser import HTMLParser
 from pathlib import Path
 
 from feature_skills_webapp.storage.db import now_iso, transaction
-from feature_skills_webapp.storage.doc_content import manifest_for, parse_content, serialise
-from feature_skills_webapp.storage.versions import current_content, record_version
+from feature_skills_webapp.storage.doc_content import manifest_for, parse_content
+from feature_skills_webapp.storage.parents import (
+    logical_key,
+    slugify,
+    upsert_feature,
+    upsert_project,
+)
+from feature_skills_webapp.storage.versions import current_content
+
+# Re-export so existing importers (tests, tracker, web) keep working unchanged.
+__all__ = [
+    "logical_key",
+    "slugify",
+    "upsert_feature",
+    "upsert_project",
+]
 
 log = logging.getLogger(__name__)
 
@@ -32,31 +46,6 @@ def feedback_instance(rel_path: Path) -> int:
     """Return the instance N from a feedback filename (e.g. 2 from requirements-feedback-2.html)."""
     m = _FEEDBACK_RE.match(rel_path.stem)
     return int(m.group("num")) if m else 1
-
-
-def slugify(text: str) -> str:
-    """Canonicalise a feature name into a kebab-case slug.
-
-    Lowercase; every run of non-alphanumeric characters collapses to a single
-    '-'; leading/trailing '-' stripped. Idempotent on already-kebab input.
-
-    This is the single rule for feature identity. Without it a display name
-    ("File classification") and its slug ("file-classification") diverge into
-    two feature rows: a bulk tracker import once stored display names verbatim
-    as slugs, and the per-document write path keys on the slugified directory
-    name — so the two could never reconcile and spawned duplicate features.
-    """
-    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
-
-
-def logical_key(project: str, feature: str | None, doc_type: str, instance: int) -> str:
-    """Canonical stable identity key for a document: '{project}/{feature or '-'}/{doc_type}/{instance}'.
-
-    The feature segment is slugified so a document's identity can never diverge
-    from its feature's canonical slug (see ``slugify``).
-    """
-    seg = slugify(feature) if feature else "-"
-    return f"{project}/{seg}/{doc_type}/{instance}"
 
 
 @dataclass(frozen=True)
@@ -159,27 +148,6 @@ def parse_doc(path: Path) -> ParsedDoc | None:
     return parse_doc_html(html)
 
 
-def upsert_project(conn: sqlite3.Connection, name: str, now: str) -> int:
-    conn.execute(
-        "INSERT INTO projects (name, created_at) VALUES (?, ?) ON CONFLICT(name) DO NOTHING",
-        (name, now),
-    )
-    return conn.execute("SELECT id FROM projects WHERE name=?", (name,)).fetchone()["id"]
-
-
-def upsert_feature(conn: sqlite3.Connection, project_id: int, slug: str, now: str) -> int:
-    slug = slugify(slug)
-    conn.execute(
-        "INSERT INTO features (project_id, slug, status, created_at, updated_at) "
-        "VALUES (?, ?, 'available', ?, ?) "
-        "ON CONFLICT(project_id, slug) DO NOTHING",
-        (project_id, slug, now, now),
-    )
-    return conn.execute(
-        "SELECT id FROM features WHERE project_id=? AND slug=?", (project_id, slug)
-    ).fetchone()["id"]
-
-
 def _process_file(
     conn: sqlite3.Connection,
     abs_path: Path,
@@ -188,6 +156,10 @@ def _process_file(
     summary: WalkSummary,
     now: str,
 ) -> None:
+    # Imported lazily to avoid the documents↔walker import cycle: walker imports
+    # submit_document from documents; documents imports logical_key from parents (not walker).
+    from feature_skills_webapp.storage.documents import submit_document
+
     try:
         st = abs_path.stat()
     except OSError:
@@ -216,7 +188,6 @@ def _process_file(
 
     # Gate: skip file read when status is not 'missing', mtime+size unchanged, and a
     # version already exists. Still update source_path/status if the file moved.
-    cur = None
     if row:
         cur = current_content(conn, row["id"])
         need_read = (
@@ -250,7 +221,6 @@ def _process_file(
         log.debug("Skipping %s: no meta tag and not a feedback doc", abs_path)
         summary.errors += 1
         return
-    parsed = ParsedDoc(doc_type=doc_type, title=mp.title)
 
     # Parse structured content for versioning.
     content = parse_content(html_content, manifest_for(doc_type))
@@ -258,91 +228,37 @@ def _process_file(
         log.warning("Section-parse failure (no main/zero sections): %s", abs_path)
         summary.unparsed += 1
 
+    # Declare parents from disk — walker creates on demand (upsert, not require).
     project_id = upsert_project(conn, identity.project, now)
-    feature_id = (
-        upsert_feature(conn, project_id, identity.feature, now) if identity.feature else None
-    )
+    if identity.feature:
+        upsert_feature(conn, project_id, identity.feature, now)
 
-    meta = json.dumps({"title": parsed.title, "size": st.st_size})
     desired = "archived" if identity.archived else "active"
-    payload = json.dumps(
-        {"path": source_path, "type": parsed.doc_type, "feature": identity.feature}
+    result = submit_document(
+        conn,
+        project=identity.project,
+        feature=identity.feature,
+        doc_type=doc_type,
+        instance=instance,
+        content=content,
+        actor="importer",
+        now=now,
+        source_path=source_path,
+        source_mtime=mtime,
+        doc_status=desired,
+        doc_size=st.st_size,
+        doc_title=mp.title,
     )
 
-    if row is None:
-        cursor = conn.execute(
-            "INSERT INTO documents "
-            "(project_id, feature_id, type, status, source_path, logical_key, instance, "
-            "metadata_json, source_mtime, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                project_id,
-                feature_id,
-                parsed.doc_type,
-                desired,
-                source_path,
-                lkey,
-                instance,
-                meta,
-                mtime,
-                now,
-                now,
-            ),
-        )
-        doc_id = cursor.lastrowid
-        assert doc_id is not None
-        record_version(conn, doc_id, content, actor="importer", now=now)
-        conn.execute(
-            "INSERT INTO events (document_id, event_type, payload_json, created_at) "
-            "VALUES (?, 'created', ?, ?)",
-            (doc_id, payload, now),
-        )
+    if result.event_type == "created":
         summary.created += 1
-    else:
-        doc_id = row["id"]
-        old_status = row["status"]
-        conn.execute(
-            "UPDATE documents SET project_id=?, feature_id=?, type=?, status=?, "
-            "source_path=?, logical_key=?, instance=?, metadata_json=?, source_mtime=?, "
-            "updated_at=? WHERE id=?",
-            (
-                project_id,
-                feature_id,
-                parsed.doc_type,
-                desired,
-                source_path,
-                lkey,
-                instance,
-                meta,
-                mtime,
-                now,
-                doc_id,
-            ),
-        )
-
-        if cur is None:
-            # Seed the first version silently — no event, no summary counter.
-            record_version(conn, doc_id, content, actor="importer", now=now)
-        elif serialise(cur) != serialise(content):
-            # Content changed: record the new version and emit the appropriate event.
-            # Precedence: reactivation wins over archival (a doc returning from 'missing'
-            # is reported as 'reactivated' even if it reappears under .feedback-archive/).
-            record_version(conn, doc_id, content, actor="importer", now=now)
-            if old_status == "missing":
-                event_type = "reactivated"
-                summary.reactivated += 1
-            elif desired == "archived" and old_status != "archived":
-                event_type = "archived"
-                summary.archived += 1
-            else:
-                event_type = "updated"
-                summary.updated += 1
-            conn.execute(
-                "INSERT INTO events (document_id, event_type, payload_json, created_at) "
-                "VALUES (?, ?, ?, ?)",
-                (doc_id, event_type, payload, now),
-            )
-        # else: content identical — metadata already updated, no version or event.
+    elif result.event_type == "updated":
+        summary.updated += 1
+    elif result.event_type == "archived":
+        summary.archived += 1
+    elif result.event_type == "reactivated":
+        summary.reactivated += 1
+    # else: no change or silent version seed — no summary counter
 
 
 def walk(conn: sqlite3.Connection, docs_root: Path, *, reconcile: bool) -> WalkSummary:
