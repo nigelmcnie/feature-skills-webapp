@@ -12,7 +12,6 @@ from feature_skills_webapp.storage.tracker import (
     FeatureExists,
     FeatureNotFound,
     InvalidTransition,
-    capture_feature,
     claim_feature,
     create_feature,
     drop_feature,
@@ -140,40 +139,6 @@ async def get_feature_handler(request: Request) -> JSONResponse:
             "status": feat["status"],
             "owner": feat["owner"],
             "notes": feat["notes"],
-        }
-    )
-
-
-async def capture_handler(request: Request) -> JSONResponse:
-    if request.app.state.db_path is None:
-        return JSONResponse({"error": "db not configured"}, status_code=503)
-    project = request.path_params["project"]
-    slug = request.path_params["feature"]
-    try:
-        body = await request.json()
-    except Exception:
-        return JSONResponse({"error": "invalid JSON"}, status_code=400)
-    if not isinstance(body, dict):
-        return JSONResponse({"error": "body must be a JSON object"}, status_code=400)
-    notes_raw = body.get("notes")
-    if notes_raw is not None and not isinstance(notes_raw, str):
-        return JSONResponse({"error": "'notes' must be a string"}, status_code=400)
-    notes: str | None = notes_raw
-
-    try:
-        with request_conn(request.app) as conn, transaction(conn):
-            result = capture_feature(conn, project=project, slug=slug, notes=notes, now=now_iso())
-    except FeatureExists:
-        return JSONResponse({"error": "feature already exists"}, status_code=409)
-
-    if result.changed:
-        request.app.state.broadcaster.broadcast()
-    return JSONResponse(
-        {
-            "project": result.project,
-            "slug": result.slug,
-            "status": result.status,
-            "changed": result.changed,
         }
     )
 

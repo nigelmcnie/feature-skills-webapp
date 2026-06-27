@@ -45,6 +45,19 @@ def get_feature(conn: sqlite3.Connection, project: str, slug: str) -> sqlite3.Ro
     ).fetchone()
 
 
+def require_feature(conn: sqlite3.Connection, project_id: int, slug: str) -> int:
+    """Return the feature id for (project_id, slug), raising FeatureNotFound if absent."""
+    from feature_skills_webapp.storage.walker import slugify as _slugify
+
+    slug = _slugify(slug)
+    row = conn.execute(
+        "SELECT id FROM features WHERE project_id=? AND slug=?", (project_id, slug)
+    ).fetchone()
+    if row is None:
+        raise FeatureNotFound(slug)
+    return row["id"]
+
+
 def list_feature_documents(conn: sqlite3.Connection, feature_id: int) -> list[sqlite3.Row]:
     # Active docs only; feature_id IS NULL (project-level tracker doc) can never appear.
     return conn.execute(
@@ -115,17 +128,6 @@ def create_feature(
         (json.dumps({"project": project, "slug": slug}), now),
     )
     return MutationResult(project, slug, "available", changed=True)
-
-
-def capture_feature(
-    conn: sqlite3.Connection,
-    *,
-    project: str,
-    slug: str,
-    notes: str | None,
-    now: str,
-) -> MutationResult:
-    return create_feature(conn, project=project, slug=slug, notes=notes, now=now)
 
 
 def claim_feature(

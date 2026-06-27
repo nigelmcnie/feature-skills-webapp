@@ -11,7 +11,7 @@ from pathlib import Path
 
 from feature_skills_webapp.storage.db import connect, migrate
 from feature_skills_webapp.storage.inbox import humanise_type
-from feature_skills_webapp.storage.tracker import capture_feature, claim_feature
+from feature_skills_webapp.storage.tracker import claim_feature, create_feature
 from feature_skills_webapp.storage.versions import backfill_logical_keys, current_content
 from feature_skills_webapp.storage.walker import (
     DocIdentity,
@@ -1225,7 +1225,7 @@ def test_keystone_anti_clobber_walk_does_not_overwrite_api_status(tmp_path: Path
     now = "2025-01-01T00:00:00+00:00"
 
     # Use the tracker API to capture then claim — status becomes in_progress.
-    capture_feature(conn, project="proj1", slug="my-feature", notes="test", now=now)
+    create_feature(conn, project="proj1", slug="my-feature", notes="test", now=now)
     claim_feature(conn, project="proj1", slug="my-feature", owner="Alice", now=now)
 
     pre = conn.execute("SELECT status FROM features WHERE slug='my-feature'").fetchone()

@@ -9,6 +9,7 @@ from feature_skills_webapp.storage.db import connect, migrate, now_iso, transact
 from feature_skills_webapp.storage.documents import build_content, submit_document
 from feature_skills_webapp.storage.parity import compare_dbs
 from feature_skills_webapp.storage.versions import backfill_logical_keys
+from feature_skills_webapp.storage.walker import upsert_feature, upsert_project
 
 
 def _fresh_conn(tmp_path: Path, name: str) -> sqlite3.Connection:
@@ -27,7 +28,10 @@ def _write_context(
     actor: str = "agent",
 ) -> None:
     content = build_content("context", {"problem-space": f"<p>{problem_text}</p>"}, None)
+    now = now_iso()
     with transaction(conn):
+        project_id = upsert_project(conn, project, now)
+        upsert_feature(conn, project_id, feature, now)
         submit_document(
             conn,
             project=project,
@@ -36,7 +40,7 @@ def _write_context(
             instance=1,
             content=content,
             actor=actor,
-            now=now_iso(),
+            now=now,
         )
 
 
@@ -79,7 +83,10 @@ def test_whitespace_and_comment_differences_are_normalised(tmp_path: Path) -> No
     content_a = build_content("context", {"problem-space": "<p>  Hello   world  </p>"}, None)
     # DB B: HTML comment added; no extra whitespace — both extract to "Hello world"
     content_b = build_content("context", {"problem-space": "<!-- note --><p>Hello world</p>"}, None)
+    now_a = now_iso()
     with transaction(conn_a):
+        pid_a = upsert_project(conn_a, "proj", now_a)
+        upsert_feature(conn_a, pid_a, "feat", now_a)
         submit_document(
             conn_a,
             project="proj",
@@ -88,9 +95,12 @@ def test_whitespace_and_comment_differences_are_normalised(tmp_path: Path) -> No
             instance=1,
             content=content_a,
             actor="importer",
-            now=now_iso(),
+            now=now_a,
         )
+    now_b = now_iso()
     with transaction(conn_b):
+        pid_b = upsert_project(conn_b, "proj", now_b)
+        upsert_feature(conn_b, pid_b, "feat", now_b)
         submit_document(
             conn_b,
             project="proj",
@@ -99,7 +109,7 @@ def test_whitespace_and_comment_differences_are_normalised(tmp_path: Path) -> No
             instance=1,
             content=content_b,
             actor="agent",
-            now=now_iso(),
+            now=now_b,
         )
 
     report = compare_dbs(conn_a, conn_b)

@@ -15,6 +15,7 @@ from feature_skills_webapp.storage.documents import (
     submit_document,
     validate_writable,
 )
+from feature_skills_webapp.storage.tracker import FeatureNotFound
 from feature_skills_webapp.storage.versions import current_content
 from feature_skills_webapp.storage.walker import logical_key
 from feature_skills_webapp.web.db_dep import request_conn
@@ -73,17 +74,20 @@ async def put_document(request: Request) -> JSONResponse:
     if dry_run:
         return JSONResponse({"valid": True})
 
-    with request_conn(request.app) as conn, transaction(conn):
-        result = submit_document(
-            conn,
-            project=project,
-            feature=feat,
-            doc_type=doc_type,
-            instance=instance,
-            content=content,
-            actor=actor,
-            now=now_iso(),
-        )
+    try:
+        with request_conn(request.app) as conn, transaction(conn):
+            result = submit_document(
+                conn,
+                project=project,
+                feature=feat,
+                doc_type=doc_type,
+                instance=instance,
+                content=content,
+                actor=actor,
+                now=now_iso(),
+            )
+    except FeatureNotFound:
+        return JSONResponse({"error": missing_feature_msg(project, feat or "")}, status_code=404)
 
     request.app.state.broadcaster.broadcast()
 

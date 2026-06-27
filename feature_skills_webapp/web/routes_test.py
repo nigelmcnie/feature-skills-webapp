@@ -238,7 +238,7 @@ def test_index_shows_in_progress_feature(temp_db: Path, tmp_path: Path) -> None:
     """A feature with in_progress status appears under 'In progress'."""
     docs_root = make_docs_root(tmp_path)
     with TestClient(create_app(db_path=temp_db)) as client:
-        client.post("/api/projects/proj1/features/feat-a/capture", json={"notes": ""})
+        client.post("/api/projects/proj1/features/feat-a", json={"notes": ""})
         client.post("/api/projects/proj1/features/feat-a/claim", json={"owner": "Alice"})
         _walk_docs(temp_db, docs_root)
         response = client.get("/")
@@ -503,7 +503,7 @@ def test_inbox_card_feature_name_links_to_feature_page(temp_db: Path, tmp_path: 
     """Per-feature cards (in progress / shipped) link the feature name to its feature page."""
     docs_root = make_docs_root(tmp_path)
     with TestClient(create_app(db_path=temp_db)) as client:
-        client.post("/api/projects/proj1/features/feat-a/capture", json={"notes": ""})
+        client.post("/api/projects/proj1/features/feat-a", json={"notes": ""})
         client.post("/api/projects/proj1/features/feat-a/claim", json={"owner": "Alice"})
         _walk_docs(temp_db, docs_root)
         resp = client.get("/")
