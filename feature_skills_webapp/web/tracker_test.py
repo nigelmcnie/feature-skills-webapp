@@ -108,7 +108,7 @@ def test_list_projects_empty_db(temp_db: Path) -> None:
     with TestClient(create_app(db_path=temp_db)) as client:
         resp = client.get("/api/projects")
     assert resp.status_code == 200
-    assert resp.json() == {"projects": []}
+    assert resp.json()["projects"] == []
 
 
 # --- list_features ---
@@ -817,3 +817,30 @@ def test_note_update_no_broadcast_on_noop(temp_db: Path) -> None:
     assert resp.status_code == 200
     assert resp.json()["changed"] is False
     app.state.broadcaster.broadcast.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Phase 0: notices in listing responses
+# ---------------------------------------------------------------------------
+
+
+def test_list_projects_includes_notices(temp_db: Path) -> None:
+    _seed(temp_db)
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.get("/api/projects")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "notices" in data
+    assert isinstance(data["notices"], list)
+    assert len(data["notices"]) > 0
+
+
+def test_list_features_includes_notices(temp_db: Path) -> None:
+    _seed(temp_db)
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.get("/api/projects/proj-a/features")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "notices" in data
+    assert isinstance(data["notices"], list)
+    assert len(data["notices"]) > 0

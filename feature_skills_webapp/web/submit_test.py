@@ -566,3 +566,18 @@ def test_get_document_url_diff_view_for_multi_version(temp_db: Path) -> None:
     data = resp.json()
     assert data["version_num"] == 2
     assert data["url"] == f"/doc/{data['document_id']}?view=diff"
+
+
+# ---------------------------------------------------------------------------
+# Phase 0: notices in manifest response
+# ---------------------------------------------------------------------------
+
+
+def test_get_manifest_includes_notices() -> None:
+    client = TestClient(create_app(db_path=None))
+    resp = client.get("/api/manifests/requirements")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "notices" in data
+    assert isinstance(data["notices"], list)
+    assert len(data["notices"]) > 0
