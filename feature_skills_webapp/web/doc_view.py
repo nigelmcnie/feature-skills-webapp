@@ -22,8 +22,8 @@ from feature_skills_webapp.storage.inbox import doc_type_rank, humanise_type
 from feature_skills_webapp.storage.read_state import (
     acked_version,
     has_unreviewed_changes,
-    mark_diff_seen,
     mark_read,
+    mark_version_seen,
 )
 from feature_skills_webapp.storage.versions import content_at_version, current_content
 from feature_skills_webapp.storage.walker import FEEDBACK_SUFFIX
@@ -133,6 +133,12 @@ async def doc_shell(request: Request) -> Response:
                 mode = "synthesis-native"
             else:
                 mode = "raw-fallback"
+            # Synthesis docs have no separate diff-review step — viewing IS the
+            # review — so acknowledge the current version on view, the same as
+            # the section-doc paths below. Without this, acked_version stays
+            # NULL and an answered feedback doc never leaves "New since last
+            # visit" (the unreviewed-changes predicate keeps firing).
+            mark_version_seen(conn, doc_id)
         else:
             content = current_content(conn, doc_id)
             if content is None:
@@ -159,7 +165,7 @@ async def doc_shell(request: Request) -> Response:
                         else:
                             body_html = render_diff(diff_result, manifest)
                             mode = "diff"
-                    mark_diff_seen(conn, doc_id)
+                    mark_version_seen(conn, doc_id)
                 else:
                     body_html = render_section_doc(content, manifest)
                     mode = "native"
@@ -170,7 +176,7 @@ async def doc_shell(request: Request) -> Response:
                     ).fetchone()
                     latest = latest_row["latest"]
                     if latest == 1:
-                        mark_diff_seen(conn, doc_id)
+                        mark_version_seen(conn, doc_id)
                     else:
                         unreviewed_banner = has_unreviewed_changes(conn, doc_id)
                 # For section docs in native mode, use extra_css from content

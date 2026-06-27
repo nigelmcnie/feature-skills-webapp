@@ -1153,7 +1153,7 @@ def test_extra_css_with_stray_brace_rejected_at_write(temp_db: Path) -> None:
 
 
 def test_native_view_single_version_advances_acked_version(temp_db: Path, tmp_path: Path) -> None:
-    """A plain GET of a single-version doc calls mark_diff_seen → acked_version = 1."""
+    """A plain GET of a single-version doc calls mark_version_seen → acked_version = 1."""
     from feature_skills_webapp.storage.db import connect
     from feature_skills_webapp.storage.read_state import acked_version
 
@@ -1186,7 +1186,7 @@ def test_native_view_multi_version_shows_unreviewed_banner(temp_db: Path, tmp_pa
 
 
 def test_diff_view_advances_acked_version_to_latest(temp_db: Path, tmp_path: Path) -> None:
-    """A ?view=diff GET calls mark_diff_seen → acked_version advances to the latest version."""
+    """A ?view=diff GET calls mark_version_seen → acked_version advances to the latest version."""
     from feature_skills_webapp.storage.db import connect
     from feature_skills_webapp.storage.read_state import acked_version
 
@@ -1219,6 +1219,60 @@ def test_unreviewed_banner_absent_after_diff_viewed(temp_db: Path, tmp_path: Pat
     assert response.status_code == 200
     # Banner must not appear — acked_version matches latest
     assert "This document changed" not in response.text
+
+
+def test_feedback_view_advances_acked_version(temp_db: Path, tmp_path: Path) -> None:
+    """Viewing a synthesis doc acknowledges its version via mark_version_seen.
+
+    Synthesis docs have no diff-review step, so the view path must ack them; if
+    it doesn't, acked_version stays NULL and the unreviewed-changes predicate
+    keeps them in 'New since last visit' forever.
+    """
+    from feature_skills_webapp.storage.db import connect
+    from feature_skills_webapp.storage.read_state import acked_version
+
+    docs_root = make_docs_root_with_feedback(tmp_path)
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
+        doc_id = _doc_id_by_type(temp_db, "requirements-feedback")
+        client.get(f"/doc/{doc_id}")
+
+    conn = connect(temp_db)
+    av = acked_version(conn, doc_id)
+    conn.close()
+    assert av == 1
+
+
+def test_answered_feedback_leaves_new_since_after_view(temp_db: Path, tmp_path: Path) -> None:
+    """An answered feedback doc sits in 'New since last visit' until viewed, then clears.
+
+    Answering removes it from 'Awaiting your input', exposing it to the new-since
+    predicates; viewing must then acknowledge it so it drops out. Without the
+    synthesis-branch ack it would stay stuck regardless of how often it's viewed.
+    """
+    from feature_skills_webapp.storage.db import connect
+    from feature_skills_webapp.storage.inbox import new_since_last_visit
+
+    docs_root = make_docs_root_with_feedback(tmp_path)
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
+        doc_id = _doc_id_by_type(temp_db, "requirements-feedback")
+        client.post(
+            f"/doc/{doc_id}/synthesis-response",
+            json={"responses": {"1": ""}, "routine_flags": {}},
+        )
+
+        conn = connect(temp_db)
+        before = [c.document_id for c in new_since_last_visit(conn) if c.document_id]
+        conn.close()
+        assert doc_id in before, "answered-but-unviewed feedback should be in new-since"
+
+        client.get(f"/doc/{doc_id}")
+
+    conn = connect(temp_db)
+    after = [c.document_id for c in new_since_last_visit(conn) if c.document_id]
+    conn.close()
+    assert doc_id not in after, "viewing the answered feedback doc should clear it from new-since"
 
 
 def test_scope_and_keep_opaque_doc(tmp_path: Path, temp_db: Path) -> None:

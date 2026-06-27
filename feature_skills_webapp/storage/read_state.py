@@ -75,8 +75,13 @@ def acked_version(conn: sqlite3.Connection, document_id: int) -> int | None:
     return row["acked_version"] if row is not None else None
 
 
-def mark_diff_seen(conn: sqlite3.Connection, document_id: int) -> None:
-    """Advance acked_version to MAX(version_num) for this doc. Idempotent."""
+def mark_version_seen(conn: sqlite3.Connection, document_id: int) -> None:
+    """Acknowledge the current version: advance acked_version to MAX(version_num).
+
+    Called whenever a doc's current content has been seen — reviewing a section
+    doc's diff, or simply viewing a doc (e.g. synthesis docs, which have no
+    separate diff-review step). Idempotent.
+    """
     with transaction(conn):
         conn.execute(
             "INSERT INTO read_state (document_id, last_read_at, acked_version) "
