@@ -15,9 +15,9 @@ from feature_skills_webapp.storage.documents import (
     submit_document,
     validate_writable,
 )
+from feature_skills_webapp.storage.parents import logical_key
 from feature_skills_webapp.storage.tracker import FeatureNotFound, ProjectNotFound
 from feature_skills_webapp.storage.versions import current_content
-from feature_skills_webapp.storage.walker import logical_key
 from feature_skills_webapp.web.db_dep import request_conn
 
 
@@ -151,8 +151,9 @@ async def get_document(request: Request) -> JSONResponse:
 
 
 _NOTICES = [
-    "api-coherence in progress: document writes will soon require the feature "
-    "(and project) to exist — create them first."
+    "document writes require the feature and project to exist — "
+    "create both first: POST /api/projects/{project}, "
+    "then POST /api/projects/{project}/features/{feature}."
 ]
 
 

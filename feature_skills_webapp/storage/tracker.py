@@ -6,7 +6,7 @@ import json
 import sqlite3
 from dataclasses import dataclass
 
-from feature_skills_webapp.storage.walker import logical_key, slugify
+from feature_skills_webapp.storage.parents import logical_key, slugify
 
 FEATURE_STATUSES: tuple[str, ...] = ("available", "in_progress", "parked", "done", "archived")
 
@@ -59,9 +59,7 @@ def get_feature(conn: sqlite3.Connection, project: str, slug: str) -> sqlite3.Ro
 
 def require_feature(conn: sqlite3.Connection, project_id: int, slug: str) -> int:
     """Return the feature id for (project_id, slug), raising FeatureNotFound if absent."""
-    from feature_skills_webapp.storage.walker import slugify as _slugify
-
-    slug = _slugify(slug)
+    slug = slugify(slug)
     row = conn.execute(
         "SELECT id FROM features WHERE project_id=? AND slug=?", (project_id, slug)
     ).fetchone()
