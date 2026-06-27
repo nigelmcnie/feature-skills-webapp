@@ -306,8 +306,8 @@ def test_migration_backfills_null_status(tmp_path: Path) -> None:
     ).fetchone()
     assert row["status"] is None
 
-    # Full migrate() applies 0005 (backfill) and 0006 (acked_version column).
-    assert migrate(conn) == 6
+    # Full migrate() applies 0005 (backfill), 0006 (acked_version column), and 0007 (suggested_order).
+    assert migrate(conn) == 7
     row = conn.execute(
         "SELECT status FROM features WHERE slug='feat' AND project_id=?", (pid,)
     ).fetchone()
@@ -1029,3 +1029,25 @@ def test_update_feature_note_empty_clears_and_empty_again_is_noop(tmp_path: Path
     after = conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
     assert result2.changed is False
     assert after == before
+
+
+# ---------------------------------------------------------------------------
+# Phase 5: migration 0007 adds suggested_order column
+# ---------------------------------------------------------------------------
+
+
+def test_migration_0007_adds_suggested_order(tmp_path: Path) -> None:
+    """Fresh migrate() reaches v7 and the projects table has suggested_order."""
+    conn = connect(tmp_path / "test.db")
+    version = migrate(conn)
+    assert version == 7
+    # Column must exist and default to NULL.
+    row = conn.execute("PRAGMA table_info(projects)").fetchall()
+    col_names = [r["name"] for r in row]
+    assert "suggested_order" in col_names
+    # A newly created project must have NULL suggested_order.
+    conn.execute(
+        "INSERT INTO projects (name, created_at) VALUES ('proj', '2024-01-01T00:00:00+00:00')"
+    )
+    row = conn.execute("SELECT suggested_order FROM projects WHERE name='proj'").fetchone()
+    assert row["suggested_order"] is None

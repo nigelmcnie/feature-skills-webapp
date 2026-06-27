@@ -914,3 +914,78 @@ def test_capture_route_gone(temp_db: Path) -> None:
     with TestClient(create_app(db_path=temp_db)) as client:
         resp = client.post("/api/projects/proj/features/feat/capture", json={})
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Phase 5: PUT /api/projects/{p}/suggested-order + GET fields
+# ---------------------------------------------------------------------------
+
+
+def test_put_suggested_order_round_trip(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        client.post("/api/projects/proj")
+        resp = client.put("/api/projects/proj/suggested-order", json={"text": "feat-b\nfeat-a\n"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["project"] == "proj"
+    assert data["suggested_order"] == "feat-b\nfeat-a\n"
+
+
+def test_put_suggested_order_overwrites(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        client.post("/api/projects/proj")
+        client.put("/api/projects/proj/suggested-order", json={"text": "old"})
+        resp = client.put("/api/projects/proj/suggested-order", json={"text": "new"})
+    assert resp.status_code == 200
+    assert resp.json()["suggested_order"] == "new"
+
+
+def test_put_suggested_order_null_clears(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        client.post("/api/projects/proj")
+        client.put("/api/projects/proj/suggested-order", json={"text": "some order"})
+        resp = client.put("/api/projects/proj/suggested-order", json={"text": ""})
+    assert resp.status_code == 200
+    assert resp.json()["suggested_order"] is None
+
+
+def test_put_suggested_order_404_unknown_project(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.put("/api/projects/no-such/suggested-order", json={"text": "x"})
+    assert resp.status_code == 404
+
+
+def test_put_suggested_order_503_no_db() -> None:
+    client = TestClient(create_app(db_path=None))
+    resp = client.put("/api/projects/proj/suggested-order", json={"text": "x"})
+    assert resp.status_code == 503
+
+
+def test_get_project_includes_suggested_order(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        client.post("/api/projects/proj")
+        client.put("/api/projects/proj/suggested-order", json={"text": "feat-x\n"})
+        resp = client.get("/api/projects/proj")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["suggested_order"] == "feat-x\n"
+
+
+def test_get_project_suggested_order_null_when_unset(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        client.post("/api/projects/proj")
+        resp = client.get("/api/projects/proj")
+    assert resp.status_code == 200
+    assert resp.json()["suggested_order"] is None
+
+
+def test_list_features_includes_created_at(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        client.post("/api/projects/proj")
+        client.post("/api/projects/proj/features/feat-a", json={})
+        resp = client.get("/api/projects/proj/features")
+    assert resp.status_code == 200
+    feats = resp.json()["features"]
+    assert len(feats) == 1
+    assert "created_at" in feats[0]
+    assert feats[0]["created_at"] is not None

@@ -40,10 +40,10 @@ def test_connect_foreign_keys(tmp_path: Path) -> None:
     conn.close()
 
 
-def test_migrate_fresh_returns_version_6(tmp_path: Path) -> None:
+def test_migrate_fresh_returns_version_7(tmp_path: Path) -> None:
     conn = connect(tmp_path / "test.db")
     version = migrate(conn)
-    assert version == 6
+    assert version == 7
     conn.close()
 
 
@@ -55,7 +55,7 @@ def test_migrate_idempotent(tmp_path: Path) -> None:
 
     conn = connect(db)
     version = migrate(conn)
-    assert version == 6
+    assert version == 7
     conn.close()
 
 
@@ -63,7 +63,7 @@ def test_schema_version_after_migrate(tmp_path: Path) -> None:
     conn = connect(tmp_path / "test.db")
     migrate(conn)
     v = current_version(conn)
-    assert v == 6
+    assert v == 7
     conn.close()
 
 
@@ -235,9 +235,9 @@ def test_migrate_v1_to_v2_upgrade_path(tmp_path: Path) -> None:
     assert "status" not in cols_v1
     assert "project_id" not in cols_v1
 
-    # Run the real migration set: upgrades 1 -> 6 in place.
-    assert migrate(conn) == 6
-    assert current_version(conn) == 6
+    # Run the real migration set: upgrades 1 -> 7 in place.
+    assert migrate(conn) == 7
+    assert current_version(conn) == 7
     cols_v2 = {r["name"] for r in conn.execute("PRAGMA table_info(documents)").fetchall()}
     assert "status" in cols_v2
     assert "project_id" in cols_v2
@@ -339,8 +339,8 @@ def test_migration_0006_backfills_acked_version_from_version_at_last_read(
             (doc_id, ts_read),
         )
 
-    # Apply 0006 by running the full migrate.
-    assert migrate(conn) == 6
+    # Apply 0006 and 0007 by running the full migrate.
+    assert migrate(conn) == 7
 
     row = conn.execute(
         "SELECT acked_version FROM read_state WHERE document_id = ?", (doc_id,)
