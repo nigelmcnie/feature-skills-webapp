@@ -844,3 +844,92 @@ def test_list_features_includes_notices(temp_db: Path) -> None:
     assert "notices" in data
     assert isinstance(data["notices"], list)
     assert len(data["notices"]) > 0
+
+
+# ---------------------------------------------------------------------------
+# Phase 1: POST /api/projects/{p}/features/{f} — create_feature_handler
+# ---------------------------------------------------------------------------
+
+
+def test_create_feature_returns_200(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post("/api/projects/proj/features/my-feat", json={"notes": "some notes"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["project"] == "proj"
+    assert data["slug"] == "my-feat"
+    assert data["status"] == "available"
+    assert data["changed"] is True
+
+
+def test_create_feature_409_on_duplicate(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        client.post("/api/projects/proj/features/my-feat", json={"notes": "x"})
+        resp = client.post("/api/projects/proj/features/my-feat", json={"notes": "x"})
+    assert resp.status_code == 409
+
+
+def test_create_feature_notes_optional(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post("/api/projects/proj/features/no-notes", json={})
+    assert resp.status_code == 200
+
+
+def test_create_feature_503_no_db() -> None:
+    client = TestClient(create_app(db_path=None))
+    resp = client.post("/api/projects/proj/features/feat", json={})
+    assert resp.status_code == 503
+
+
+# ---------------------------------------------------------------------------
+# Phase 1: GET /api/projects/{p}/features/{f} — get_feature_handler
+# ---------------------------------------------------------------------------
+
+
+def test_get_feature_returns_fields(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        client.post("/api/projects/proj/features/my-feat", json={"notes": "hello"})
+        resp = client.get("/api/projects/proj/features/my-feat")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["project"] == "proj"
+    assert data["slug"] == "my-feat"
+    assert data["status"] == "available"
+    assert data["notes"] == "hello"
+    assert "owner" in data
+
+
+def test_get_feature_404_unknown_feature(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        # project exists (seeded by create), feature does not
+        client.post("/api/projects/proj/features/other", json={})
+        resp = client.get("/api/projects/proj/features/no-such-feat")
+    assert resp.status_code == 404
+
+
+def test_get_feature_404_unknown_project(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.get("/api/projects/no-such-proj/features/any-feat")
+    assert resp.status_code == 404
+
+
+def test_get_feature_503_no_db() -> None:
+    client = TestClient(create_app(db_path=None))
+    resp = client.get("/api/projects/proj/features/feat")
+    assert resp.status_code == 503
+
+
+# ---------------------------------------------------------------------------
+# Phase 1: capture alias still works
+# ---------------------------------------------------------------------------
+
+
+def test_capture_alias_still_works(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post(
+            "/api/projects/proj/features/via-capture/capture", json={"notes": "legacy"}
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["slug"] == "via-capture"
+    assert data["status"] == "available"

@@ -87,7 +87,7 @@ class MutationResult:
 # ---------------------------------------------------------------------------
 
 
-def capture_feature(
+def create_feature(
     conn: sqlite3.Connection,
     *,
     project: str,
@@ -111,10 +111,21 @@ def capture_feature(
     )
     conn.execute(
         "INSERT INTO events (document_id, event_type, payload_json, created_at) "
-        "VALUES (NULL, 'feature_captured', ?, ?)",
+        "VALUES (NULL, 'feature_created', ?, ?)",
         (json.dumps({"project": project, "slug": slug}), now),
     )
     return MutationResult(project, slug, "available", changed=True)
+
+
+def capture_feature(
+    conn: sqlite3.Connection,
+    *,
+    project: str,
+    slug: str,
+    notes: str | None,
+    now: str,
+) -> MutationResult:
+    return create_feature(conn, project=project, slug=slug, notes=notes, now=now)
 
 
 def claim_feature(

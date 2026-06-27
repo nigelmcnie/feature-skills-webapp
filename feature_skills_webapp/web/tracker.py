@@ -14,6 +14,7 @@ from feature_skills_webapp.storage.tracker import (
     InvalidTransition,
     capture_feature,
     claim_feature,
+    create_feature,
     drop_feature,
     get_feature,
     get_project,
@@ -83,6 +84,62 @@ async def list_documents_handler(request: Request) -> JSONResponse:
                 }
                 for r in docs
             ],
+        }
+    )
+
+
+async def create_feature_handler(request: Request) -> JSONResponse:
+    if request.app.state.db_path is None:
+        return JSONResponse({"error": "db not configured"}, status_code=503)
+    project = request.path_params["project"]
+    slug = request.path_params["feature"]
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid JSON"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "body must be a JSON object"}, status_code=400)
+    notes_raw = body.get("notes")
+    if notes_raw is not None and not isinstance(notes_raw, str):
+        return JSONResponse({"error": "'notes' must be a string"}, status_code=400)
+    notes: str | None = notes_raw
+
+    try:
+        with request_conn(request.app) as conn, transaction(conn):
+            result = create_feature(conn, project=project, slug=slug, notes=notes, now=now_iso())
+    except FeatureExists:
+        return JSONResponse({"error": "feature already exists"}, status_code=409)
+
+    request.app.state.broadcaster.broadcast()
+    return JSONResponse(
+        {
+            "project": result.project,
+            "slug": result.slug,
+            "status": result.status,
+            "changed": result.changed,
+        }
+    )
+
+
+async def get_feature_handler(request: Request) -> JSONResponse:
+    if request.app.state.db_path is None:
+        return JSONResponse({"error": "db not configured"}, status_code=503)
+    project = request.path_params["project"]
+    slug = request.path_params["feature"]
+    with request_conn(request.app) as conn:
+        proj = get_project(conn, project)
+        if proj is None:
+            return JSONResponse({"error": "project not found"}, status_code=404)
+        feat = get_feature(conn, project, slug)
+    if feat is None:
+        return JSONResponse({"error": "feature not found"}, status_code=404)
+    return JSONResponse(
+        {
+            "project": feat["project"],
+            "slug": feat["slug"],
+            "status": feat["status"],
+            "owner": feat["owner"],
+            "notes": feat["notes"],
         }
     )
 

@@ -344,7 +344,7 @@ def test_capture_creates_available_feature_and_event(tmp_path: Path) -> None:
     assert feat["status"] == "available"
     assert feat["notes"] == "n"
     event = conn.execute(
-        "SELECT event_type FROM events WHERE event_type='feature_captured'"
+        "SELECT event_type FROM events WHERE event_type='feature_created'"
     ).fetchone()
     assert event is not None
 
