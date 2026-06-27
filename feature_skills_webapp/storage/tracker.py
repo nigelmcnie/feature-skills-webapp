@@ -25,7 +25,9 @@ def get_project(conn: sqlite3.Connection, name: str) -> sqlite3.Row | None:
 
 
 def get_project_row(conn: sqlite3.Connection, name: str) -> sqlite3.Row | None:
-    return conn.execute("SELECT id, name, repo_path FROM projects WHERE name=?", (name,)).fetchone()
+    return conn.execute(
+        "SELECT id, name, repo_path, suggested_order FROM projects WHERE name=?", (name,)
+    ).fetchone()
 
 
 def require_project(conn: sqlite3.Connection, name: str) -> int:
@@ -38,7 +40,7 @@ def require_project(conn: sqlite3.Connection, name: str) -> int:
 
 def list_features(conn: sqlite3.Connection, project_id: int) -> list[sqlite3.Row]:
     return conn.execute(
-        "SELECT f.slug, f.status, f.owner, f.notes, "
+        "SELECT f.slug, f.status, f.owner, f.notes, f.created_at, "
         "  (SELECT MAX(e.created_at) FROM events e "
         "   JOIN documents d ON e.document_id = d.id "
         "   WHERE d.feature_id = f.id AND d.status = 'active') AS last_activity "
@@ -129,6 +131,14 @@ def create_project(
         "INSERT INTO projects (name, created_at) VALUES (?, ?)",
         (name, now),
     )
+
+
+def set_project_suggested_order(
+    conn: sqlite3.Connection,
+    name: str,
+    text: str | None,
+) -> None:
+    conn.execute("UPDATE projects SET suggested_order=? WHERE name=?", (text, name))
 
 
 def create_feature(

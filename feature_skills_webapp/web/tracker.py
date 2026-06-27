@@ -26,6 +26,7 @@ from feature_skills_webapp.storage.tracker import (
     list_projects,
     park_feature,
     release_feature,
+    set_project_suggested_order,
     ship_feature,
     update_feature_note,
 )
@@ -54,7 +55,42 @@ async def get_project_handler(request: Request) -> JSONResponse:
         row = get_project_row(conn, name)
     if row is None:
         return JSONResponse({"error": "project not found"}, status_code=404)
-    return JSONResponse({"project": row["name"], "repo_path": row["repo_path"]})
+    return JSONResponse(
+        {
+            "project": row["name"],
+            "repo_path": row["repo_path"],
+            "suggested_order": row["suggested_order"],
+        }
+    )
+
+
+async def put_suggested_order_handler(request: Request) -> JSONResponse:
+    if request.app.state.db_path is None:
+        return JSONResponse({"error": "db not configured"}, status_code=503)
+    name = request.path_params["project"]
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid JSON"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "body must be a JSON object"}, status_code=400)
+    text = body.get("text")
+    if text is not None and not isinstance(text, str):
+        return JSONResponse({"error": "'text' must be a string"}, status_code=400)
+    with request_conn(request.app) as conn:
+        row = get_project_row(conn, name)
+        if row is None:
+            return JSONResponse({"error": "project not found"}, status_code=404)
+        with transaction(conn):
+            set_project_suggested_order(conn, name, text or None)
+        updated = get_project_row(conn, name)
+        assert updated is not None
+    return JSONResponse(
+        {
+            "project": updated["name"],
+            "suggested_order": updated["suggested_order"],
+        }
+    )
 
 
 async def list_projects_handler(request: Request) -> JSONResponse:
@@ -78,7 +114,13 @@ async def list_features_handler(request: Request) -> JSONResponse:
         {
             "project": name,
             "features": [
-                {"slug": r["slug"], "status": r["status"], "owner": r["owner"], "notes": r["notes"]}
+                {
+                    "slug": r["slug"],
+                    "status": r["status"],
+                    "owner": r["owner"],
+                    "notes": r["notes"],
+                    "created_at": r["created_at"],
+                }
                 for r in feats
             ],
             "notices": _NOTICES,

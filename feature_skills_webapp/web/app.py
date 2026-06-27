@@ -46,6 +46,7 @@ from feature_skills_webapp.web.tracker import (
     list_projects_handler,
     note_handler,
     park_handler,
+    put_suggested_order_handler,
     release_handler,
     ship_handler,
 )
@@ -129,6 +130,11 @@ def create_app(db_path: Path | None) -> Starlette:
                 "/api/projects/{project}",
                 create_project_handler,
                 methods=["POST"],
+            ),
+            Route(
+                "/api/projects/{project}/suggested-order",
+                put_suggested_order_handler,
+                methods=["PUT"],
             ),
             Route("/api/projects/{project}/features", list_features_handler),
             Route(
