@@ -14,8 +14,9 @@ from feature_skills_webapp.storage.doc_content import (
 )
 from feature_skills_webapp.storage.doc_render import css_has_brace_error, css_has_style_breakout
 from feature_skills_webapp.storage.inbox import humanise_type
+from feature_skills_webapp.storage.tracker import require_feature
 from feature_skills_webapp.storage.versions import current_content, record_version
-from feature_skills_webapp.storage.walker import logical_key, upsert_feature, upsert_project
+from feature_skills_webapp.storage.walker import logical_key, upsert_project
 
 WRITABLE_SECTION_TYPES = frozenset({"context", "requirements", "plan"})
 MAX_BODY_BYTES = 1024 * 1024  # 1 MB
@@ -149,7 +150,7 @@ def submit_document(
     lkey = logical_key(project, feature, doc_type, instance)
 
     project_id = upsert_project(conn, project, now)
-    feature_id = upsert_feature(conn, project_id, feature, now) if feature is not None else None
+    feature_id = require_feature(conn, project_id, feature) if feature is not None else None
 
     row = conn.execute(
         "SELECT id FROM documents WHERE logical_key=?",

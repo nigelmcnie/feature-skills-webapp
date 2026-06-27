@@ -224,84 +224,6 @@ def _seed_bare_feature(db: Path, slug: str, status: str = "available") -> None:
 
 
 # ---------------------------------------------------------------------------
-# capture handler
-# ---------------------------------------------------------------------------
-
-
-def test_capture_503_no_db() -> None:
-    client = TestClient(create_app(db_path=None))
-    resp = client.post("/api/projects/proj/features/feat/capture", json={})
-    assert resp.status_code == 503
-
-
-def test_capture_200_creates_feature(temp_db: Path) -> None:
-    with TestClient(create_app(db_path=temp_db)) as client:
-        resp = client.post(
-            "/api/projects/proj/features/new-feat/capture",
-            json={"notes": "hello"},
-        )
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["project"] == "proj"
-    assert data["slug"] == "new-feat"
-    assert data["status"] == "available"
-    assert data["changed"] is True
-
-
-def test_capture_409_feature_already_exists(temp_db: Path) -> None:
-    _seed_bare_feature(temp_db, "existing")
-    with TestClient(create_app(db_path=temp_db)) as client:
-        resp = client.post("/api/projects/proj/features/existing/capture", json={})
-    assert resp.status_code == 409
-
-
-def test_capture_400_invalid_json(temp_db: Path) -> None:
-    with TestClient(create_app(db_path=temp_db)) as client:
-        resp = client.post(
-            "/api/projects/proj/features/feat/capture",
-            content="not-json",
-            headers={"Content-Type": "application/json"},
-        )
-    assert resp.status_code == 400
-
-
-def test_capture_400_non_string_notes(temp_db: Path) -> None:
-    with TestClient(create_app(db_path=temp_db)) as client:
-        resp = client.post(
-            "/api/projects/proj/features/feat/capture",
-            json={"notes": 123},
-        )
-    assert resp.status_code == 400
-
-
-def test_capture_400_non_dict_body(temp_db: Path) -> None:
-    # Valid JSON but not an object — exercises the isinstance(body, dict) guard
-    # via a path distinct from the malformed-JSON case above.
-    with TestClient(create_app(db_path=temp_db)) as client:
-        resp = client.post("/api/projects/proj/features/feat/capture", json=[])
-    assert resp.status_code == 400
-
-
-def test_capture_broadcasts_on_change(temp_db: Path) -> None:
-    app = create_app(db_path=temp_db)
-    with TestClient(app) as client:
-        app.state.broadcaster = MagicMock()
-        resp = client.post("/api/projects/proj/features/new-feat/capture", json={})
-    assert resp.status_code == 200
-    app.state.broadcaster.broadcast.assert_called_once()
-
-
-def test_capture_no_broadcast_on_existing(temp_db: Path) -> None:
-    _seed_bare_feature(temp_db, "existing")
-    app = create_app(db_path=temp_db)
-    with TestClient(app) as client:
-        app.state.broadcaster = MagicMock()
-        resp = client.post("/api/projects/proj/features/existing/capture", json={})
-    assert resp.status_code == 409
-    app.state.broadcaster.broadcast.assert_not_called()
-
-
-# ---------------------------------------------------------------------------
 # claim handler
 # ---------------------------------------------------------------------------
 
@@ -920,16 +842,12 @@ def test_get_feature_503_no_db() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Phase 1: capture alias still works
+# Phase 2: capture route retired
 # ---------------------------------------------------------------------------
 
 
-def test_capture_alias_still_works(temp_db: Path) -> None:
+def test_capture_route_gone(temp_db: Path) -> None:
+    """POST .../capture was removed in Phase 2; the route no longer exists."""
     with TestClient(create_app(db_path=temp_db)) as client:
-        resp = client.post(
-            "/api/projects/proj/features/via-capture/capture", json={"notes": "legacy"}
-        )
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["slug"] == "via-capture"
-    assert data["status"] == "available"
+        resp = client.post("/api/projects/proj/features/feat/capture", json={})
+    assert resp.status_code == 404

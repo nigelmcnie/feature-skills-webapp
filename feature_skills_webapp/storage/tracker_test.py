@@ -13,8 +13,8 @@ from feature_skills_webapp.storage.tracker import (
     FeatureExists,
     FeatureNotFound,
     InvalidTransition,
-    capture_feature,
     claim_feature,
+    create_feature,
     drop_feature,
     get_feature,
     get_project,
@@ -328,15 +328,15 @@ def test_upsert_feature_seeds_available_status(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# capture_feature
+# create_feature
 # ---------------------------------------------------------------------------
 
 
-def test_capture_creates_available_feature_and_event(tmp_path: Path) -> None:
+def test_create_creates_available_feature_and_event(tmp_path: Path) -> None:
     conn = _conn(tmp_path)
     now = "2024-01-01T00:00:00+00:00"
     with transaction(conn):
-        result = capture_feature(conn, project="proj", slug="new-feat", notes="n", now=now)
+        result = create_feature(conn, project="proj", slug="new-feat", notes="n", now=now)
     assert result.status == "available"
     assert result.changed is True
     feat = get_feature(conn, "proj", "new-feat")
@@ -349,20 +349,20 @@ def test_capture_creates_available_feature_and_event(tmp_path: Path) -> None:
     assert event is not None
 
 
-def test_capture_raises_feature_exists_on_duplicate(tmp_path: Path) -> None:
+def test_create_raises_feature_exists_on_duplicate(tmp_path: Path) -> None:
     conn = _conn(tmp_path)
     now = "2024-01-01T00:00:00+00:00"
     with transaction(conn):
-        capture_feature(conn, project="proj", slug="feat", notes=None, now=now)
+        create_feature(conn, project="proj", slug="feat", notes=None, now=now)
     with pytest.raises(FeatureExists), transaction(conn):
-        capture_feature(conn, project="proj", slug="feat", notes=None, now=now)
+        create_feature(conn, project="proj", slug="feat", notes=None, now=now)
 
 
-def test_capture_with_no_notes(tmp_path: Path) -> None:
+def test_create_with_no_notes(tmp_path: Path) -> None:
     conn = _conn(tmp_path)
     now = "2024-01-01T00:00:00+00:00"
     with transaction(conn):
-        result = capture_feature(conn, project="proj", slug="feat", notes=None, now=now)
+        result = create_feature(conn, project="proj", slug="feat", notes=None, now=now)
     assert result.status == "available"
     feat = get_feature(conn, "proj", "feat")
     assert feat is not None
@@ -714,11 +714,11 @@ def test_claim_parked_feature_resumes_as_in_progress(tmp_path: Path) -> None:
 # --- guard: slug normalisation on the mutation/lookup boundary ---
 
 
-def test_capture_normalises_display_name_to_slug(tmp_path: Path) -> None:
+def test_create_normalises_display_name_to_slug(tmp_path: Path) -> None:
     conn = _conn(tmp_path)
     now = "2024-01-01T00:00:00+00:00"
     with transaction(conn):
-        result = capture_feature(
+        result = create_feature(
             conn, project="proj", slug="File Classification", notes=None, now=now
         )
     assert result.slug == "file-classification"
@@ -726,15 +726,15 @@ def test_capture_normalises_display_name_to_slug(tmp_path: Path) -> None:
     assert [r["slug"] for r in stored] == ["file-classification"]
 
 
-def test_capture_of_display_name_then_slug_is_a_duplicate(tmp_path: Path) -> None:
-    # The core regression: a display-name capture and a kebab capture must not
-    # become two rows. Without slugify the second capture would not collide.
+def test_create_of_display_name_then_slug_is_a_duplicate(tmp_path: Path) -> None:
+    # The core regression: a display-name create and a kebab create must not
+    # become two rows. Without slugify the second create would not collide.
     conn = _conn(tmp_path)
     now = "2024-01-01T00:00:00+00:00"
     with transaction(conn):
-        capture_feature(conn, project="proj", slug="File classification", notes=None, now=now)
+        create_feature(conn, project="proj", slug="File classification", notes=None, now=now)
     with pytest.raises(FeatureExists), transaction(conn):
-        capture_feature(conn, project="proj", slug="file-classification", notes=None, now=now)
+        create_feature(conn, project="proj", slug="file-classification", notes=None, now=now)
     assert conn.execute("SELECT COUNT(*) AS n FROM features").fetchone()["n"] == 1
 
 

@@ -14,11 +14,18 @@ _PUT_URL = "/api/documents/proj/feat-a/requirements/1"
 _VALID_BODY = {"sections": {"summary": "<p>The summary.</p>"}}
 
 
+def _create_feature_a(client: TestClient) -> None:
+    """Seed proj/feat-a via the API — required before any PUT /api/documents/proj/feat-a/…."""
+    resp = client.post("/api/projects/proj/features/feat-a", json={})
+    assert resp.status_code == 200
+
+
 # --- happy path ---
 
 
 def test_put_happy_path_returns_all_fields(temp_db: Path) -> None:
     with TestClient(create_app(db_path=temp_db)) as client:
+        _create_feature_a(client)
         resp = client.put(_PUT_URL, json=_VALID_BODY)
     assert resp.status_code == 200
     data = resp.json()
@@ -32,6 +39,7 @@ def test_put_happy_path_returns_all_fields(temp_db: Path) -> None:
 
 def test_put_doc_fetchable_at_url(temp_db: Path) -> None:
     with TestClient(create_app(db_path=temp_db)) as client:
+        _create_feature_a(client)
         resp = client.put(_PUT_URL, json=_VALID_BODY)
         doc_id = resp.json()["document_id"]
         doc_resp = client.get(f"/doc/{doc_id}")
@@ -40,6 +48,7 @@ def test_put_doc_fetchable_at_url(temp_db: Path) -> None:
 
 def test_put_second_submit_with_change(temp_db: Path) -> None:
     with TestClient(create_app(db_path=temp_db)) as client:
+        _create_feature_a(client)
         client.put(_PUT_URL, json=_VALID_BODY)
         resp = client.put(_PUT_URL, json={"sections": {"summary": "<p>Updated.</p>"}})
     assert resp.status_code == 200
@@ -51,6 +60,7 @@ def test_put_second_submit_with_change(temp_db: Path) -> None:
 
 def test_put_identical_resubmit_no_change(temp_db: Path) -> None:
     with TestClient(create_app(db_path=temp_db)) as client:
+        _create_feature_a(client)
         client.put(_PUT_URL, json=_VALID_BODY)
         resp = client.put(_PUT_URL, json=_VALID_BODY)
     data = resp.json()
@@ -60,12 +70,14 @@ def test_put_identical_resubmit_no_change(temp_db: Path) -> None:
 
 def test_put_actor_defaults_to_agent(temp_db: Path) -> None:
     with TestClient(create_app(db_path=temp_db)) as client:
+        _create_feature_a(client)
         resp = client.put(_PUT_URL, json=_VALID_BODY)
     assert resp.status_code == 200
 
 
 def test_put_custom_actor(temp_db: Path) -> None:
     with TestClient(create_app(db_path=temp_db)) as client:
+        _create_feature_a(client)
         resp = client.put(_PUT_URL, json={**_VALID_BODY, "actor": "codex"})
     assert resp.status_code == 200
 
@@ -156,6 +168,17 @@ def test_put_400_instance_2_for_non_feedback(temp_db: Path) -> None:
     assert "instance must be 1" in resp.json()["error"]
 
 
+# --- 404 feature not found ---
+
+
+def test_put_404_feature_not_found(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.put("/api/documents/proj/nonexistent/requirements/1", json=_VALID_BODY)
+    assert resp.status_code == 404
+    assert "nonexistent" in resp.json()["error"]
+    assert "POST /api/projects/proj/features/nonexistent" in resp.json()["error"]
+
+
 # --- 503 ---
 
 
@@ -171,6 +194,7 @@ def test_put_503_db_not_configured() -> None:
 
 def test_put_broadcasts(temp_db: Path) -> None:
     with TestClient(create_app(db_path=temp_db)) as client:
+        _create_feature_a(client)
         app = cast(Starlette, client.app)
         q = app.state.broadcaster.register()
         client.put(_PUT_URL, json=_VALID_BODY)
@@ -187,6 +211,7 @@ _GET_URL = "/api/documents/proj/feat-a/requirements/1"
 
 def test_get_document_round_trips_content(temp_db: Path) -> None:
     with TestClient(create_app(db_path=temp_db)) as client:
+        _create_feature_a(client)
         client.put(_PUT_URL, json={"sections": {"scope": "<p>Sc.</p>", "summary": "<p>Pr.</p>"}})
         resp = client.get(_GET_URL)
     assert resp.status_code == 200
@@ -205,6 +230,7 @@ def test_get_document_round_trips_content(temp_db: Path) -> None:
 def test_get_document_sections_in_manifest_order(temp_db: Path) -> None:
     # Submit scope before summary; GET must return summary first (manifest order)
     with TestClient(create_app(db_path=temp_db)) as client:
+        _create_feature_a(client)
         client.put(_PUT_URL, json={"sections": {"scope": "<p>S</p>", "summary": "<p>P</p>"}})
         resp = client.get(_GET_URL)
     keys = [s["key"] for s in resp.json()["sections"]]
@@ -228,6 +254,7 @@ def test_put_get_round_trip_opaque_feedback(temp_db: Path) -> None:
     # exercises both the opaque write path and the opaque GET branch end-to-end.
     url = "/api/documents/proj/feat-a/requirements-feedback/2"
     with TestClient(create_app(db_path=temp_db)) as client:
+        _create_feature_a(client)
         put_resp = client.put(url, json={"body": "<p>feedback body</p>"})
         assert put_resp.status_code == 200
         assert put_resp.json()["created"] is True
@@ -334,6 +361,7 @@ def _add_comments(client, doc_id: int, texts: list[str]) -> None:
 
 def test_get_comments_by_logical_key(temp_db: Path) -> None:
     with TestClient(create_app(db_path=temp_db)) as client:
+        _create_feature_a(client)
         put_resp = client.put(_PUT_URL, json=_VALID_BODY)
         doc_id = put_resp.json()["document_id"]
         _add_comments(client, doc_id, ["Note A", "Note B"])
@@ -350,6 +378,7 @@ def test_get_comments_by_logical_key(temp_db: Path) -> None:
 
 def test_get_comments_empty_before_any_submitted(temp_db: Path) -> None:
     with TestClient(create_app(db_path=temp_db)) as client:
+        _create_feature_a(client)
         client.put(_PUT_URL, json=_VALID_BODY)
         resp = client.get(_COMMENTS_URL)
     assert resp.status_code == 200
@@ -360,6 +389,7 @@ def test_get_comments_empty_before_any_submitted(temp_db: Path) -> None:
 
 def test_integrate_drops_comments_from_active_set(temp_db: Path) -> None:
     with TestClient(create_app(db_path=temp_db)) as client:
+        _create_feature_a(client)
         put_resp = client.put(_PUT_URL, json=_VALID_BODY)
         doc_id = put_resp.json()["document_id"]
         _add_comments(client, doc_id, ["Keep", "Integrate me"])
@@ -409,6 +439,7 @@ _SYNTHESIS_URL = "/api/documents/proj/feat-a/requirements/1/synthesis"
 
 def test_get_synthesis_submitted_false_for_fresh_doc(temp_db: Path) -> None:
     with TestClient(create_app(db_path=temp_db)) as client:
+        _create_feature_a(client)
         client.put(_PUT_URL, json=_VALID_BODY)
         resp = client.get(_SYNTHESIS_URL)
     assert resp.status_code == 200
@@ -421,6 +452,7 @@ def test_get_synthesis_submitted_false_for_fresh_doc(temp_db: Path) -> None:
 
 def test_get_synthesis_populated_after_post(temp_db: Path) -> None:
     with TestClient(create_app(db_path=temp_db)) as client:
+        _create_feature_a(client)
         put_resp = client.put(_PUT_URL, json=_VALID_BODY)
         doc_id = put_resp.json()["document_id"]
         client.post(
@@ -493,6 +525,7 @@ def test_static_doc_css_returns_200() -> None:
 
 def test_extra_css_round_trips_in_get(temp_db: Path) -> None:
     with TestClient(create_app(db_path=temp_db)) as client:
+        _create_feature_a(client)
         client.put(
             _PUT_URL, json={"sections": {"summary": "<p>x</p>"}, "extra_css": "table{color:red}"}
         )
@@ -503,6 +536,7 @@ def test_extra_css_round_trips_in_get(temp_db: Path) -> None:
 
 def test_extra_css_identical_reput_no_new_version(temp_db: Path) -> None:
     with TestClient(create_app(db_path=temp_db)) as client:
+        _create_feature_a(client)
         client.put(
             _PUT_URL, json={"sections": {"summary": "<p>x</p>"}, "extra_css": "table{color:red}"}
         )
@@ -515,6 +549,7 @@ def test_extra_css_identical_reput_no_new_version(temp_db: Path) -> None:
 
 def test_extra_css_absent_on_put_echoed_empty(temp_db: Path) -> None:
     with TestClient(create_app(db_path=temp_db)) as client:
+        _create_feature_a(client)
         client.put(_PUT_URL, json={"sections": {"summary": "<p>x</p>"}})
         resp = client.get(_GET_URL)
     assert resp.json()["extra_css"] == ""
@@ -534,6 +569,7 @@ def test_extra_css_non_string_rejected(temp_db: Path) -> None:
 
 def test_put_url_plain_for_created_doc(temp_db: Path) -> None:
     with TestClient(create_app(db_path=temp_db)) as client:
+        _create_feature_a(client)
         resp = client.put(_PUT_URL, json=_VALID_BODY)
     data = resp.json()
     assert data["created"] is True
@@ -542,6 +578,7 @@ def test_put_url_plain_for_created_doc(temp_db: Path) -> None:
 
 def test_put_url_diff_view_for_update(temp_db: Path) -> None:
     with TestClient(create_app(db_path=temp_db)) as client:
+        _create_feature_a(client)
         client.put(_PUT_URL, json=_VALID_BODY)
         resp = client.put(_PUT_URL, json={"sections": {"summary": "<p>Updated.</p>"}})
     data = resp.json()
@@ -551,6 +588,7 @@ def test_put_url_diff_view_for_update(temp_db: Path) -> None:
 
 def test_get_document_url_plain_for_single_version(temp_db: Path) -> None:
     with TestClient(create_app(db_path=temp_db)) as client:
+        _create_feature_a(client)
         client.put(_PUT_URL, json=_VALID_BODY)
         resp = client.get(_GET_URL)
     data = resp.json()
@@ -560,6 +598,7 @@ def test_get_document_url_plain_for_single_version(temp_db: Path) -> None:
 
 def test_get_document_url_diff_view_for_multi_version(temp_db: Path) -> None:
     with TestClient(create_app(db_path=temp_db)) as client:
+        _create_feature_a(client)
         client.put(_PUT_URL, json=_VALID_BODY)
         client.put(_PUT_URL, json={"sections": {"summary": "<p>Updated.</p>"}})
         resp = client.get(_GET_URL)

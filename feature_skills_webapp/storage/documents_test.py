@@ -16,11 +16,12 @@ from feature_skills_webapp.storage.documents import (
     submit_document,
     validate_writable,
 )
+from feature_skills_webapp.storage.tracker import FeatureNotFound
 from feature_skills_webapp.storage.versions import (
     backfill_logical_keys,
     current_content,
 )
-from feature_skills_webapp.storage.walker import logical_key, walk
+from feature_skills_webapp.storage.walker import logical_key, upsert_feature, upsert_project, walk
 
 _REQUIREMENTS_BODY = "<h2>Summary</h2><p>The summary.</p>"
 
@@ -64,6 +65,8 @@ def make_submit(
         sections = {"summary": _REQUIREMENTS_BODY}
     content = build_content(doc_type, sections, None)
     with transaction(conn):
+        project_id = upsert_project(conn, project, now)
+        upsert_feature(conn, project_id, feature, now)
         return submit_document(
             conn,
             project=project,
@@ -419,6 +422,8 @@ def test_reconcile_safety_api_doc_not_marked_missing(tmp_path: Path):
     # Create an API doc (no file)
     content = build_content("requirements", {"summary": "<p>API only.</p>"}, None)
     with transaction(conn):
+        pid = upsert_project(conn, "proj1", "2024-01-01T00:00:00+00:00")
+        upsert_feature(conn, pid, "api-feat", "2024-01-01T00:00:00+00:00")
         api_result = submit_document(
             conn,
             project="proj1",
@@ -443,6 +448,25 @@ def test_reconcile_safety_api_doc_not_marked_missing(tmp_path: Path):
         (api_result.document_id,),
     ).fetchall()
     assert missing_events == []
+
+
+# --- submit_document — FeatureNotFound ---
+
+
+def test_submit_raises_feature_not_found_when_feature_absent(tmp_path: Path):
+    conn = temp_conn(tmp_path)
+    content = build_content("requirements", {"summary": "<p>x</p>"}, None)
+    with pytest.raises(FeatureNotFound), transaction(conn):
+        submit_document(
+            conn,
+            project="proj",
+            feature="nonexistent",
+            doc_type="requirements",
+            instance=1,
+            content=content,
+            actor="agent",
+            now="2024-01-01T00:00:00+00:00",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -505,6 +529,8 @@ def _submit(
 ) -> SubmitResult:
     content = build_content("requirements", {"summary": "<p>x</p>"}, None, extra_css or None)
     with transaction(conn):
+        project_id = upsert_project(conn, "proj", now)
+        upsert_feature(conn, project_id, "feat", now)
         return submit_document(
             conn,
             project="proj",
