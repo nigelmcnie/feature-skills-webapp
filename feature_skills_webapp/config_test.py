@@ -2,7 +2,35 @@ import os
 
 import pytest
 
-from feature_skills_webapp.config import DEFAULT_PORT, ConfigError, db_path, port
+from feature_skills_webapp.config import (
+    DEFAULT_PORT,
+    DEFAULT_WAIT_TIMEOUT,
+    ConfigError,
+    db_path,
+    port,
+    wait_timeout,
+)
+
+
+def test_wait_timeout_default_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("FEATURE_SKILLS_WEBAPP_WAIT_TIMEOUT", raising=False)
+    assert wait_timeout() == DEFAULT_WAIT_TIMEOUT
+
+
+def test_wait_timeout_default_when_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FEATURE_SKILLS_WEBAPP_WAIT_TIMEOUT", "")
+    assert wait_timeout() == DEFAULT_WAIT_TIMEOUT
+
+
+def test_wait_timeout_valid(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FEATURE_SKILLS_WEBAPP_WAIT_TIMEOUT", "5.0")
+    assert wait_timeout() == 5.0
+
+
+def test_wait_timeout_non_float(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FEATURE_SKILLS_WEBAPP_WAIT_TIMEOUT", "abc")
+    with pytest.raises(ConfigError, match="must be a float"):
+        wait_timeout()
 
 
 def test_port_default_when_unset(monkeypatch):

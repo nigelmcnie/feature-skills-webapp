@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import sqlite3
+from dataclasses import dataclass
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from feature_skills_webapp.config import wait_timeout
 from feature_skills_webapp.storage.db import now_iso, transaction
 from feature_skills_webapp.storage.doc_content import manifest_for
 from feature_skills_webapp.storage.documents import (
@@ -19,6 +23,46 @@ from feature_skills_webapp.storage.parents import logical_key
 from feature_skills_webapp.storage.tracker import FeatureNotFound, ProjectNotFound
 from feature_skills_webapp.storage.versions import current_content
 from feature_skills_webapp.web.db_dep import request_conn
+
+
+@dataclass
+class SynthesisState:
+    doc_id: int
+    lkey: str
+    submitted: bool
+    responses: dict[str, str]
+    routine_flags: dict[str, str]
+
+    def as_payload(self) -> dict[str, object]:
+        return {
+            "doc": self.lkey,
+            "submitted": self.submitted,
+            "responses": self.responses,
+            "routine_flags": self.routine_flags,
+        }
+
+
+def _read_synthesis_state(conn: sqlite3.Connection, lkey: str) -> SynthesisState | None:
+    """Return synthesis state for lkey, or None when the document row is absent."""
+    row = conn.execute("SELECT id FROM documents WHERE logical_key=?", (lkey,)).fetchone()
+    if row is None:
+        return None
+    doc_id = row["id"]
+    rows = conn.execute(
+        "SELECT item_num, response, routine_flag FROM synthesis_responses WHERE document_id=?",
+        (doc_id,),
+    ).fetchall()
+    responses = {str(r["item_num"]): r["response"] for r in rows if r["routine_flag"] is None}
+    routine_flags = {
+        str(r["item_num"]): r["routine_flag"] for r in rows if r["routine_flag"] is not None
+    }
+    return SynthesisState(
+        doc_id=doc_id,
+        lkey=lkey,
+        submitted=bool(rows),
+        responses=responses,
+        routine_flags=routine_flags,
+    )
 
 
 def _path_params(request: Request) -> tuple[str, str | None, str, int]:
@@ -285,25 +329,41 @@ async def get_document_synthesis(request: Request) -> JSONResponse:
     lkey = logical_key(project, feat, doc_type, instance)
 
     with request_conn(request.app) as conn:
-        row = conn.execute("SELECT id FROM documents WHERE logical_key=?", (lkey,)).fetchone()
-        if row is None:
-            return JSONResponse({"error": "document not found"}, status_code=404)
-        doc_id = row["id"]
+        state = _read_synthesis_state(conn, lkey)
 
-        rows = conn.execute(
-            "SELECT item_num, response, routine_flag FROM synthesis_responses WHERE document_id=?",
-            (doc_id,),
-        ).fetchall()
+    if state is None:
+        return JSONResponse({"error": "document not found"}, status_code=404)
+    return JSONResponse(state.as_payload())
 
-    responses = {str(r["item_num"]): r["response"] for r in rows if r["routine_flag"] is None}
-    routine_flags = {
-        str(r["item_num"]): r["routine_flag"] for r in rows if r["routine_flag"] is not None
-    }
-    return JSONResponse(
-        {
-            "doc": lkey,
-            "submitted": bool(rows),
-            "responses": responses,
-            "routine_flags": routine_flags,
-        }
-    )
+
+async def get_document_synthesis_wait(request: Request) -> JSONResponse:
+    if request.app.state.db_path is None:
+        return JSONResponse({"error": "db not configured"}, status_code=503)
+
+    project, feat, doc_type, instance = _path_params(request)
+    lkey = logical_key(project, feat, doc_type, instance)
+
+    broadcaster = getattr(request.app.state, "broadcaster", None)
+    q = broadcaster.register() if broadcaster is not None else None
+    try:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + wait_timeout()
+        while True:
+            with request_conn(request.app) as conn:
+                state = _read_synthesis_state(conn, lkey)
+            if state is None:
+                return JSONResponse({"error": "document not found"}, status_code=404)
+            if state.submitted:
+                return JSONResponse(state.as_payload())
+            if q is None:
+                return JSONResponse(state.as_payload())
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                return JSONResponse(state.as_payload())
+            try:
+                await asyncio.wait_for(q.get(), timeout=remaining)
+            except TimeoutError:
+                return JSONResponse(state.as_payload())
+    finally:
+        if broadcaster is not None and q is not None:
+            broadcaster.unregister(q)
