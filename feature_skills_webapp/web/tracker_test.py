@@ -961,6 +961,27 @@ def test_put_suggested_order_503_no_db() -> None:
     assert resp.status_code == 503
 
 
+def test_put_suggested_order_broadcasts_on_change(temp_db: Path) -> None:
+    app = create_app(db_path=temp_db)
+    with TestClient(app) as client:
+        client.post("/api/projects/proj")
+        app.state.broadcaster = MagicMock()
+        resp = client.put("/api/projects/proj/suggested-order", json={"text": "feat-a\n"})
+    assert resp.status_code == 200
+    app.state.broadcaster.broadcast.assert_called_once()
+
+
+def test_put_suggested_order_no_broadcast_on_noop(temp_db: Path) -> None:
+    app = create_app(db_path=temp_db)
+    with TestClient(app) as client:
+        client.post("/api/projects/proj")
+        client.put("/api/projects/proj/suggested-order", json={"text": "feat-a\n"})
+        app.state.broadcaster = MagicMock()
+        resp = client.put("/api/projects/proj/suggested-order", json={"text": "feat-a\n"})
+    assert resp.status_code == 200
+    app.state.broadcaster.broadcast.assert_not_called()
+
+
 def test_get_project_includes_suggested_order(temp_db: Path) -> None:
     with TestClient(create_app(db_path=temp_db)) as client:
         client.post("/api/projects/proj")
@@ -1059,6 +1080,30 @@ def test_list_features_filter_q_and_status_combined(temp_db: Path) -> None:
     assert resp.status_code == 200
     slugs = [f["slug"] for f in resp.json()["features"]]
     assert slugs == ["beta"]
+
+
+def test_list_features_filter_q_treats_underscore_literally(temp_db: Path) -> None:
+    # A '_' in q must match a literal underscore, not the LIKE single-char wildcard.
+    with TestClient(create_app(db_path=temp_db)) as client:
+        client.post("/api/projects/proj")
+        client.post("/api/projects/proj/features/lit-underscore", json={"notes": "has a_b token"})
+        client.post("/api/projects/proj/features/lit-other", json={"notes": "has axb token"})
+        resp = client.get("/api/projects/proj/features?q=a_b")
+    assert resp.status_code == 200
+    slugs = [f["slug"] for f in resp.json()["features"]]
+    assert slugs == ["lit-underscore"]  # not lit-other, which the wildcard would have matched
+
+
+def test_list_features_filter_q_treats_percent_literally(temp_db: Path) -> None:
+    # A '%' in q must match a literal percent, not the LIKE any-run wildcard.
+    with TestClient(create_app(db_path=temp_db)) as client:
+        client.post("/api/projects/proj")
+        client.post("/api/projects/proj/features/lit-percent", json={"notes": "done 50% today"})
+        client.post("/api/projects/proj/features/lit-plain", json={"notes": "done fifty today"})
+        resp = client.get("/api/projects/proj/features?q=50%25")  # %25 = url-encoded '%'
+    assert resp.status_code == 200
+    slugs = [f["slug"] for f in resp.json()["features"]]
+    assert slugs == ["lit-percent"]
 
 
 def test_list_features_filter_empty_result_valid(temp_db: Path) -> None:
