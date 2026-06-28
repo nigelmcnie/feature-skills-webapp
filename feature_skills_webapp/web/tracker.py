@@ -85,6 +85,10 @@ async def put_suggested_order_handler(request: Request) -> JSONResponse:
             set_project_suggested_order(conn, name, text or None)
         updated = get_project_row(conn, name)
         assert updated is not None
+    # Broadcast only when the value actually changed, mirroring the other
+    # mutating handlers (GET /api/projects/{p} surfaces this field).
+    if updated["suggested_order"] != row["suggested_order"]:
+        request.app.state.broadcaster.broadcast()
     return JSONResponse(
         {
             "project": updated["name"],

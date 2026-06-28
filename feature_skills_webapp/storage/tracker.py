@@ -48,8 +48,11 @@ def list_features(
     where = ["f.project_id = ?"]
     params: list[object] = [project_id]
     if q is not None:
-        where.append("(f.slug LIKE ? OR f.notes LIKE ?)")
-        like = f"%{q}%"
+        # Escape LIKE wildcards so a literal % or _ in the query matches itself
+        # (backslash first, then the wildcards). Search is literal substring, not glob.
+        escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        where.append("(f.slug LIKE ? ESCAPE '\\' OR f.notes LIKE ? ESCAPE '\\')")
+        like = f"%{escaped}%"
         params.extend([like, like])
     if status is not None:
         where.append("f.status = ?")
