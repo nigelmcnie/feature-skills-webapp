@@ -38,14 +38,29 @@ def require_project(conn: sqlite3.Connection, name: str) -> int:
     return row["id"]
 
 
-def list_features(conn: sqlite3.Connection, project_id: int) -> list[sqlite3.Row]:
+def list_features(
+    conn: sqlite3.Connection,
+    project_id: int,
+    *,
+    q: str | None = None,
+    status: str | None = None,
+) -> list[sqlite3.Row]:
+    where = ["f.project_id = ?"]
+    params: list[object] = [project_id]
+    if q is not None:
+        where.append("(f.slug LIKE ? OR f.notes LIKE ?)")
+        like = f"%{q}%"
+        params.extend([like, like])
+    if status is not None:
+        where.append("f.status = ?")
+        params.append(status)
     return conn.execute(
         "SELECT f.slug, f.status, f.owner, f.notes, f.created_at, "
         "  (SELECT MAX(e.created_at) FROM events e "
         "   JOIN documents d ON e.document_id = d.id "
         "   WHERE d.feature_id = f.id AND d.status = 'active') AS last_activity "
-        "FROM features f WHERE f.project_id = ? ORDER BY f.status, f.slug",
-        (project_id,),
+        f"FROM features f WHERE {' AND '.join(where)} ORDER BY f.status, f.slug",
+        params,
     ).fetchall()
 
 

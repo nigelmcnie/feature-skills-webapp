@@ -989,3 +989,93 @@ def test_list_features_includes_created_at(temp_db: Path) -> None:
     assert len(feats) == 1
     assert "created_at" in feats[0]
     assert feats[0]["created_at"] is not None
+
+
+# ---------------------------------------------------------------------------
+# Phase 6: GET /api/projects/{p}/features?q=...&status=...
+# ---------------------------------------------------------------------------
+
+
+def _setup_filter_project(client) -> None:  # type: ignore[no-untyped-def]
+    client.post("/api/projects/proj")
+    client.post("/api/projects/proj/features/alpha", json={"notes": "first feature"})
+    client.post("/api/projects/proj/features/beta", json={"notes": "second item"})
+    client.post("/api/projects/proj/features/gamma", json={"notes": "UPPER notes"})
+    # claim alpha so it has in_progress status
+    client.post("/api/projects/proj/features/alpha/claim", json={"owner": "alice"})
+
+
+def test_list_features_no_params_returns_full_list(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _setup_filter_project(client)
+        resp = client.get("/api/projects/proj/features")
+    assert resp.status_code == 200
+    slugs = {f["slug"] for f in resp.json()["features"]}
+    assert slugs == {"alpha", "beta", "gamma"}
+
+
+def test_list_features_filter_q_matches_slug(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _setup_filter_project(client)
+        resp = client.get("/api/projects/proj/features?q=alp")
+    assert resp.status_code == 200
+    slugs = [f["slug"] for f in resp.json()["features"]]
+    assert slugs == ["alpha"]
+
+
+def test_list_features_filter_q_matches_notes(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _setup_filter_project(client)
+        resp = client.get("/api/projects/proj/features?q=second")
+    assert resp.status_code == 200
+    slugs = [f["slug"] for f in resp.json()["features"]]
+    assert slugs == ["beta"]
+
+
+def test_list_features_filter_q_case_insensitive(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _setup_filter_project(client)
+        resp = client.get("/api/projects/proj/features?q=upper")
+    assert resp.status_code == 200
+    slugs = [f["slug"] for f in resp.json()["features"]]
+    assert slugs == ["gamma"]
+
+
+def test_list_features_filter_status(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _setup_filter_project(client)
+        resp = client.get("/api/projects/proj/features?status=in_progress")
+    assert resp.status_code == 200
+    feats = resp.json()["features"]
+    assert len(feats) == 1
+    assert feats[0]["slug"] == "alpha"
+    assert feats[0]["status"] == "in_progress"
+
+
+def test_list_features_filter_q_and_status_combined(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _setup_filter_project(client)
+        resp = client.get("/api/projects/proj/features?q=eta&status=available")
+    assert resp.status_code == 200
+    slugs = [f["slug"] for f in resp.json()["features"]]
+    assert slugs == ["beta"]
+
+
+def test_list_features_filter_empty_result_valid(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _setup_filter_project(client)
+        resp = client.get("/api/projects/proj/features?q=no-such-feature")
+    assert resp.status_code == 200
+    assert resp.json()["features"] == []
+
+
+def test_list_features_filter_order_preserved(temp_db: Path) -> None:
+    """Filtered results still come back in status, slug order."""
+    with TestClient(create_app(db_path=temp_db)) as client:
+        client.post("/api/projects/proj")
+        client.post("/api/projects/proj/features/zebra", json={})
+        client.post("/api/projects/proj/features/apple", json={})
+        resp = client.get("/api/projects/proj/features?status=available")
+    assert resp.status_code == 200
+    slugs = [f["slug"] for f in resp.json()["features"]]
+    assert slugs == ["apple", "zebra"]

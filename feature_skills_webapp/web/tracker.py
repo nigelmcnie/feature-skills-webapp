@@ -105,11 +105,13 @@ async def list_features_handler(request: Request) -> JSONResponse:
     if request.app.state.db_path is None:
         return JSONResponse({"error": "db not configured"}, status_code=503)
     name = request.path_params["project"]
+    q = request.query_params.get("q") or None
+    status = request.query_params.get("status") or None
     with request_conn(request.app) as conn:
         proj = get_project(conn, name)
         if proj is None:
             return JSONResponse({"error": "project not found"}, status_code=404)
-        feats = list_features(conn, proj["id"])
+        feats = list_features(conn, proj["id"], q=q, status=status)
     return JSONResponse(
         {
             "project": name,
