@@ -1099,11 +1099,12 @@ def test_list_features_filter_q_treats_percent_literally(temp_db: Path) -> None:
     with TestClient(create_app(db_path=temp_db)) as client:
         client.post("/api/projects/proj")
         client.post("/api/projects/proj/features/lit-percent", json={"notes": "done 50% today"})
-        client.post("/api/projects/proj/features/lit-plain", json={"notes": "done fifty today"})
+        # '50' followed by more digits — a '%'-as-wildcard query would wrongly match this.
+        client.post("/api/projects/proj/features/lit-plain", json={"notes": "done 5099 today"})
         resp = client.get("/api/projects/proj/features?q=50%25")  # %25 = url-encoded '%'
     assert resp.status_code == 200
     slugs = [f["slug"] for f in resp.json()["features"]]
-    assert slugs == ["lit-percent"]
+    assert slugs == ["lit-percent"]  # not lit-plain, which %-as-wildcard would have matched
 
 
 def test_list_features_filter_empty_result_valid(temp_db: Path) -> None:
