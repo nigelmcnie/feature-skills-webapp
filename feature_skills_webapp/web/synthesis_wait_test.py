@@ -154,6 +154,9 @@ async def test_timeout_returns_submitted_false(
     data = json.loads(bytes(result.body))
     assert data["submitted"] is False
     assert data["doc"] == _LKEY
+    # Full contract row: the timeout payload carries empty response maps.
+    assert data["responses"] == {}
+    assert data["routine_flags"] == {}
 
 
 # ---------------------------------------------------------------------------
@@ -211,11 +214,16 @@ async def test_coarse_signal_recheck(temp_db: Path) -> None:
     task = asyncio.ensure_future(get_document_synthesis_wait(request))
     await asyncio.sleep(0)  # handler registered, waiting on q
 
-    # Coarse signal — unrelated change (no synthesis for this doc)
+    # Coarse signal — unrelated change (no synthesis for this doc). Assert the
+    # wait does NOT return by proving it stays pending across a wall-clock
+    # window, rather than counting scheduler turns with sleep(0): the turn count
+    # depends on event-loop scheduling order, which is exactly the
+    # non-determinism TESTING.md warns against. shield() keeps the handler alive
+    # past the wait_for timeout, so the TimeoutError *is* the assertion that the
+    # coarse broadcast did not end the wait.
     broadcaster.broadcast()
-    await asyncio.sleep(0)  # handler wakes, re-checks → not submitted → waits again
-    await asyncio.sleep(0)  # ensure it's back at q.get()
-
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(asyncio.shield(task), timeout=0.05)
     assert not task.done(), "handler returned early on a coarse signal"
 
     # Now actually submit
