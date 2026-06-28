@@ -29,6 +29,7 @@ from feature_skills_webapp.web.submit import (
     get_document,
     get_document_comments,
     get_document_synthesis,
+    get_document_synthesis_wait,
     get_manifest,
     post_document_comments_integrate,
     put_document,
@@ -118,6 +119,10 @@ def create_app(db_path: Path | None) -> Starlette:
             Route(
                 "/api/documents/{project}/{feature}/{doc_type}/{instance:int}/synthesis",
                 get_document_synthesis,
+            ),
+            Route(
+                "/api/documents/{project}/{feature}/{doc_type}/{instance:int}/synthesis/wait",
+                get_document_synthesis_wait,
             ),
             Route("/api/manifests/{doc_type}", get_manifest),
             Route("/api/projects", list_projects_handler),

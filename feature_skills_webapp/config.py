@@ -16,6 +16,19 @@ def db_path() -> Path:
     return xdg / "feature-skills-webapp" / "db.sqlite"
 
 
+DEFAULT_WAIT_TIMEOUT = 25.0
+
+
+def wait_timeout() -> float:
+    raw = os.environ.get("FEATURE_SKILLS_WEBAPP_WAIT_TIMEOUT")
+    if not raw:
+        return DEFAULT_WAIT_TIMEOUT
+    try:
+        return float(raw)
+    except ValueError as e:
+        raise ConfigError(f"FEATURE_SKILLS_WEBAPP_WAIT_TIMEOUT must be a float, got {raw!r}") from e
+
+
 def port() -> int:
     raw = os.environ.get("FEATURE_SKILLS_WEBAPP_PORT")
     if not raw:
