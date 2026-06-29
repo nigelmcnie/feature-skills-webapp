@@ -306,8 +306,8 @@ def test_migration_backfills_null_status(tmp_path: Path) -> None:
     ).fetchone()
     assert row["status"] is None
 
-    # Full migrate() applies 0005 (backfill), 0006 (acked_version column), and 0007 (suggested_order).
-    assert migrate(conn) == 7
+    # Full migrate() applies 0005 (backfill) and every later migration in place.
+    assert migrate(conn) == 8
     row = conn.execute(
         "SELECT status FROM features WHERE slug='feat' AND project_id=?", (pid,)
     ).fetchone()
@@ -1037,10 +1037,10 @@ def test_update_feature_note_empty_clears_and_empty_again_is_noop(tmp_path: Path
 
 
 def test_migration_0007_adds_suggested_order(tmp_path: Path) -> None:
-    """Fresh migrate() reaches v7 and the projects table has suggested_order."""
+    """Fresh migrate() reaches the latest version and the projects table has suggested_order."""
     conn = connect(tmp_path / "test.db")
     version = migrate(conn)
-    assert version == 7
+    assert version == 8
     # Column must exist and default to NULL.
     row = conn.execute("PRAGMA table_info(projects)").fetchall()
     col_names = [r["name"] for r in row]

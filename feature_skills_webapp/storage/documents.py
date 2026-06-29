@@ -13,6 +13,7 @@ from feature_skills_webapp.storage.doc_content import (
     serialise,
 )
 from feature_skills_webapp.storage.doc_render import css_has_brace_error, css_has_style_breakout
+from feature_skills_webapp.storage.events import ACTOR_AGENT
 from feature_skills_webapp.storage.inbox import humanise_type
 from feature_skills_webapp.storage.parents import logical_key
 from feature_skills_webapp.storage.tracker import require_feature, require_project
@@ -228,15 +229,15 @@ def submit_document(
         assert doc_id is not None
         ver_num = record_version(conn, doc_id, content, actor=actor, now=now)
         conn.execute(
-            "INSERT INTO events (document_id, event_type, payload_json, created_at) "
-            "VALUES (?, 'created', ?, ?)",
-            (doc_id, _event_payload(doc_type, feature, source_path), now),
+            "INSERT INTO events (document_id, event_type, payload_json, created_at, actor) "
+            "VALUES (?, 'created', ?, ?, ?)",
+            (doc_id, _event_payload(doc_type, feature, source_path), now, ACTOR_AGENT),
         )
         if content.extra_css:
             conn.execute(
-                "INSERT INTO events (document_id, event_type, payload_json, created_at) "
-                "VALUES (?, 'extra_css_used', ?, ?)",
-                (doc_id, json.dumps({"type": doc_type, "feature": feature}), now),
+                "INSERT INTO events (document_id, event_type, payload_json, created_at, actor) "
+                "VALUES (?, 'extra_css_used', ?, ?, ?)",
+                (doc_id, json.dumps({"type": doc_type, "feature": feature}), now, ACTOR_AGENT),
             )
         return SubmitResult(
             document_id=doc_id,
@@ -304,15 +305,15 @@ def submit_document(
         else:
             event_type = "updated"
         conn.execute(
-            "INSERT INTO events (document_id, event_type, payload_json, created_at) "
-            "VALUES (?, ?, ?, ?)",
-            (doc_id, event_type, _event_payload(doc_type, feature, source_path), now),
+            "INSERT INTO events (document_id, event_type, payload_json, created_at, actor) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (doc_id, event_type, _event_payload(doc_type, feature, source_path), now, ACTOR_AGENT),
         )
         if content.extra_css:
             conn.execute(
-                "INSERT INTO events (document_id, event_type, payload_json, created_at) "
-                "VALUES (?, 'extra_css_used', ?, ?)",
-                (doc_id, json.dumps({"type": doc_type, "feature": feature}), now),
+                "INSERT INTO events (document_id, event_type, payload_json, created_at, actor) "
+                "VALUES (?, 'extra_css_used', ?, ?, ?)",
+                (doc_id, json.dumps({"type": doc_type, "feature": feature}), now, ACTOR_AGENT),
             )
         return SubmitResult(
             document_id=doc_id,

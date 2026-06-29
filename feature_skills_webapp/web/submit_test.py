@@ -8,6 +8,7 @@ from typing import cast
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
+from feature_skills_webapp.storage.db import connect
 from feature_skills_webapp.web.app import create_app
 
 _PUT_URL = "/api/documents/proj/feat-a/requirements/1"
@@ -414,6 +415,26 @@ def test_integrate_drops_comments_from_active_set(temp_db: Path) -> None:
         remaining = client.get(_COMMENTS_URL).json()["comments"]
     assert len(remaining) == 1
     assert remaining[0]["text"] == "Keep"
+
+
+def test_integrate_event_actor_is_agent(temp_db: Path) -> None:
+    """Integrating comments is an agent action → the event is recorded actor='agent'
+    so it still surfaces in the inbox."""
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _create_feature_a(client)
+        doc_id = client.put(_PUT_URL, json=_VALID_BODY).json()["document_id"]
+        _add_comments(client, doc_id, ["Integrate me"])
+        comments = client.get(_COMMENTS_URL).json()["comments"]
+        client.post(_INTEGRATE_URL, json={"ids": [comments[0]["id"]]})
+
+        conn = connect(temp_db)
+        row = conn.execute(
+            "SELECT actor FROM events WHERE document_id = ? AND event_type = 'comment_integrated'",
+            (doc_id,),
+        ).fetchone()
+        conn.close()
+    assert row is not None
+    assert row["actor"] == "agent"
 
 
 def test_get_comments_404_unknown_key(temp_db: Path) -> None:

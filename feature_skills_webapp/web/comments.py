@@ -9,6 +9,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from feature_skills_webapp.storage.db import now_iso, transaction
+from feature_skills_webapp.storage.events import ACTOR_USER
 from feature_skills_webapp.web.db_dep import request_conn
 
 _MAX_VALUE_BYTES = 1024 * 1024  # 1 MB
@@ -67,9 +68,9 @@ async def post_comments(request: Request) -> JSONResponse:
                     (doc_id, c.get("excerpt"), c["text"], now),
                 )
             conn.execute(
-                "INSERT INTO events (document_id, event_type, payload_json, created_at) "
-                "VALUES (?, 'comment_submitted', ?, ?)",
-                (doc_id, json.dumps({"count": len(comments)}), now),
+                "INSERT INTO events (document_id, event_type, payload_json, created_at, actor) "
+                "VALUES (?, 'comment_submitted', ?, ?, ?)",
+                (doc_id, json.dumps({"count": len(comments)}), now, ACTOR_USER),
             )
 
     request.app.state.broadcaster.broadcast()

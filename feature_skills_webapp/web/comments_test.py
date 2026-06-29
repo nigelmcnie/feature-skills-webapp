@@ -176,6 +176,24 @@ def test_events_row_written_on_submit(temp_db: Path, tmp_path: Path) -> None:
         assert "2" in row["payload_json"]
 
 
+def test_comment_submitted_event_actor_is_user(temp_db: Path, tmp_path: Path) -> None:
+    """A developer's comment is recorded as actor='user' so the inbox doesn't re-surface it."""
+    docs_root, source_path = make_requirements_root(tmp_path)
+    _walk_docs(temp_db, docs_root)
+    with TestClient(create_app(db_path=temp_db)) as client:
+        doc_id = get_doc_id(temp_db, source_path)
+        client.post(f"/doc/{doc_id}/comments", json={"comments": [{"text": "a"}]})
+
+        conn = connect(temp_db)
+        row = conn.execute(
+            "SELECT actor FROM events WHERE document_id = ? AND event_type = 'comment_submitted'",
+            (doc_id,),
+        ).fetchone()
+        conn.close()
+        assert row is not None
+        assert row["actor"] == "user"
+
+
 def test_post_broadcasts(temp_db: Path, tmp_path: Path) -> None:
     docs_root, source_path = make_requirements_root(tmp_path)
     _walk_docs(temp_db, docs_root)

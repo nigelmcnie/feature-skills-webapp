@@ -111,6 +111,7 @@ def unread_document_ids(conn: sqlite3.Connection, project_id: int | None = None)
         "AND EXISTS ("
         "  SELECT 1 FROM events e "
         "  WHERE e.document_id = d.id "
+        "  AND e.actor = 'agent' "  # only agent activity counts as unread; the user's own does not
         "  AND e.created_at > COALESCE("
         "    (SELECT last_read_at FROM read_state WHERE document_id = d.id), ''"
         "  )"

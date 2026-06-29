@@ -132,6 +132,23 @@ def test_later_event_reflags_as_unread(tmp_path: Path) -> None:
     assert ids["doc_a"] in unread_document_ids(conn)
 
 
+def test_user_event_does_not_reflag_as_unread(tmp_path: Path) -> None:
+    """A later actor='user' event (the developer's own comment) must NOT re-flag
+    a read doc as unread — only agent activity counts."""
+    conn = temp_conn(tmp_path)
+    with conn:
+        ids = _seed(conn)
+    mark_read(conn, ids["doc_a"])
+    assert ids["doc_a"] not in unread_document_ids(conn)
+
+    conn.execute(
+        "INSERT INTO events (document_id, event_type, payload_json, created_at, actor) "
+        "VALUES (?, 'comment_submitted', '{}', '2099-01-01T00:00:00+00:00', 'user')",
+        (ids["doc_a"],),
+    )
+    assert ids["doc_a"] not in unread_document_ids(conn)
+
+
 def test_mark_read_idempotent(tmp_path: Path) -> None:
     conn = temp_conn(tmp_path)
     with conn:

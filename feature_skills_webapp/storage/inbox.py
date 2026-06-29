@@ -122,9 +122,6 @@ def _shipped_card(r: sqlite3.Row) -> InboxCard:
     )
 
 
-_COMMENT_EVENTS = frozenset({"comment_submitted", "comment_integrated"})
-
-
 def classify_reason(
     conn: sqlite3.Connection, document_id: int, doc_type: str, last_read: str | None
 ) -> InboxReason | None:
@@ -164,17 +161,20 @@ def classify_reason(
             label = "Updated — " + ", ".join(names) + f" +{n - 2} more"
         return InboxReason(kind="content", label=label, changed_count=n, has_diff=True)
 
-    # Fall through: check for comment events since last_read_at.
+    # Fall through: check for agent comment events since last_read_at. Only agent
+    # activity surfaces — the developer's own comment_submitted (actor='user') is
+    # never a reason. comment_integrated is the agent acting on those comments.
     baseline = last_read or ""
     rows = conn.execute(
-        "SELECT event_type FROM events WHERE document_id = ? AND created_at > ?",
+        "SELECT event_type FROM events "
+        "WHERE document_id = ? AND actor = 'agent' AND created_at > ?",
         (document_id, baseline),
     ).fetchall()
     if not rows:
         return None
     event_types = {r["event_type"] for r in rows}
-    if event_types & _COMMENT_EVENTS:
-        return InboxReason(kind="comments", label="Comments added")
+    if "comment_integrated" in event_types:
+        return InboxReason(kind="comments", label="Comments integrated")
     return None
 
 
@@ -191,6 +191,7 @@ def new_since_last_visit(
         "WHERE d.status = 'active' AND f.status IS NOT 'archived' "
         "AND ( EXISTS ("
         "  SELECT 1 FROM events e WHERE e.document_id = d.id "
+        "  AND e.actor = 'agent' "  # only agent activity re-surfaces; the user's own actions don't
         "  AND e.created_at > COALESCE("
         "    (SELECT last_read_at FROM read_state WHERE document_id = d.id), ''))"
         f" OR {UNREVIEWED_CHANGES_SQL} ) "  # noqa: S608
