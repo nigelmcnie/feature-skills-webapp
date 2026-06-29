@@ -19,6 +19,7 @@ from feature_skills_webapp.storage.documents import (
     submit_document,
     validate_writable,
 )
+from feature_skills_webapp.storage.events import ACTOR_AGENT
 from feature_skills_webapp.storage.parents import logical_key
 from feature_skills_webapp.storage.tracker import FeatureNotFound, ProjectNotFound
 from feature_skills_webapp.storage.versions import current_content
@@ -313,9 +314,9 @@ async def post_document_comments_integrate(request: Request) -> JSONResponse:
                 )
                 count += conn.execute("SELECT changes()").fetchone()[0]
             conn.execute(
-                "INSERT INTO events (document_id, event_type, payload_json, created_at) "
-                "VALUES (?, 'comment_integrated', ?, ?)",
-                (doc_id, json.dumps({"count": count}), now),
+                "INSERT INTO events (document_id, event_type, payload_json, created_at, actor) "
+                "VALUES (?, 'comment_integrated', ?, ?, ?)",
+                (doc_id, json.dumps({"count": count}), now, ACTOR_AGENT),
             )
 
     return JSONResponse({"integrated": count})

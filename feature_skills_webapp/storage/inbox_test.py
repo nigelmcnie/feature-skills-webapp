@@ -817,11 +817,17 @@ def _seed_reason_doc(
     ).fetchone()["id"]
 
 
-def _add_event(conn: sqlite3.Connection, doc_id: int, event_type: str, ts: str) -> None:
+def _add_event(
+    conn: sqlite3.Connection,
+    doc_id: int,
+    event_type: str,
+    ts: str,
+    actor: str = "agent",
+) -> None:
     conn.execute(
-        "INSERT INTO events (document_id, event_type, payload_json, created_at) "
-        "VALUES (?, ?, '{}', ?)",
-        (doc_id, event_type, ts),
+        "INSERT INTO events (document_id, event_type, payload_json, created_at, actor) "
+        "VALUES (?, ?, '{}', ?, ?)",
+        (doc_id, event_type, ts, actor),
     )
 
 
@@ -933,19 +939,32 @@ def test_classify_reason_formatting_only(tmp_path: Path) -> None:
     assert reason.changed_count == 0
 
 
-def test_classify_reason_comment_only(tmp_path: Path) -> None:
-    """Only comment events → kind='comments', label='Comments added'."""
+def test_classify_reason_user_comment_submitted_is_not_a_reason(tmp_path: Path) -> None:
+    """A developer's own comment_submitted (actor='user') is not a surfacing reason."""
     conn = temp_conn(tmp_path)
     T_read = "2020-05-01T00:00:00+00:00"
     T_event = "2020-06-01T00:00:00+00:00"
     with transaction(conn):
         doc_id = _seed_reason_doc(conn)
-        _add_event(conn, doc_id, "comment_submitted", T_event)
+        _add_event(conn, doc_id, "comment_submitted", T_event, actor="user")
+
+    reason = classify_reason(conn, doc_id, "context", last_read=T_read)
+    assert reason is None
+
+
+def test_classify_reason_agent_comment_integrated(tmp_path: Path) -> None:
+    """An agent integrating comments → kind='comments', label='Comments integrated'."""
+    conn = temp_conn(tmp_path)
+    T_read = "2020-05-01T00:00:00+00:00"
+    T_event = "2020-06-01T00:00:00+00:00"
+    with transaction(conn):
+        doc_id = _seed_reason_doc(conn)
+        _add_event(conn, doc_id, "comment_integrated", T_event, actor="agent")
 
     reason = classify_reason(conn, doc_id, "context", last_read=T_read)
     assert reason is not None
     assert reason.kind == "comments"
-    assert reason.label == "Comments added"
+    assert reason.label == "Comments integrated"
 
 
 def test_classify_reason_reactivated_treated_as_content(tmp_path: Path) -> None:
@@ -1114,6 +1133,99 @@ def test_classify_reason_extra_css_used_event_is_not_surfaced(tmp_path: Path) ->
     assert reason is None
 
 
+# --- new_since_last_visit: actor filtering ---
+
+
+def test_new_since_excludes_user_comment_submitted(tmp_path: Path) -> None:
+    """A doc whose only post-read activity is the developer's own comment_submitted
+    (actor='user') must NOT re-surface — the user already knows they commented."""
+    conn = temp_conn(tmp_path)
+    T_v1 = "2020-04-01T00:00:00+00:00"
+    T_read = "2020-05-01T00:00:00+00:00"
+    T_event = "2020-06-01T00:00:00+00:00"  # comment AFTER the read baseline
+    with transaction(conn):
+        doc_id = _seed_reason_doc(conn)
+        record_version(
+            conn,
+            doc_id,
+            _make_sections_content(("problem-space", "<p>content</p>")),
+            actor="test",
+            now=T_v1,
+        )
+        # Version 1 is acknowledged, so arm B (unreviewed changes) cannot fire;
+        # the only candidate surfacing signal is the user comment.
+        _add_event(conn, doc_id, "comment_submitted", T_event, actor="user")
+        conn.execute(
+            "INSERT INTO read_state (document_id, last_read_at, acked_version) VALUES (?, ?, 1)",
+            (doc_id, T_read),
+        )
+
+    cards = new_since_last_visit(conn)
+    assert doc_id not in {c.document_id for c in cards}
+
+
+def test_new_since_includes_agent_comment_integrated(tmp_path: Path) -> None:
+    """An agent integrating comments (actor='agent') after the read baseline DOES
+    re-surface the doc, labelled 'Comments integrated'."""
+    conn = temp_conn(tmp_path)
+    T_v1 = "2020-04-01T00:00:00+00:00"
+    T_read = "2020-05-01T00:00:00+00:00"
+    T_event = "2020-06-01T00:00:00+00:00"
+    with transaction(conn):
+        doc_id = _seed_reason_doc(conn)
+        record_version(
+            conn,
+            doc_id,
+            _make_sections_content(("problem-space", "<p>content</p>")),
+            actor="test",
+            now=T_v1,
+        )
+        _add_event(conn, doc_id, "comment_integrated", T_event, actor="agent")
+        conn.execute(
+            "INSERT INTO read_state (document_id, last_read_at, acked_version) VALUES (?, ?, 1)",
+            (doc_id, T_read),
+        )
+
+    cards = new_since_last_visit(conn)
+    card = next((c for c in cards if c.document_id == doc_id), None)
+    assert card is not None
+    assert card.reason is not None
+    assert card.reason.label == "Comments integrated"
+
+
+def test_new_since_user_comment_plus_agent_change_still_surfaces(tmp_path: Path) -> None:
+    """A doc carrying BOTH the developer's own comment_submitted (actor='user') and a
+    later agent comment_integrated (actor='agent') still surfaces — the user comment
+    must neither suppress the card nor steal the label from the agent activity."""
+    conn = temp_conn(tmp_path)
+    T_v1 = "2020-04-01T00:00:00+00:00"
+    T_read = "2020-05-01T00:00:00+00:00"
+    T_user = "2020-06-01T00:00:00+00:00"
+    T_agent = "2020-06-02T00:00:00+00:00"
+    with transaction(conn):
+        doc_id = _seed_reason_doc(conn)
+        record_version(
+            conn,
+            doc_id,
+            _make_sections_content(("problem-space", "<p>content</p>")),
+            actor="test",
+            now=T_v1,
+        )
+        # Version acked, so arm B can't fire: surfacing must come from the agent event.
+        _add_event(conn, doc_id, "comment_submitted", T_user, actor="user")
+        _add_event(conn, doc_id, "comment_integrated", T_agent, actor="agent")
+        conn.execute(
+            "INSERT INTO read_state (document_id, last_read_at, acked_version) VALUES (?, ?, 1)",
+            (doc_id, T_read),
+        )
+
+    cards = new_since_last_visit(conn)
+    card = next((c for c in cards if c.document_id == doc_id), None)
+    assert card is not None
+    assert card.reason is not None
+    assert card.reason.label == "Comments integrated"
+
+
 # --- new_since_last_visit: href ---
 
 
@@ -1164,7 +1276,11 @@ def test_new_since_href_plain_for_new_doc(tmp_path: Path) -> None:
 
 
 def test_new_since_href_plain_for_comments_only(tmp_path: Path) -> None:
-    """A card triggered only by comment events links to the plain doc view."""
+    """A card triggered only by an agent comment event links to the plain doc view.
+
+    The version is acked (acked_version=1) so the doc surfaces solely on the
+    agent comment, not on an unreviewed content change.
+    """
     conn = temp_conn(tmp_path)
     T_v1 = "2020-04-01T00:00:00+00:00"
     T_read = "2020-05-01T00:00:00+00:00"
@@ -1178,9 +1294,9 @@ def test_new_since_href_plain_for_comments_only(tmp_path: Path) -> None:
             actor="test",
             now=T_v1,
         )
-        _add_event(conn, doc_id, "comment_submitted", T_event)
+        _add_event(conn, doc_id, "comment_integrated", T_event, actor="agent")
         conn.execute(
-            "INSERT INTO read_state (document_id, last_read_at) VALUES (?, ?)",
+            "INSERT INTO read_state (document_id, last_read_at, acked_version) VALUES (?, ?, 1)",
             (doc_id, T_read),
         )
 

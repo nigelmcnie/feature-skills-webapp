@@ -14,6 +14,7 @@ from pathlib import Path
 
 from feature_skills_webapp.storage.db import now_iso, transaction
 from feature_skills_webapp.storage.doc_content import manifest_for, parse_content
+from feature_skills_webapp.storage.events import ACTOR_AGENT
 from feature_skills_webapp.storage.parents import (
     logical_key,
     slugify,
@@ -306,9 +307,9 @@ def walk(conn: sqlite3.Connection, docs_root: Path, *, reconcile: bool) -> WalkS
                     {"path": row["source_path"], "type": row["type"], "feature": row["feature"]}
                 )
                 conn.execute(
-                    "INSERT INTO events (document_id, event_type, payload_json, created_at) "
-                    "VALUES (?, 'missing', ?, ?)",
-                    (row["id"], payload, now),
+                    "INSERT INTO events (document_id, event_type, payload_json, created_at, actor) "
+                    "VALUES (?, 'missing', ?, ?, ?)",
+                    (row["id"], payload, now, ACTOR_AGENT),
                 )
                 summary.missing += 1
 

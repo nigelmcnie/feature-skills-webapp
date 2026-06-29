@@ -40,10 +40,10 @@ def test_connect_foreign_keys(tmp_path: Path) -> None:
     conn.close()
 
 
-def test_migrate_fresh_returns_version_7(tmp_path: Path) -> None:
+def test_migrate_fresh_returns_version_8(tmp_path: Path) -> None:
     conn = connect(tmp_path / "test.db")
     version = migrate(conn)
-    assert version == 7
+    assert version == 8
     conn.close()
 
 
@@ -55,7 +55,7 @@ def test_migrate_idempotent(tmp_path: Path) -> None:
 
     conn = connect(db)
     version = migrate(conn)
-    assert version == 7
+    assert version == 8
     conn.close()
 
 
@@ -63,7 +63,7 @@ def test_schema_version_after_migrate(tmp_path: Path) -> None:
     conn = connect(tmp_path / "test.db")
     migrate(conn)
     v = current_version(conn)
-    assert v == 7
+    assert v == 8
     conn.close()
 
 
@@ -235,12 +235,61 @@ def test_migrate_v1_to_v2_upgrade_path(tmp_path: Path) -> None:
     assert "status" not in cols_v1
     assert "project_id" not in cols_v1
 
-    # Run the real migration set: upgrades 1 -> 7 in place.
-    assert migrate(conn) == 7
-    assert current_version(conn) == 7
+    # Run the real migration set: upgrades 1 -> 8 in place.
+    assert migrate(conn) == 8
+    assert current_version(conn) == 8
     cols_v2 = {r["name"] for r in conn.execute("PRAGMA table_info(documents)").fetchall()}
     assert "status" in cols_v2
     assert "project_id" in cols_v2
+    conn.close()
+
+
+def test_migration_0008_adds_actor_with_agent_default(tmp_path: Path) -> None:
+    """Fresh migrate() reaches v8; events.actor exists and new rows default to 'agent'."""
+    conn = connect(tmp_path / "test.db")
+    assert migrate(conn) == 8
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(events)").fetchall()}
+    assert "actor" in cols
+    # An insert that omits actor takes the column default.
+    conn.execute(
+        "INSERT INTO events (document_id, event_type, payload_json, created_at) "
+        "VALUES (NULL, 'created', '{}', '2020-01-01T00:00:00+00:00')"
+    )
+    row = conn.execute("SELECT actor FROM events").fetchone()
+    assert row["actor"] == "agent"
+    conn.close()
+
+
+def test_migration_0008_backfills_existing_comment_submitted_to_user(tmp_path: Path) -> None:
+    """Events written before v8 backfill by type: comment_submitted → 'user',
+    everything else → 'agent'."""
+    # Build a DB at v7 (no actor column yet).
+    pre_v8 = tmp_path / "migrations_pre_v8"
+    pre_v8.mkdir()
+    for src in sorted(MIGRATIONS_DIR.glob("000[1-7]_*.sql")):
+        (pre_v8 / src.name).write_text(src.read_text())
+
+    conn = connect(tmp_path / "test.db")
+    assert migrate(conn, migrations_dir=pre_v8) == 7
+    cols_v7 = {r["name"] for r in conn.execute("PRAGMA table_info(events)").fetchall()}
+    assert "actor" not in cols_v7
+    conn.execute(
+        "INSERT INTO events (document_id, event_type, payload_json, created_at) "
+        "VALUES (NULL, 'comment_submitted', '{}', '2020-01-01T00:00:00+00:00')"
+    )
+    conn.execute(
+        "INSERT INTO events (document_id, event_type, payload_json, created_at) "
+        "VALUES (NULL, 'comment_integrated', '{}', '2020-01-02T00:00:00+00:00')"
+    )
+
+    # Now apply the real set through v8 in place.
+    assert migrate(conn) == 8
+    by_type = {
+        r["event_type"]: r["actor"]
+        for r in conn.execute("SELECT event_type, actor FROM events").fetchall()
+    }
+    assert by_type["comment_submitted"] == "user"
+    assert by_type["comment_integrated"] == "agent"
     conn.close()
 
 
@@ -339,8 +388,8 @@ def test_migration_0006_backfills_acked_version_from_version_at_last_read(
             (doc_id, ts_read),
         )
 
-    # Apply 0006 and 0007 by running the full migrate.
-    assert migrate(conn) == 7
+    # Apply the remaining migrations by running the full migrate.
+    assert migrate(conn) == 8
 
     row = conn.execute(
         "SELECT acked_version FROM read_state WHERE document_id = ?", (doc_id,)
