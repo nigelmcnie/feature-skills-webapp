@@ -3,10 +3,12 @@ import os
 import pytest
 
 from feature_skills_webapp.config import (
+    DEFAULT_HOST,
     DEFAULT_PORT,
     DEFAULT_WAIT_TIMEOUT,
     ConfigError,
     db_path,
+    host,
     port,
     wait_timeout,
 )
@@ -31,6 +33,21 @@ def test_wait_timeout_non_float(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("FEATURE_SKILLS_WEBAPP_WAIT_TIMEOUT", "abc")
     with pytest.raises(ConfigError, match="must be a float"):
         wait_timeout()
+
+
+def test_host_default_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("FEATURE_SKILLS_WEBAPP_HOST", raising=False)
+    assert host() == DEFAULT_HOST
+
+
+def test_host_default_when_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FEATURE_SKILLS_WEBAPP_HOST", "")
+    assert host() == DEFAULT_HOST
+
+
+def test_host_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FEATURE_SKILLS_WEBAPP_HOST", "0.0.0.0")
+    assert host() == "0.0.0.0"
 
 
 def test_port_default_when_unset(monkeypatch):

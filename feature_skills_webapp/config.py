@@ -2,10 +2,24 @@ import os
 from pathlib import Path
 
 DEFAULT_PORT = 8800
+DEFAULT_HOST = "127.0.0.1"
 
 
 class ConfigError(Exception):
     pass
+
+
+def host() -> str:
+    """The interface the server binds to.
+
+    Defaults to localhost. Set ``FEATURE_SKILLS_WEBAPP_HOST=0.0.0.0`` (or a
+    specific interface address) to reach the service from other machines on a
+    trusted network.
+    """
+    raw = os.environ.get("FEATURE_SKILLS_WEBAPP_HOST")
+    if not raw:
+        return DEFAULT_HOST
+    return raw
 
 
 def db_path() -> Path:
