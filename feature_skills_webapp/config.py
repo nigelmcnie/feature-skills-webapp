@@ -30,7 +30,7 @@ def db_path() -> Path:
     return xdg / "feature-skills-webapp" / "db.sqlite"
 
 
-DEFAULT_WAIT_TIMEOUT = 25.0
+DEFAULT_WAIT_TIMEOUT = 240.0
 
 
 def wait_timeout() -> float:
