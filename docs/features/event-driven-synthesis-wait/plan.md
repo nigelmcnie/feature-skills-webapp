@@ -49,8 +49,8 @@ Add an event-driven `GET .../synthesis/wait` endpoint to the webapp so the `feat
   def _read_synthesis_state(conn, lkey: str) -> SynthesisState | None:
       # None when the document row is absent (→ 404)
   ```
-4. **Timeout is a config accessor with an env override, default 25 s**
-  Add `config.wait_timeout()` reading `FEATURE_SKILLS_WEBAPP_WAIT_TIMEOUT` (float seconds, default `25.0`), mirroring the existing `config.port()` pattern. 25 s sits comfortably under common reverse-proxy idle timeouts for the eventual hosted deployment, and is recomputed per call so tests can set a tiny value via the env var or by monkeypatching the accessor.
+4. **Timeout is a config accessor with an env override, default 240 s**
+  Add `config.wait_timeout()` reading `FEATURE_SKILLS_WEBAPP_WAIT_TIMEOUT` (float seconds, default `240.0`), mirroring the existing `config.port()` pattern. 240 s sits just under the 5-minute Anthropic prompt-cache TTL, so a client that reconnects after each hold stays cache-warm while cutting reconnects roughly 10× versus the original 25 s. Because the hold is event-driven (a real submission wakes the held connection instantly via the broadcaster), a longer hold has zero responsiveness cost. There is no reverse proxy in front of the server today, and uvicorn sets no active-request timeout, so nothing collides with the longer hold; a *future* reverse proxy must set `proxy_read_timeout` ≥ the hold. If the hold is ever refused, the client already degrades to a 5 s short poll, so it fails safe. The value is recomputed per call so tests can set a tiny value via the env var or by monkeypatching the accessor.
 5. **Errors propagate; the skill falls back to polling**
   No special handling for a transient DB read failure mid-wait: it propagates as a 500, which the skill treats as a failed wait and degrades to the existing short poll. The `finally` still unregisters the queue. The only deliberately-handled "can't wait" cases are `db_path is None` (503) and a missing broadcaster (immediate `submitted=false`).
 6. **Test the blocking paths by driving the coroutine directly**
