@@ -6,6 +6,7 @@
 ## Available
 | Feature | Notes |
 |---|---|
+| [openapi-spec](docs/features/openapi-spec/context.md) | Publish a served OpenAPI spec for the webapp's ~25-route public HTTP API, derived from the app route table so it can't drift from the code. |
 | [retro-finding-settled-status](docs/features/retro-finding-settled-status/context.md) | A 'settled / accepted by-design' status for retro findings the retro-start GET still returns (so retros recognise a theme as settled) but marks not-actionable — so a consciously-accepted special case (e.g. recurring cross-repo-phases) stops being re-minted every retro. Surfaced in the api-coherence orchestrator retro. |
 | retro-recurrence-trend | Split from retro-findings-capture: surface a finding's recurrence depth ("raised in N retros") as an explicit trend and feed it back into the /feature-retro prompt to nudge persistent findings toward becoming tracked features. Design once retro-findings-capture has run in anger. |
 | [surfacing-feedback-signal](docs/features/surfacing-feedback-signal/context.md) |  |
