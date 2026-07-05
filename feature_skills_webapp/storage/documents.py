@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from dataclasses import dataclass, field
 
@@ -19,7 +20,10 @@ from feature_skills_webapp.storage.parents import logical_key
 from feature_skills_webapp.storage.tracker import require_feature, require_project
 from feature_skills_webapp.storage.versions import current_content, record_version
 
-WRITABLE_SECTION_TYPES = frozenset({"context", "requirements", "plan"})
+log = logging.getLogger(__name__)
+
+RESERVED_TYPES = frozenset({"features", "review"})
+KNOWN_TYPES = frozenset({"context", "requirements", "plan", "features", "review"})
 MAX_BODY_BYTES = 1024 * 1024  # 1 MB
 
 
@@ -38,16 +42,13 @@ class SubmitResult:
 
 
 def validate_writable(doc_type: str, feature: str | None, instance: int) -> None:
-    """Raise SubmitError unless this identity is writable in v1.
+    """Raise SubmitError unless this identity is writable.
 
-    Writable: doc_type in WRITABLE_SECTION_TYPES or ends with '-feedback';
-    feature-scoped only; instance must be 1 unless doc_type ends with '-feedback'.
+    Writable: any doc_type except RESERVED_TYPES; feature-scoped only;
+    instance must be 1 unless doc_type ends with '-feedback'.
     """
-    if doc_type not in WRITABLE_SECTION_TYPES and not doc_type.endswith("-feedback"):
-        raise SubmitError(
-            f"doc_type {doc_type!r} is not writable"
-            f" (v1 supports: context, requirements, plan, *-feedback)"
-        )
+    if doc_type in RESERVED_TYPES:
+        raise SubmitError(f"doc_type {doc_type!r} is reserved and not writable")
     if feature is None:
         raise SubmitError("feature must be specified (project-level docs are not writable)")
     if instance != 1 and not doc_type.endswith("-feedback"):
@@ -181,6 +182,8 @@ def submit_document(
     ).fetchone()
 
     if row is None:
+        if doc_type not in KNOWN_TYPES and not doc_type.endswith("-feedback"):
+            log.warning("Creating document of unknown type %r (feature=%r)", doc_type, feature)
         if source_path is not None:
             title = doc_title or (
                 f"{feature} — {humanise_type(doc_type)}" if feature else humanise_type(doc_type)

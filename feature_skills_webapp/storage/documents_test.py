@@ -103,7 +103,7 @@ def test_validate_writable_rejects_features():
         validate_writable("features", "feat", 1)
 
 
-def test_validate_writable_rejects_unknown_type():
+def test_validate_writable_rejects_reserved_review():
     with pytest.raises(SubmitError, match="not writable"):
         validate_writable("review", "feat", 1)
 
@@ -120,6 +120,20 @@ def test_validate_writable_rejects_instance_not_1_for_section_doc():
 
 def test_validate_writable_allows_instance_gt_1_for_feedback():
     validate_writable("requirements-feedback", "feat", 3)  # no exception
+
+
+def test_validate_writable_accepts_bespoke_type():
+    validate_writable("vision", "feat", 1)  # no exception
+
+
+def test_validate_writable_rejects_bespoke_instance_not_1():
+    with pytest.raises(SubmitError, match="instance must be 1"):
+        validate_writable("vision", "feat", 2)
+
+
+def test_validate_writable_rejects_bespoke_feature_none():
+    with pytest.raises(SubmitError, match="feature must be specified"):
+        validate_writable("vision", None, 1)
 
 
 # --- build_content ---
@@ -487,6 +501,64 @@ def test_submit_raises_project_not_found_when_project_absent(tmp_path: Path):
             actor="agent",
             now="2024-01-01T00:00:00+00:00",
         )
+
+
+# --- bespoke doc types ---
+
+
+def test_submit_bespoke_type_round_trips_opaque_body(tmp_path: Path):
+    conn = temp_conn(tmp_path)
+    content = build_content("vision", None, "<section><p>The vision.</p></section>")
+    now = "2024-01-01T00:00:00+00:00"
+    with transaction(conn):
+        project_id = upsert_project(conn, "proj", now)
+        upsert_feature(conn, project_id, "feat-a", now)
+        result = submit_document(
+            conn,
+            project="proj",
+            feature="feat-a",
+            doc_type="vision",
+            instance=1,
+            content=content,
+            actor="agent",
+            now=now,
+        )
+
+    stored = current_content(conn, result.document_id)
+    assert stored is not None
+    assert stored.shape == "opaque"
+    assert stored.sections[0].body == "<section><p>The vision.</p></section>"
+
+
+def test_submit_logs_warning_for_unknown_type(tmp_path: Path, caplog: pytest.LogCaptureFixture):
+    conn = temp_conn(tmp_path)
+    content = build_content("vision", None, "<p>x</p>")
+    now = "2024-01-01T00:00:00+00:00"
+    with caplog.at_level("WARNING"), transaction(conn):
+        project_id = upsert_project(conn, "proj", now)
+        upsert_feature(conn, project_id, "feat-a", now)
+        submit_document(
+            conn,
+            project="proj",
+            feature="feat-a",
+            doc_type="vision",
+            instance=1,
+            content=content,
+            actor="agent",
+            now=now,
+        )
+
+    assert any("vision" in r.message for r in caplog.records)
+
+
+def test_submit_does_not_log_warning_for_known_type(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
+    conn = temp_conn(tmp_path)
+    with caplog.at_level("WARNING"):
+        make_submit(conn)
+
+    assert caplog.records == []
 
 
 # ---------------------------------------------------------------------------
