@@ -1339,22 +1339,24 @@ def test_new_since_href_plain_for_formatting_only(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# archived-feature exclusion (new_since_last_visit + awaiting_input)
+# dormant-feature exclusion (new_since_last_visit + awaiting_input)
 # ---------------------------------------------------------------------------
 
 
-def _seed_archived_feature_with_doc(
+def _seed_dormant_feature_with_doc(
     conn: sqlite3.Connection,
     project_name: str,
     feature_slug: str,
     doc_type: str,
     *,
+    status: str = "archived",
     ts: str = "2020-06-01T00:00:00+00:00",
 ) -> int:
-    """Seed an archived feature with one active document of the given type.
+    """Seed a feature in a dormant state with one active document of the given type.
 
     Returns the document_id. The document has an unread event so it would
-    surface in new_since_last_visit if the feature were not archived.
+    surface in new_since_last_visit if the feature were active rather than
+    parked/done/archived.
     """
     conn.execute(
         "INSERT INTO projects (name, created_at) VALUES (?, ?) ON CONFLICT(name) DO NOTHING",
@@ -1365,8 +1367,8 @@ def _seed_archived_feature_with_doc(
     ]
     conn.execute(
         "INSERT INTO features (project_id, slug, status, created_at, updated_at) "
-        "VALUES (?, ?, 'archived', ?, ?) ON CONFLICT(project_id, slug) DO NOTHING",
-        (proj_id, feature_slug, ts, ts),
+        "VALUES (?, ?, ?, ?, ?) ON CONFLICT(project_id, slug) DO NOTHING",
+        (proj_id, feature_slug, status, ts, ts),
     )
     feat_id = conn.execute(
         "SELECT id FROM features WHERE project_id = ? AND slug = ?", (proj_id, feature_slug)
@@ -1392,7 +1394,25 @@ def _seed_archived_feature_with_doc(
 def test_new_since_excludes_archived_feature_active_doc(tmp_path: Path) -> None:
     conn = temp_conn(tmp_path)
     with transaction(conn):
-        doc_id = _seed_archived_feature_with_doc(conn, "proj", "dropped-feat", "context")
+        doc_id = _seed_dormant_feature_with_doc(conn, "proj", "dropped-feat", "context")
+    cards = new_since_last_visit(conn)
+    assert not any(c.document_id == doc_id for c in cards)
+
+
+def test_new_since_excludes_parked_feature_active_doc(tmp_path: Path) -> None:
+    conn = temp_conn(tmp_path)
+    with transaction(conn):
+        doc_id = _seed_dormant_feature_with_doc(
+            conn, "proj", "parked-feat", "context", status="parked"
+        )
+    cards = new_since_last_visit(conn)
+    assert not any(c.document_id == doc_id for c in cards)
+
+
+def test_new_since_excludes_done_feature_active_doc(tmp_path: Path) -> None:
+    conn = temp_conn(tmp_path)
+    with transaction(conn):
+        doc_id = _seed_dormant_feature_with_doc(conn, "proj", "done-feat", "context", status="done")
     cards = new_since_last_visit(conn)
     assert not any(c.document_id == doc_id for c in cards)
 
@@ -1400,8 +1420,28 @@ def test_new_since_excludes_archived_feature_active_doc(tmp_path: Path) -> None:
 def test_awaiting_input_excludes_archived_feature_feedback_doc(tmp_path: Path) -> None:
     conn = temp_conn(tmp_path)
     with transaction(conn):
-        doc_id = _seed_archived_feature_with_doc(
+        doc_id = _seed_dormant_feature_with_doc(
             conn, "proj", "dropped-feat", "requirements-feedback"
+        )
+    cards = awaiting_input(conn)
+    assert not any(c.document_id == doc_id for c in cards)
+
+
+def test_awaiting_input_excludes_parked_feature_feedback_doc(tmp_path: Path) -> None:
+    conn = temp_conn(tmp_path)
+    with transaction(conn):
+        doc_id = _seed_dormant_feature_with_doc(
+            conn, "proj", "parked-feat", "requirements-feedback", status="parked"
+        )
+    cards = awaiting_input(conn)
+    assert not any(c.document_id == doc_id for c in cards)
+
+
+def test_awaiting_input_excludes_done_feature_feedback_doc(tmp_path: Path) -> None:
+    conn = temp_conn(tmp_path)
+    with transaction(conn):
+        doc_id = _seed_dormant_feature_with_doc(
+            conn, "proj", "done-feat", "requirements-feedback", status="done"
         )
     cards = awaiting_input(conn)
     assert not any(c.document_id == doc_id for c in cards)

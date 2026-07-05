@@ -188,7 +188,10 @@ def new_since_last_visit(
         "FROM documents d "
         "JOIN projects p ON d.project_id = p.id "
         "JOIN features  f ON d.feature_id = f.id "
-        "WHERE d.status = 'active' AND f.status IS NOT 'archived' "
+        # Dormant features (parked / done / archived) must not surface docs here.
+        # NULL status is null-safe (surfaces), matching pre-backfill/legacy rows.
+        "WHERE d.status = 'active' "
+        "AND (f.status IS NULL OR f.status NOT IN ('parked', 'done', 'archived')) "
         "AND ( EXISTS ("
         "  SELECT 1 FROM events e WHERE e.document_id = d.id "
         "  AND e.actor = 'agent' "  # only agent activity re-surfaces; the user's own actions don't
@@ -300,7 +303,11 @@ def awaiting_input(conn: sqlite3.Connection, project_id: int | None = None) -> l
         "FROM documents d "
         "JOIN projects p ON d.project_id = p.id "
         "JOIN features  f ON d.feature_id = f.id "
-        "WHERE d.status = 'active' AND f.status IS NOT 'archived' AND d.type LIKE ? "
+        # Dormant features (parked / done / archived) must not surface docs here.
+        # NULL status is null-safe (surfaces), matching pre-backfill/legacy rows.
+        "WHERE d.status = 'active' "
+        "AND (f.status IS NULL OR f.status NOT IN ('parked', 'done', 'archived')) "
+        "AND d.type LIKE ? "
         "  AND NOT EXISTS (SELECT 1 FROM synthesis_responses sr WHERE sr.document_id = d.id)"
     )
     params: list[object] = [f"%{FEEDBACK_SUFFIX}"]
