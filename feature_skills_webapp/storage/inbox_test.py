@@ -201,6 +201,10 @@ def test_badge_kind_none_returns_context() -> None:
     assert badge_kind(None) == "context"
 
 
+def test_badge_kind_unknown_type_defaults_to_doc() -> None:
+    assert badge_kind("vision") == "doc"
+
+
 def test_doc_card_badge_from_doc_type(tmp_path: Path) -> None:
     conn = temp_conn(tmp_path)
     ts = "2020-06-01T00:00:00+00:00"

@@ -146,6 +146,18 @@ def test_feature_page_primary_docs_render_in_type_order(temp_db: Path, tmp_path:
     assert resp.text.index("Requirements") < resp.text.index("Plan")
 
 
+def test_feature_page_bespoke_doc_listed_ranked_last(temp_db: Path, tmp_path: Path) -> None:
+    docs_root = make_docs_root(tmp_path)
+    (docs_root / "proj1" / "feat-a" / "vision.html").write_text(
+        HTML_TEMPLATE.format(doc_type="vision", title="feat-a vision")
+    )
+    resp = _discover_and_get_feature_page(temp_db, docs_root)
+    assert resp.status_code == 200
+    assert "Vision" in resp.text
+    # bespoke type sorts after the three known types (doc_type_rank puts unknowns last)
+    assert resp.text.index("Plan") < resp.text.index("Vision")
+
+
 def test_feature_page_primary_doc_links_to_doc(temp_db: Path, tmp_path: Path) -> None:
     docs_root = make_docs_root(tmp_path)
     with TestClient(create_app(db_path=temp_db)) as client:

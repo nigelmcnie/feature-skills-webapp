@@ -598,6 +598,67 @@ def test_comment_button_not_shown_for_archived_doc(temp_db: Path, tmp_path: Path
     assert 'id="comment-submit-btn"' not in response.text
 
 
+def make_docs_root_with_bespoke(tmp_path: Path) -> Path:
+    """Docs root with context, plan, and a bespoke (non-built-in) doc type."""
+    docs_root = make_docs_root(tmp_path)
+    (docs_root / "proj1" / "feat-a" / "vision.html").write_text(
+        HTML_TEMPLATE.format(doc_type="vision", title="feat-a vision")
+    )
+    return docs_root
+
+
+def test_context_doc_is_commentable(temp_db: Path, tmp_path: Path) -> None:
+    docs_root = make_docs_root(tmp_path)
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
+        doc_id = _doc_id_by_type(temp_db, "context")
+        response = client.get(f"/doc/{doc_id}")
+    assert response.status_code == 200
+    assert 'id="comment-submit-btn"' in response.text
+    assert f"/doc/{doc_id}/comments" in response.text
+
+
+def test_bespoke_doc_is_commentable(temp_db: Path, tmp_path: Path) -> None:
+    docs_root = make_docs_root_with_bespoke(tmp_path)
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
+        doc_id = _doc_id_by_type(temp_db, "vision")
+        response = client.get(f"/doc/{doc_id}")
+    assert response.status_code == 200
+    assert 'id="comment-submit-btn"' in response.text
+    assert f"/doc/{doc_id}/comments" in response.text
+
+
+def test_bespoke_doc_comment_round_trip(temp_db: Path, tmp_path: Path) -> None:
+    docs_root = make_docs_root_with_bespoke(tmp_path)
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
+        doc_id = _doc_id_by_type(temp_db, "vision")
+        client.post(
+            f"/doc/{doc_id}/comments",
+            json={"comments": [{"excerpt": "some text", "text": "A bespoke comment"}]},
+        )
+        response = client.get(f"/doc/{doc_id}")
+    assert response.status_code == 200
+    assert "A bespoke comment" in response.text
+
+
+def test_sibling_nav_bespoke_type_ranked_last(temp_db: Path, tmp_path: Path) -> None:
+    docs_root = make_three_doc_root(tmp_path)
+    (docs_root / "proj1" / "feat-a" / "vision.html").write_text(
+        HTML_TEMPLATE.format(doc_type="vision", title="feat-a vision")
+    )
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _walk_docs(temp_db, docs_root)
+        ids = _doc_ids_by_type(temp_db)
+        response = client.get(f"/doc/{ids['vision']}")
+    assert response.status_code == 200
+    # vision sorts after context/requirements/plan (doc_type_rank puts unknowns last),
+    # so its only sibling link is a "prev" pointing back to plan.
+    assert f'href="/doc/{ids["plan"]}"' in response.text
+    assert "Vision →" not in response.text
+
+
 # ---- feature breadcrumb href (Phase 3) ----
 
 
