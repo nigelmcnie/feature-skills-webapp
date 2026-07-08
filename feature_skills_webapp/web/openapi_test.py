@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 from openapi_spec_validator import validate
 from starlette.routing import Route
@@ -125,3 +127,132 @@ def test_multi_method_path_merges_into_one_path_item() -> None:
     path_item = spec["paths"]["/api/projects/{project}"]
     assert "get" in path_item
     assert "post" in path_item
+
+
+# --- Phase 2: curated request/response detail ---
+
+_HIGH_VALUE_OPS_WITH_REQUEST_BODIES = {
+    ("PUT", "/api/documents/{project}/{feature}/{doc_type}/{instance}"),
+    ("POST", "/api/documents/{project}/{feature}/{doc_type}/{instance}/comments/integrate"),
+    ("PUT", "/api/projects/{project}/suggested-order"),
+    ("POST", "/api/projects/{project}/features/{feature}"),
+    ("POST", "/api/projects/{project}/features/{feature}/claim"),
+    ("POST", "/api/projects/{project}/features/{feature}/ship"),
+    ("POST", "/api/projects/{project}/features/{feature}/drop"),
+    ("POST", "/api/projects/{project}/features/{feature}/note"),
+}
+
+
+def _spec() -> dict:
+    return build_spec(_api_routes(), base_url="http://127.0.0.1:8800", version="0.1.0")
+
+
+def test_high_value_operations_declare_a_request_body() -> None:
+    spec = _spec()
+    for method, path_format in _HIGH_VALUE_OPS_WITH_REQUEST_BODIES:
+        op = spec["paths"][path_format][method.lower()]
+        assert "requestBody" in op, f"{method} {path_format} missing requestBody"
+
+
+def test_high_value_operations_declare_error_responses() -> None:
+    """Every operation with meaningful failure modes documents them, not just 200."""
+    spec = _spec()
+    for method, path_format in _HIGH_VALUE_OPS_WITH_REQUEST_BODIES:
+        responses = spec["paths"][path_format][method.lower()]["responses"]
+        assert "503" in responses
+        assert any(code in responses for code in ("400", "404", "409"))
+
+
+def test_document_write_has_dry_run_query_param() -> None:
+    spec = _spec()
+    op = spec["paths"]["/api/documents/{project}/{feature}/{doc_type}/{instance}"]["put"]
+    names = {p["name"] for p in op["parameters"]}
+    assert "dry_run" in names
+
+
+def test_features_listing_has_q_and_status_query_params() -> None:
+    spec = _spec()
+    op = spec["paths"]["/api/projects/{project}/features"]["get"]
+    names = {p["name"] for p in op["parameters"]}
+    assert {"q", "status"} <= names
+
+
+def test_feature_sentinel_documented_on_every_document_path() -> None:
+    """Every /api/documents/.../{feature}/... path explains the '-' sentinel."""
+    spec = _spec()
+    for path_format, path_item in spec["paths"].items():
+        if not path_format.startswith("/api/documents/"):
+            continue
+        for op in path_item.values():
+            feature_param = next(p for p in op["parameters"] if p["name"] == "feature")
+            assert "-" in feature_param["description"]
+
+
+def test_document_write_schema_points_to_the_manifest_endpoint() -> None:
+    """Section shapes aren't re-described inline — they point at the source of truth."""
+    op = _spec()["paths"]["/api/documents/{project}/{feature}/{doc_type}/{instance}"]["put"]
+    schema = op["requestBody"]["content"]["application/json"]["schema"]
+    assert "/api/manifests/" in schema["properties"]["sections"]["description"]
+
+
+def test_error_responses_reference_the_shared_error_schema() -> None:
+    op = _spec()["paths"]["/api/projects/{project}"]["get"]
+    error_response = op["responses"]["404"]
+    schema = error_response["content"]["application/json"]["schema"]
+    assert schema == {"$ref": "#/components/schemas/Error"}
+
+
+def test_components_error_schema_is_a_valid_object_schema() -> None:
+    spec = _spec()
+    error_schema = spec["components"]["schemas"]["Error"]
+    assert error_schema["type"] == "object"
+    assert "error" in error_schema["properties"]
+
+
+def test_get_manifest_has_no_db_dependent_error_responses() -> None:
+    """get_manifest never touches the DB, so 503 would misdocument its real behaviour."""
+    op = _spec()["paths"]["/api/manifests/{doc_type}"]["get"]
+    assert "503" not in op.get("responses", {})
+
+
+# --- Golden-response tests: curated examples pinned against real responses ---
+
+
+def test_golden_response_list_projects_matches_curated_example(temp_db: Path) -> None:
+    example = _spec()["paths"]["/api/projects"]["get"]["responses"]["200"]["content"][
+        "application/json"
+    ]["example"]
+    with TestClient(create_app(db_path=temp_db)) as client:
+        response = client.get("/api/projects")
+    assert set(response.json().keys()) == set(example.keys())
+
+
+def test_golden_response_create_project_matches_curated_example(temp_db: Path) -> None:
+    example = _spec()["paths"]["/api/projects/{project}"]["post"]["responses"]["200"]["content"][
+        "application/json"
+    ]["example"]
+    with TestClient(create_app(db_path=temp_db)) as client:
+        response = client.post("/api/projects/my-proj")
+    assert set(response.json().keys()) == set(example.keys())
+
+
+def test_golden_response_claim_feature_matches_curated_example(temp_db: Path) -> None:
+    example = _spec()["paths"]["/api/projects/{project}/features/{feature}/claim"]["post"][
+        "responses"
+    ]["200"]["content"]["application/json"]["example"]
+    with TestClient(create_app(db_path=temp_db)) as client:
+        client.post("/api/projects/my-proj")
+        client.post("/api/projects/my-proj/features/my-feat", json={"notes": ""})
+        response = client.post(
+            "/api/projects/my-proj/features/my-feat/claim", json={"owner": "Alice"}
+        )
+    assert set(response.json().keys()) == set(example.keys())
+
+
+def test_golden_response_get_manifest_matches_curated_example() -> None:
+    example = _spec()["paths"]["/api/manifests/{doc_type}"]["get"]["responses"]["200"]["content"][
+        "application/json"
+    ]["example"]
+    client = TestClient(create_app(db_path=None))
+    response = client.get("/api/manifests/plan")
+    assert set(response.json().keys()) == set(example.keys())
