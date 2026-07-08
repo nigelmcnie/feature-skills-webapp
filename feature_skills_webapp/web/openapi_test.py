@@ -2,6 +2,8 @@ from pathlib import Path
 
 import pytest
 from openapi_spec_validator import validate
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 from starlette.routing import Route
 from starlette.testclient import TestClient
 
@@ -256,3 +258,59 @@ def test_golden_response_get_manifest_matches_curated_example() -> None:
     client = TestClient(create_app(db_path=None))
     response = client.get("/api/manifests/plan")
     assert set(response.json().keys()) == set(example.keys())
+
+
+_DOC_URL = "/api/documents/my-proj/my-feat/requirements/1"
+
+
+def _seed_document(client: TestClient) -> None:
+    client.post("/api/projects/my-proj")
+    client.post("/api/projects/my-proj/features/my-feat", json={"notes": ""})
+    client.put(_DOC_URL, json={"sections": {"summary": "<p>x</p>"}})
+
+
+def test_golden_response_document_put_matches_curated_example(temp_db: Path) -> None:
+    """The document PUT is the feature's highest-value op — pin its curated example."""
+    example = _spec()["paths"]["/api/documents/{project}/{feature}/{doc_type}/{instance}"]["put"][
+        "responses"
+    ]["200"]["content"]["application/json"]["example"]
+    with TestClient(create_app(db_path=temp_db)) as client:
+        client.post("/api/projects/my-proj")
+        client.post("/api/projects/my-proj/features/my-feat", json={"notes": ""})
+        response = client.put(_DOC_URL, json={"sections": {"summary": "<p>x</p>"}})
+    assert response.status_code == 200
+    assert set(response.json().keys()) == set(example.keys())
+
+
+def test_golden_response_document_get_matches_curated_example(temp_db: Path) -> None:
+    example = _spec()["paths"]["/api/documents/{project}/{feature}/{doc_type}/{instance}"]["get"][
+        "responses"
+    ]["200"]["content"]["application/json"]["example"]
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _seed_document(client)
+        response = client.get(_DOC_URL)
+    assert response.status_code == 200
+    assert set(response.json().keys()) == set(example.keys())
+
+
+def test_coverage_guard_catches_an_undocumented_route() -> None:
+    """The guard's own red path, encoded rather than checked by hand: an /api route
+    absent from API_METADATA is flagged by coverage even though build_spec still emits
+    it (with an empty summary), so route<->spec parity would stay green."""
+
+    async def _dummy(request: Request) -> JSONResponse:  # pragma: no cover - never called
+        return JSONResponse({})
+
+    routes = [*_api_routes(), Route("/api/dummy-undocumented", _dummy, methods=["GET"])]
+    spec = build_spec(routes, base_url="http://127.0.0.1:8800", version="0.1.0")
+    # Parity would NOT catch it — the operation is emitted, just with an empty summary.
+    assert spec["paths"]["/api/dummy-undocumented"]["get"].get("summary", "") == ""
+    # Coverage WOULD catch it — the guard predicate flags the missing summary.
+    walked = {
+        (m, r.path_format)
+        for r in routes
+        for m in (r.methods or [])
+        if m not in ("HEAD", "OPTIONS")
+    }
+    missing = [op for op in walked if not API_METADATA.get(op, {}).get("summary")]
+    assert ("GET", "/api/dummy-undocumented") in missing

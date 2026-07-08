@@ -124,3 +124,12 @@ def test_public_base_url_wildcard_bind_maps_to_loopback(monkeypatch: pytest.Monk
     monkeypatch.setenv("FEATURE_SKILLS_WEBAPP_HOST", "0.0.0.0")
     monkeypatch.delenv("FEATURE_SKILLS_WEBAPP_PORT", raising=False)
     assert public_base_url() == f"http://127.0.0.1:{DEFAULT_PORT}"
+
+
+def test_public_base_url_ipv6_wildcard_bind_maps_to_loopback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("FEATURE_SKILLS_WEBAPP_PUBLIC_URL", raising=False)
+    monkeypatch.setenv("FEATURE_SKILLS_WEBAPP_HOST", "::")
+    monkeypatch.delenv("FEATURE_SKILLS_WEBAPP_PORT", raising=False)
+    assert public_base_url() == f"http://127.0.0.1:{DEFAULT_PORT}"
