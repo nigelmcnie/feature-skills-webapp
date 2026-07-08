@@ -7,6 +7,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
+from feature_skills_webapp.config import public_base_url
+
 OPENAPI_VERSION = "3.1.0"
 
 API_DESCRIPTION = (
@@ -540,8 +542,6 @@ def build_spec(routes: list[Any], *, base_url: str, version: str) -> dict[str, A
 
 
 async def openapi_json(request: Request) -> JSONResponse:
-    from feature_skills_webapp.config import public_base_url
-
     spec = build_spec(
         request.app.routes,
         base_url=public_base_url(),
