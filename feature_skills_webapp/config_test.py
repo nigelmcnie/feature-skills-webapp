@@ -10,6 +10,7 @@ from feature_skills_webapp.config import (
     db_path,
     host,
     port,
+    public_base_url,
     wait_timeout,
 )
 
@@ -104,3 +105,22 @@ def test_db_path_home_fallback(monkeypatch):
     assert str(result).startswith(home)
     assert "feature-skills-webapp" in str(result)
     assert result.name == "db.sqlite"
+
+
+def test_public_base_url_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FEATURE_SKILLS_WEBAPP_PUBLIC_URL", "https://example.com/")
+    assert public_base_url() == "https://example.com"
+
+
+def test_public_base_url_default_from_host_and_port(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("FEATURE_SKILLS_WEBAPP_PUBLIC_URL", raising=False)
+    monkeypatch.setenv("FEATURE_SKILLS_WEBAPP_HOST", "192.168.1.5")
+    monkeypatch.setenv("FEATURE_SKILLS_WEBAPP_PORT", "9000")
+    assert public_base_url() == "http://192.168.1.5:9000"
+
+
+def test_public_base_url_wildcard_bind_maps_to_loopback(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("FEATURE_SKILLS_WEBAPP_PUBLIC_URL", raising=False)
+    monkeypatch.setenv("FEATURE_SKILLS_WEBAPP_HOST", "0.0.0.0")
+    monkeypatch.delenv("FEATURE_SKILLS_WEBAPP_PORT", raising=False)
+    assert public_base_url() == f"http://127.0.0.1:{DEFAULT_PORT}"

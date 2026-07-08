@@ -24,6 +24,7 @@ dev = [
     "httpx>=0.27",
     "ruff>=0.6",
     "ty>=0.0.1a1",
+    "openapi-spec-validator>=0.7",
 ]
 
 [build-system]
