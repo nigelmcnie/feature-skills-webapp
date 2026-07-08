@@ -1,12 +1,12 @@
 ## In Progress
 | Feature | Owner | Notes |
 |---|---|---|
+| [openapi-spec](docs/features/openapi-spec/context.md) | Nigel | Publish a served OpenAPI spec for the webapp's ~25-route public HTTP API, derived from the app route table so it can't drift from the code. |
 | [writable-doc-types](docs/features/writable-doc-types/requirements.md) | Nigel McNie | Widen the v1 write boundary (storage/documents.py validate_writable) so bespoke doc types can be authored over the API as opaque whole-body docs — manifest_for() already falls back to opaque for unrecognised types and the exporter handles them via convert_generic, but PUT rejects anything outside context/requirements/plan/*-feedback. Motivating case: the ai-eng-planning north-star document set (vision, system-map, contracts, trust, deep dives) currently rides as requirements docs with mislabelled sections. Design questions: any-type-goes vs per-project allowlist; instance semantics for bespoke types; inbox badge/sibling-nav treatment of unknown types. |
 
 ## Available
 | Feature | Notes |
 |---|---|
-| [openapi-spec](docs/features/openapi-spec/context.md) | Publish a served OpenAPI spec for the webapp's ~25-route public HTTP API, derived from the app route table so it can't drift from the code. |
 | [retro-finding-settled-status](docs/features/retro-finding-settled-status/context.md) | A 'settled / accepted by-design' status for retro findings the retro-start GET still returns (so retros recognise a theme as settled) but marks not-actionable — so a consciously-accepted special case (e.g. recurring cross-repo-phases) stops being re-minted every retro. Surfaced in the api-coherence orchestrator retro. |
 | retro-recurrence-trend | Split from retro-findings-capture: surface a finding's recurrence depth ("raised in N retros") as an explicit trend and feed it back into the /feature-retro prompt to nudge persistent findings toward becoming tracked features. Design once retro-findings-capture has run in anger. |
 | [surfacing-feedback-signal](docs/features/surfacing-feedback-signal/context.md) |  |
