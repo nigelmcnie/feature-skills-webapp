@@ -337,6 +337,11 @@ li { margin-bottom: 4px; }
 /* Comments rail */
 aside.comments-rail {
   grid-column: 3;
+  position: sticky;
+  top: calc(var(--bar-h) + 24px);
+  align-self: start;
+  max-height: calc(100vh - var(--bar-h) - 48px);
+  overflow-y: auto;
   padding-top: 0;
 }
 aside.comments-rail h3 {

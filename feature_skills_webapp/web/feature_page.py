@@ -6,7 +6,6 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, PlainTextResponse, Response
 
 from feature_skills_webapp.storage.inbox import (
-    DOC_TYPE_ORDER,
     badge_kind,
     doc_type_rank,
     humanise_type,
@@ -35,7 +34,7 @@ async def feature_page(request: Request) -> Response:
         ).fetchall()
 
     primary = sorted(
-        [d for d in docs if d["status"] == "active" and d["type"] in DOC_TYPE_ORDER],
+        [d for d in docs if d["status"] == "active" and not d["type"].endswith(FEEDBACK_SUFFIX)],
         key=lambda d: (doc_type_rank(d["type"]), d["id"]),
     )
     feedback = sorted(

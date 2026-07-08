@@ -95,9 +95,9 @@ async def doc_shell(request: Request) -> Response:
         available = row["status"] in ("active", "archived")
         is_synthesis = row["type"].endswith(FEEDBACK_SUFFIX) and row["status"] == "active"
         is_commentable = (
-            row["type"] in {"requirements", "plan"}
-            and row["status"] == "active"
+            row["status"] == "active"
             and row["feature"] is not None
+            and not row["type"].endswith(FEEDBACK_SUFFIX)
         )
         nav: tuple[sqlite3.Row | None, sqlite3.Row | None] = (None, None)
         if row["feature"] is not None and row["status"] == "active":

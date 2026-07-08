@@ -43,7 +43,9 @@ def badge_kind(doc_type: str | None) -> str:
         return "context"
     if doc_type.endswith(FEEDBACK_SUFFIX):
         return "feedback"
-    return doc_type
+    if doc_type in DOC_TYPE_ORDER:
+        return doc_type
+    return "doc"
 
 
 def doc_type_rank(doc_type: str) -> int:
