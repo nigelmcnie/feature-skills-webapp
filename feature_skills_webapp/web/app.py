@@ -13,6 +13,7 @@ from feature_skills_webapp.web.comments import post_comments
 from feature_skills_webapp.web.doc_view import doc_shell
 from feature_skills_webapp.web.events import events
 from feature_skills_webapp.web.feature_page import feature_page
+from feature_skills_webapp.web.openapi import openapi_json
 from feature_skills_webapp.web.project_page import project_page
 from feature_skills_webapp.web.retro_findings import (
     get_retro_findings,
@@ -87,6 +88,7 @@ def create_app(db_path: Path | None) -> Starlette:
             Route("/", index),
             Route("/events", events),
             Route("/healthz", healthz),
+            Route("/openapi.json", openapi_json),
             Route("/admin/mark-read", admin_mark_new_since_read, methods=["POST"]),
             Route("/admin/projects/{project}/mark-read", admin_mark_read, methods=["POST"]),
             Route("/project/{project}", project_page),

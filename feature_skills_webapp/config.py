@@ -54,3 +54,20 @@ def port() -> int:
     if not (1 <= value <= 65535):
         raise ConfigError(f"FEATURE_SKILLS_WEBAPP_PORT out of range: {value}")
     return value
+
+
+def public_base_url() -> str:
+    """The base URL clients should use to reach this service.
+
+    Set ``FEATURE_SKILLS_WEBAPP_PUBLIC_URL`` when the service sits behind a
+    reverse proxy, so the advertised URL survives the hop. Otherwise derived
+    from host/port, mapping a wildcard bind (unreachable as a client target)
+    to loopback.
+    """
+    override = os.environ.get("FEATURE_SKILLS_WEBAPP_PUBLIC_URL")
+    if override:
+        return override.rstrip("/")
+    h = host()
+    if h in ("0.0.0.0", "::"):
+        h = "127.0.0.1"
+    return f"http://{h}:{port()}"
