@@ -7,6 +7,7 @@
 ## Available
 | Feature | Notes |
 |---|---|
+| [document-archive-api](docs/features/document-archive-api/context.md) | Add an API way to archive/retire a superseded API-authored document (writable-doc-types follow-up). |
 | [retro-finding-settled-status](docs/features/retro-finding-settled-status/context.md) | A 'settled / accepted by-design' status for retro findings the retro-start GET still returns (so retros recognise a theme as settled) but marks not-actionable — so a consciously-accepted special case (e.g. recurring cross-repo-phases) stops being re-minted every retro. Surfaced in the api-coherence orchestrator retro. |
 | retro-recurrence-trend | Split from retro-findings-capture: surface a finding's recurrence depth ("raised in N retros") as an explicit trend and feed it back into the /feature-retro prompt to nudge persistent findings toward becoming tracked features. Design once retro-findings-capture has run in anger. |
 | [surfacing-feedback-signal](docs/features/surfacing-feedback-signal/context.md) |  |
