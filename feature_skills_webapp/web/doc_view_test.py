@@ -1370,3 +1370,148 @@ def test_scope_and_keep_opaque_doc(tmp_path: Path, temp_db: Path) -> None:
     assert "@scope (#doc-main)" in page.text
     assert "table" in page.text
     assert "border: 2px solid green" in page.text
+
+
+# ---------------------------------------------------------------------------
+# archived-notice rendering (API-authored document archival)
+# ---------------------------------------------------------------------------
+
+
+def _make_archived_document(
+    db: Path,
+    *,
+    reason: str = "obsolete",
+    superseded_by: str | None = None,
+    note: str | None = None,
+    project: str = "proj1",
+    feature: str = "feat-a",
+    doc_type: str = "requirements",
+    instance: int = 1,
+    section_key: str = "summary",
+) -> int:
+    from feature_skills_webapp.storage.db import connect, transaction
+    from feature_skills_webapp.storage.documents import (
+        archive_document,
+        build_content,
+        submit_document,
+    )
+    from feature_skills_webapp.storage.parents import upsert_feature, upsert_project
+
+    conn = connect(db)
+    now = "2024-01-01T00:00:00+00:00"
+    content = build_content(doc_type, {section_key: "<p>Some content.</p>"}, None)
+    with transaction(conn):
+        project_id = upsert_project(conn, project, now)
+        upsert_feature(conn, project_id, feature, now)
+        result = submit_document(
+            conn,
+            project=project,
+            feature=feature,
+            doc_type=doc_type,
+            instance=instance,
+            content=content,
+            actor="test",
+            now=now,
+        )
+    with transaction(conn):
+        archive_document(
+            conn,
+            project=project,
+            feature=feature,
+            doc_type=doc_type,
+            instance=instance,
+            reason=reason,
+            superseded_by=superseded_by,
+            note=note,
+            actor="test",
+            now="2024-01-02T00:00:00+00:00",
+        )
+    conn.close()
+    return result.document_id
+
+
+def test_archived_notice_shows_reason_and_note(temp_db: Path) -> None:
+    doc_id = _make_archived_document(temp_db, reason="obsolete", note="no longer needed")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        response = client.get(f"/doc/{doc_id}")
+    assert response.status_code == 200
+    assert "archived-notice" in response.text
+    assert "obsolete" in response.text
+    assert "no longer needed" in response.text
+
+
+def test_archived_notice_superseded_by_link_resolves(temp_db: Path) -> None:
+    from feature_skills_webapp.storage.parents import logical_key
+
+    # The document that will be pointed at — a distinct doc_type, kept active.
+    superseding_id = _make_archived_document(
+        temp_db, reason="obsolete", doc_type="context", instance=1, section_key="problem-space"
+    )
+    # Undo its archival — it should be a live, active document to be superseded_by'd.
+    from feature_skills_webapp.storage.db import connect, transaction
+    from feature_skills_webapp.storage.documents import unarchive_document
+
+    conn = connect(temp_db)
+    with transaction(conn):
+        unarchive_document(
+            conn,
+            project="proj1",
+            feature="feat-a",
+            doc_type="context",
+            instance=1,
+            actor="test",
+            now="2024-01-03T00:00:00+00:00",
+        )
+    conn.close()
+
+    superseding_key = logical_key("proj1", "feat-a", "context", 1)
+    doc_id = _make_archived_document(
+        temp_db,
+        reason="superseded",
+        superseded_by=superseding_key,
+        doc_type="requirements",
+        instance=1,
+    )
+    with TestClient(create_app(db_path=temp_db)) as client:
+        response = client.get(f"/doc/{doc_id}")
+    assert response.status_code == 200
+    assert f'href="/doc/{superseding_id}"' in response.text
+    assert superseding_key in response.text
+
+
+def test_archived_notice_superseded_by_plain_text_fallback(temp_db: Path) -> None:
+    unmatched_key = "some-proj/some-feat/vision/1"
+    doc_id = _make_archived_document(temp_db, reason="superseded", superseded_by=unmatched_key)
+    with TestClient(create_app(db_path=temp_db)) as client:
+        response = client.get(f"/doc/{doc_id}")
+    assert response.status_code == 200
+    assert unmatched_key in response.text
+    assert f">{unmatched_key}</a>" not in response.text
+
+
+def test_active_document_shows_no_archived_notice(temp_db: Path) -> None:
+    from feature_skills_webapp.storage.db import connect, transaction
+    from feature_skills_webapp.storage.documents import build_content, submit_document
+    from feature_skills_webapp.storage.parents import upsert_feature, upsert_project
+
+    conn = connect(temp_db)
+    now = "2024-01-01T00:00:00+00:00"
+    content = build_content("requirements", {"summary": "<p>Some content.</p>"}, None)
+    with transaction(conn):
+        project_id = upsert_project(conn, "proj1", now)
+        upsert_feature(conn, project_id, "feat-a", now)
+        result = submit_document(
+            conn,
+            project="proj1",
+            feature="feat-a",
+            doc_type="requirements",
+            instance=1,
+            content=content,
+            actor="test",
+            now=now,
+        )
+    conn.close()
+    with TestClient(create_app(db_path=temp_db)) as client:
+        response = client.get(f"/doc/{result.document_id}")
+    assert response.status_code == 200
+    assert "archived-notice" not in response.text
