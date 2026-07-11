@@ -10,6 +10,9 @@ from feature_skills_webapp.storage.parents import logical_key, slugify
 
 FEATURE_STATUSES: tuple[str, ...] = ("available", "in_progress", "parked", "done", "archived")
 
+ARCHIVE_REASONS: tuple[str, ...] = ("subsumed", "superseded", "duplicate", "obsolete")
+REASONS_REQUIRING_POINTER: tuple[str, ...] = ("subsumed", "superseded", "duplicate")
+
 
 # ---------------------------------------------------------------------------
 # Read accessors
@@ -59,6 +62,7 @@ def list_features(
         params.append(status)
     return conn.execute(
         "SELECT f.slug, f.status, f.owner, f.notes, f.created_at, "
+        "  f.archive_reason, f.superseded_by, f.archive_note, f.archived_at, "
         "  (SELECT MAX(e.created_at) FROM events e "
         "   JOIN documents d ON e.document_id = d.id "
         "   WHERE d.feature_id = f.id AND d.status = 'active') AS last_activity "
@@ -70,7 +74,8 @@ def list_features(
 def get_feature(conn: sqlite3.Connection, project: str, slug: str) -> sqlite3.Row | None:
     slug = slugify(slug)
     return conn.execute(
-        "SELECT f.id, f.slug, f.status, f.owner, f.notes, p.name AS project "
+        "SELECT f.id, f.slug, f.status, f.owner, f.notes, p.name AS project, "
+        "  f.archive_reason, f.superseded_by, f.archive_note, f.archived_at "
         "FROM features f JOIN projects p ON f.project_id = p.id "
         "WHERE p.name = ? AND f.slug = ?",
         (project, slug),
@@ -134,12 +139,19 @@ class FeatureExists(TrackerError): ...
 class InvalidTransition(TrackerError): ...
 
 
+class InvalidArchiveReason(TrackerError): ...
+
+
+class MissingSupersededBy(TrackerError): ...
+
+
 @dataclass(frozen=True)
 class MutationResult:
     project: str
     slug: str
     status: str
     changed: bool
+    warning: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -316,31 +328,92 @@ def ship_feature(
     return MutationResult(project, slug, "done", changed=True)
 
 
-def drop_feature(
+def _resolve_superseded_by_warning(
+    conn: sqlite3.Connection, project: str, superseded_by: str | None
+) -> str | None:
+    """Best-effort resolution warning for a slug-shaped superseded_by pointer.
+
+    Non-slug-shaped values (URLs, prose refs, MR numbers like "!123") are stored
+    verbatim without any resolution attempt or warning — only a value that looks
+    like a feature slug is checked against the project's features.
+    """
+    if not superseded_by or slugify(superseded_by) != superseded_by:
+        return None
+    if get_feature(conn, project, superseded_by) is None:
+        return f"superseded_by {superseded_by!r} does not resolve to a feature in this project"
+    return None
+
+
+def archive_feature(
     conn: sqlite3.Connection,
     *,
     project: str,
     slug: str,
+    reason: str,
+    superseded_by: str | None,
+    note: str | None,
+    actor: str,
     now: str,
 ) -> MutationResult:
     slug = slugify(slug)
+    if reason not in ARCHIVE_REASONS:
+        raise InvalidArchiveReason(reason)
+    if reason in REASONS_REQUIRING_POINTER and not superseded_by:
+        raise MissingSupersededBy(reason)
     feat = get_feature(conn, project, slug)
     if feat is None:
         raise FeatureNotFound(f"{project}/{slug}")
     if feat["status"] == "archived":
         return MutationResult(project, slug, "archived", changed=False)
     if feat["status"] not in ("available", "in_progress"):
-        raise InvalidTransition(f"cannot drop from {feat['status']!r}")
+        raise InvalidTransition(f"cannot archive from {feat['status']!r}")
+    warning = _resolve_superseded_by_warning(conn, project, superseded_by)
     conn.execute(
-        "UPDATE features SET status='archived', updated_at=? WHERE id=?",
+        "UPDATE features SET status='archived', archive_reason=?, superseded_by=?, "
+        "  archive_note=?, archived_at=?, updated_at=? WHERE id=?",
+        (reason, superseded_by, note, now, now, feat["id"]),
+    )
+    conn.execute(
+        "INSERT INTO events (document_id, event_type, payload_json, actor, created_at) "
+        "VALUES (NULL, 'feature_archived', ?, ?, ?)",
+        (
+            json.dumps(
+                {"project": project, "slug": slug, "reason": reason, "superseded_by": superseded_by}
+            ),
+            actor,
+            now,
+        ),
+    )
+    return MutationResult(project, slug, "archived", changed=True, warning=warning)
+
+
+def unarchive_feature(
+    conn: sqlite3.Connection,
+    *,
+    project: str,
+    slug: str,
+    actor: str,
+    now: str,
+) -> MutationResult:
+    slug = slugify(slug)
+    feat = get_feature(conn, project, slug)
+    if feat is None:
+        raise FeatureNotFound(f"{project}/{slug}")
+    if feat["status"] == "available":
+        return MutationResult(project, slug, "available", changed=False)
+    if feat["status"] != "archived":
+        raise InvalidTransition(f"cannot unarchive from {feat['status']!r}")
+    conn.execute(
+        "UPDATE features SET status='available', owner=NULL, archive_reason=NULL, "
+        "  superseded_by=NULL, archive_note=NULL, archived_at=NULL, updated_at=? WHERE id=?",
         (now, feat["id"]),
     )
     conn.execute(
-        "INSERT INTO events (document_id, event_type, payload_json, created_at) "
-        "VALUES (NULL, 'feature_dropped', ?, ?)",
-        (json.dumps({"project": project, "slug": slug}), now),
+        "INSERT INTO events (document_id, event_type, payload_json, actor, created_at) "
+        "VALUES (NULL, 'feature_unarchived', ?, ?, ?)",
+        (json.dumps({"project": project, "slug": slug}), actor, now),
     )
-    return MutationResult(project, slug, "archived", changed=True)
+    return MutationResult(project, slug, "available", changed=True)
 
 
 def update_feature_note(

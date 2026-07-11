@@ -7,4 +7,4 @@ ALTER TABLE documents ADD COLUMN superseded_by TEXT;
 ALTER TABLE documents ADD COLUMN archive_note TEXT;
 ALTER TABLE documents ADD COLUMN archived_at TEXT;
 
-INSERT INTO schema_version (version) VALUES (9)
+INSERT INTO schema_version (version) VALUES (10)

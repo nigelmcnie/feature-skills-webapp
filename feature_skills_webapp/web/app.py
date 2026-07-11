@@ -39,10 +39,10 @@ from feature_skills_webapp.web.submit import (
 )
 from feature_skills_webapp.web.synthesis import post_synthesis_response
 from feature_skills_webapp.web.tracker import (
+    archive_handler,
     claim_handler,
     create_feature_handler,
     create_project_handler,
-    drop_handler,
     get_feature_handler,
     get_project_handler,
     list_documents_handler,
@@ -53,6 +53,7 @@ from feature_skills_webapp.web.tracker import (
     put_suggested_order_handler,
     release_handler,
     ship_handler,
+    unarchive_handler,
 )
 
 _HERE = Path(__file__).parent
@@ -191,8 +192,13 @@ def create_app(db_path: Path | None) -> Starlette:
                 methods=["POST"],
             ),
             Route(
-                "/api/projects/{project}/features/{feature}/drop",
-                drop_handler,
+                "/api/projects/{project}/features/{feature}/archive",
+                archive_handler,
+                methods=["POST"],
+            ),
+            Route(
+                "/api/projects/{project}/features/{feature}/unarchive",
+                unarchive_handler,
                 methods=["POST"],
             ),
             Route(
