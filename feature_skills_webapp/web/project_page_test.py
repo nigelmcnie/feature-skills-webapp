@@ -331,3 +331,93 @@ def test_project_page_archived_section_present_with_archived_feature(
     assert "Done" in html
     assert "feat-active" in html
     assert "feat-done" in html
+
+
+def test_project_page_archived_feature_full_metadata_reason_linked_note(
+    temp_db: Path, tmp_path: Path
+) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        client.post("/api/projects/proj1")
+        client.post("/api/projects/proj1/features/feat-a", json={})
+        client.post("/api/projects/proj1/features/feat-b", json={})
+        client.post(
+            "/api/projects/proj1/features/feat-a/archive",
+            json={"reason": "duplicate", "superseded_by": "feat-b", "note": "see feat-b instead"},
+        )
+        resp = client.get("/project/proj1")
+    assert resp.status_code == 200
+    html = resp.text
+    assert "duplicate" in html
+    assert 'href="/project/proj1/feature/feat-b"' in html
+    assert "see feat-b instead" in html
+
+
+def test_project_page_archived_feature_unresolved_superseded_by_rendered_as_text(
+    temp_db: Path, tmp_path: Path
+) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        client.post("/api/projects/proj1")
+        client.post("/api/projects/proj1/features/feat-a", json={})
+        client.post(
+            "/api/projects/proj1/features/feat-a/archive",
+            json={"reason": "duplicate", "superseded_by": "no-such-feature"},
+        )
+        resp = client.get("/project/proj1")
+    assert resp.status_code == 200
+    html = resp.text
+    assert "no-such-feature" in html
+    assert 'href="/project/proj1/feature/no-such-feature"' not in html
+
+
+def test_project_page_archived_feature_null_metadata_renders_clean(
+    temp_db: Path, tmp_path: Path
+) -> None:
+    """A legacy archived row with no archival metadata (pre-migration drop) renders without error."""
+    from feature_skills_webapp.storage.db import connect
+
+    conn = connect(temp_db)
+    now = "2024-01-01T00:00:00+00:00"
+    conn.execute("INSERT INTO projects (name, created_at) VALUES ('proj1', ?)", (now,))
+    pid = conn.execute("SELECT id FROM projects WHERE name='proj1'").fetchone()["id"]
+    conn.execute(
+        "INSERT INTO features (project_id, slug, status, created_at, updated_at) "
+        "VALUES (?, 'legacy-dropped', 'archived', ?, ?)",
+        (pid, now, now),
+    )
+    conn.commit()
+    conn.close()
+
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.get("/project/proj1")
+    assert resp.status_code == 200
+    html = resp.text
+    assert "legacy-dropped" in html
+    # no metadata div rendered when reason/superseded_by/note are all NULL
+    assert '<div class="feat-archive-meta">' not in html
+
+
+def test_project_page_archived_features_ordered_newest_first(temp_db: Path, tmp_path: Path) -> None:
+    from feature_skills_webapp.storage.db import connect
+
+    conn = connect(temp_db)
+    now = "2024-01-01T00:00:00+00:00"
+    conn.execute("INSERT INTO projects (name, created_at) VALUES ('proj1', ?)", (now,))
+    pid = conn.execute("SELECT id FROM projects WHERE name='proj1'").fetchone()["id"]
+    conn.execute(
+        "INSERT INTO features (project_id, slug, status, archived_at, created_at, updated_at) "
+        "VALUES (?, 'older', 'archived', '2024-01-01T00:00:00+00:00', ?, ?)",
+        (pid, now, now),
+    )
+    conn.execute(
+        "INSERT INTO features (project_id, slug, status, archived_at, created_at, updated_at) "
+        "VALUES (?, 'newer', 'archived', '2024-06-01T00:00:00+00:00', ?, ?)",
+        (pid, now, now),
+    )
+    conn.commit()
+    conn.close()
+
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.get("/project/proj1")
+    assert resp.status_code == 200
+    html = resp.text
+    assert html.index("newer") < html.index("older")

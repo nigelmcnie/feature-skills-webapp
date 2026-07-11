@@ -32,12 +32,32 @@ async def project_page(request: Request) -> Response:
     parked = [f for f in feats if f["status"] == "parked"]
     done = [f for f in feats if f["status"] == "done"]
     archived = [f for f in feats if f["status"] == "archived"]
+    # Newest first; legacy rows with no archived_at (dropped before this
+    # metadata existed) sort last since they have nothing to order by.
+    archived_sorted = sorted(
+        archived,
+        key=lambda f: (f["archived_at"] is not None, f["archived_at"] or ""),
+        reverse=True,
+    )
 
     def _feat(f: sqlite3.Row) -> dict[str, object]:
         return {
             "slug": f["slug"],
             "owner": f["owner"],
             "last_activity": f["last_activity"],
+        }
+
+    feats_by_slug = {f["slug"]: f for f in feats}
+
+    def _archived_feat(f: sqlite3.Row) -> dict[str, object]:
+        sb = f["superseded_by"]
+        return {
+            "slug": f["slug"],
+            "owner": f["owner"],
+            "reason": f["archive_reason"],
+            "note": f["archive_note"],
+            "superseded_by": sb,
+            "superseded_by_slug": sb if (sb and sb in feats_by_slug) else None,
         }
 
     return app.state.templates.TemplateResponse(
@@ -49,7 +69,7 @@ async def project_page(request: Request) -> Response:
             "available": [_feat(f) for f in available],
             "parked": [_feat(f) for f in parked],
             "done": [_feat(f) for f in done],
-            "archived": [_feat(f) for f in archived],
+            "archived": [_archived_feat(f) for f in archived_sorted],
             "tracker_id": tracker["id"] if tracker else None,
             "findings": findings,
         },
