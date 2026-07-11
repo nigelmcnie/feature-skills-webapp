@@ -63,6 +63,17 @@
   </div>
 </header>
 
+{% if archived_notice %}
+<div class="archived-notice">
+  <strong>Archived</strong>{% if archived_notice.reason %} — {{ archived_notice.reason }}{% endif %}
+  {% if archived_notice.superseded_by %}
+    — superseded by
+    {% if archived_notice.superseded_by_doc_id %}<a href="/doc/{{ archived_notice.superseded_by_doc_id }}">{{ archived_notice.superseded_by }}</a>{% else %}{{ archived_notice.superseded_by }}{% endif %}
+  {% endif %}
+  {% if archived_notice.note %}<p>{{ archived_notice.note }}</p>{% endif %}
+</div>
+{% endif %}
+
 {% if mode == "diff" %}
 
 <div class="layout" id="layout">

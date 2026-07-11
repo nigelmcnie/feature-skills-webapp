@@ -42,12 +42,37 @@ def _static_v(filename: str) -> str:
 
 ROW_SQL = (
     "SELECT d.id, d.type, d.status, "
+    "  d.archive_reason, d.superseded_by, d.archive_note, d.archived_at, "
     "  p.name AS project, f.slug AS feature, f.id AS feature_id "
     "FROM documents d "
     "JOIN projects p ON d.project_id = p.id "
     "LEFT JOIN features f ON d.feature_id = f.id "
     "WHERE d.id = ?"
 )
+
+
+def archived_notice_context(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, object] | None:
+    """Build the archived-notice template context, or None for a non-archived document.
+
+    superseded_by is free text (a document logical key, an MR, or a decision
+    reference) — resolve it to a /doc/{id} link only when it matches a real
+    document's logical_key; otherwise it renders as plain text.
+    """
+    if row["status"] != "archived":
+        return None
+    superseded_by_doc_id: int | None = None
+    if row["superseded_by"]:
+        sup_row = conn.execute(
+            "SELECT id FROM documents WHERE logical_key=?", (row["superseded_by"],)
+        ).fetchone()
+        superseded_by_doc_id = sup_row["id"] if sup_row is not None else None
+    return {
+        "reason": row["archive_reason"],
+        "superseded_by": row["superseded_by"],
+        "superseded_by_doc_id": superseded_by_doc_id,
+        "note": row["archive_note"],
+        "archived_at": row["archived_at"],
+    }
 
 
 def breadcrumbs(row: sqlite3.Row) -> list[tuple[str, str | None]]:
@@ -93,6 +118,7 @@ async def doc_shell(request: Request) -> Response:
             return PlainTextResponse("Not found", status_code=404)
         crumbs = breadcrumbs(row)
         available = row["status"] in ("active", "archived")
+        archived_notice = archived_notice_context(conn, row)
         is_synthesis = row["type"].endswith(FEEDBACK_SUFFIX) and row["status"] == "active"
         is_commentable = (
             row["status"] == "active"
@@ -204,6 +230,7 @@ async def doc_shell(request: Request) -> Response:
             "doc_id": doc_id,
             "crumbs": crumbs,
             "available": available,
+            "archived_notice": archived_notice,
             "mode": mode,
             "body_html": body_html,
             "scoped_css": scoped_css,
