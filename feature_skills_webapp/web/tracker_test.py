@@ -56,12 +56,14 @@ def _seed(db: Path) -> None:
         (doc_id, now),
     )
 
-    # Archived doc — should be excluded from documents listing
+    # Archived doc — should be excluded from documents listing by default
     conn.execute(
         "INSERT INTO documents "
-        "(project_id, feature_id, type, instance, status, logical_key, created_at, updated_at) "
-        "VALUES (?, ?, 'context', 1, 'archived', 'proj-a/feat-one/context/1', ?, ?)",
-        (proj_a, feat_one, now, now),
+        "(project_id, feature_id, type, instance, status, logical_key, "
+        "archive_reason, superseded_by, archive_note, archived_at, created_at, updated_at) "
+        "VALUES (?, ?, 'context', 1, 'archived', 'proj-a/feat-one/context/1', "
+        "'obsolete', NULL, 'no longer needed', ?, ?, ?)",
+        (proj_a, feat_one, now, now, now),
     )
 
     conn.commit()
@@ -202,6 +204,58 @@ def test_list_documents_404_unknown_project(temp_db: Path) -> None:
     with TestClient(create_app(db_path=temp_db)) as client:
         resp = client.get("/api/projects/no-such/features/feat-one/documents")
     assert resp.status_code == 404
+
+
+# --- list_documents: ?status= filter ---
+
+
+def test_list_documents_status_active_default_unchanged(temp_db: Path) -> None:
+    _seed(temp_db)
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.get("/api/projects/proj-a/features/feat-one/documents?status=active")
+    doc_types = [d["doc_type"] for d in resp.json()["documents"]]
+    assert doc_types == ["requirements"]
+
+
+def test_list_documents_status_archived_returns_only_archived_with_fields(
+    temp_db: Path,
+) -> None:
+    _seed(temp_db)
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.get("/api/projects/proj-a/features/feat-one/documents?status=archived")
+    docs = resp.json()["documents"]
+    assert [d["doc_type"] for d in docs] == ["context"]
+    doc = docs[0]
+    assert doc["status"] == "archived"
+    assert doc["reason"] == "obsolete"
+    assert doc["superseded_by"] is None
+    assert doc["note"] == "no longer needed"
+    assert doc["archived_at"] is not None
+
+
+def test_list_documents_status_all_returns_both(temp_db: Path) -> None:
+    _seed(temp_db)
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.get("/api/projects/proj-a/features/feat-one/documents?status=all")
+    doc_types = sorted(d["doc_type"] for d in resp.json()["documents"])
+    assert doc_types == ["context", "requirements"]
+
+
+def test_list_documents_active_doc_has_status_but_no_archival_fields(temp_db: Path) -> None:
+    _seed(temp_db)
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.get("/api/projects/proj-a/features/feat-one/documents?status=all")
+    doc = next(d for d in resp.json()["documents"] if d["doc_type"] == "requirements")
+    assert doc["status"] == "active"
+    assert "reason" not in doc
+    assert "archived_at" not in doc
+
+
+def test_list_documents_status_invalid_400(temp_db: Path) -> None:
+    _seed(temp_db)
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.get("/api/projects/proj-a/features/feat-one/documents?status=bogus")
+    assert resp.status_code == 400
 
 
 # ---------------------------------------------------------------------------

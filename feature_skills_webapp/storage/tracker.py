@@ -88,15 +88,26 @@ def require_feature(conn: sqlite3.Connection, project_id: int, slug: str) -> int
     return row["id"]
 
 
-def list_feature_documents(conn: sqlite3.Connection, feature_id: int) -> list[sqlite3.Row]:
-    # Active docs only; feature_id IS NULL (project-level tracker doc) can never appear.
+def list_feature_documents(
+    conn: sqlite3.Connection, feature_id: int, *, status: str = "active"
+) -> list[sqlite3.Row]:
+    """List a feature's documents. feature_id IS NULL (project-level docs) never appear.
+
+    status: "active" (default), "archived", or "all" (drops the status predicate).
+    """
+    where = ["d.feature_id = ?"]
+    params: list[object] = [feature_id]
+    if status != "all":
+        where.append("d.status = ?")
+        params.append(status)
     return conn.execute(
-        "SELECT d.id, d.type, d.instance, d.logical_key, "
+        "SELECT d.id, d.type, d.instance, d.logical_key, d.status, "
+        "  d.archive_reason, d.superseded_by, d.archive_note, d.archived_at, "
         "  (SELECT COALESCE(MAX(v.version_num), 0) FROM document_versions v "
         "   WHERE v.document_id = d.id) AS version "
-        "FROM documents d WHERE d.feature_id = ? AND d.status = 'active' "
+        f"FROM documents d WHERE {' AND '.join(where)} "
         "ORDER BY d.type, d.instance",
-        (feature_id,),
+        params,
     ).fetchall()
 
 

@@ -340,3 +340,187 @@ def submit_document(
         changed=False,
         event_type=None,
     )
+
+
+# ---------------------------------------------------------------------------
+# Archive / unarchive: API-authored documents only
+# ---------------------------------------------------------------------------
+
+DOC_ARCHIVE_REASONS = frozenset({"superseded", "duplicate", "obsolete"})
+_REASONS_REQUIRING_POINTER = frozenset({"superseded", "duplicate"})
+
+
+class DocumentNotFound(Exception):
+    """No document exists for this logical key — surfaced by the web layer as 404."""
+
+
+class ArchiveConflict(Exception):
+    """Document is file-sourced and not archivable via the API — surfaced as 409.
+
+    The walker resets a file-sourced document's status to the file-derived
+    value on the very next walk, even on an unchanged file, so an API archive
+    would silently revert. API-authored documents (source_path IS NULL) are
+    never walked and are the only eligible target.
+    """
+
+
+@dataclass(frozen=True)
+class ArchiveResult:
+    document_id: int
+    logical_key: str
+    status: str  # "archived" | "active"
+    changed: bool
+    reason: str | None
+    superseded_by: str | None
+    note: str | None
+    archived_at: str | None
+
+
+def archive_document(
+    conn: sqlite3.Connection,
+    *,
+    project: str,
+    feature: str | None,
+    doc_type: str,
+    instance: int,
+    reason: str | None,
+    superseded_by: str | None,
+    note: str | None,
+    actor: str = "agent",
+    now: str,
+) -> ArchiveResult:
+    """Archive an API-authored document by logical identity. Caller wraps in transaction().
+
+    Raises DocumentNotFound if absent, ArchiveConflict if file-sourced, SubmitError
+    if reason/superseded_by fail validation. Idempotent: already-archived returns
+    changed=False with the existing metadata unchanged.
+    """
+    lkey = logical_key(project, feature, doc_type, instance)
+    row = conn.execute(
+        "SELECT id, status, source_path, archive_reason, superseded_by, archive_note, "
+        "archived_at FROM documents WHERE logical_key=?",
+        (lkey,),
+    ).fetchone()
+    if row is None:
+        raise DocumentNotFound(lkey)
+    if row["source_path"] is not None:
+        raise ArchiveConflict(lkey)
+
+    if reason not in DOC_ARCHIVE_REASONS:
+        raise SubmitError(f"'reason' must be one of {sorted(DOC_ARCHIVE_REASONS)}")
+    if reason in _REASONS_REQUIRING_POINTER and not superseded_by:
+        raise SubmitError(f"'superseded_by' is required when reason is {reason!r}")
+    if superseded_by is not None and superseded_by == lkey:
+        raise SubmitError("'superseded_by' must not reference the document being archived")
+
+    doc_id = row["id"]
+    if row["status"] == "archived":
+        return ArchiveResult(
+            document_id=doc_id,
+            logical_key=lkey,
+            status="archived",
+            changed=False,
+            reason=row["archive_reason"],
+            superseded_by=row["superseded_by"],
+            note=row["archive_note"],
+            archived_at=row["archived_at"],
+        )
+
+    conn.execute(
+        "UPDATE documents SET status='archived', archive_reason=?, superseded_by=?, "
+        "archive_note=?, archived_at=?, updated_at=? WHERE id=?",
+        (reason, superseded_by, note, now, now, doc_id),
+    )
+    conn.execute(
+        "INSERT INTO events (document_id, event_type, payload_json, created_at, actor) "
+        "VALUES (?, 'document_archived', ?, ?, ?)",
+        (
+            doc_id,
+            json.dumps(
+                {
+                    "type": doc_type,
+                    "feature": feature,
+                    "reason": reason,
+                    "superseded_by": superseded_by,
+                    "actor": actor,
+                }
+            ),
+            now,
+            ACTOR_AGENT,
+        ),
+    )
+    return ArchiveResult(
+        document_id=doc_id,
+        logical_key=lkey,
+        status="archived",
+        changed=True,
+        reason=reason,
+        superseded_by=superseded_by,
+        note=note,
+        archived_at=now,
+    )
+
+
+def unarchive_document(
+    conn: sqlite3.Connection,
+    *,
+    project: str,
+    feature: str | None,
+    doc_type: str,
+    instance: int,
+    actor: str = "agent",
+    now: str,
+) -> ArchiveResult:
+    """Reverse an archive by logical identity. Caller wraps in transaction().
+
+    Raises DocumentNotFound if absent, ArchiveConflict if file-sourced.
+    Idempotent: an already-active document returns changed=False.
+    """
+    lkey = logical_key(project, feature, doc_type, instance)
+    row = conn.execute(
+        "SELECT id, status, source_path FROM documents WHERE logical_key=?",
+        (lkey,),
+    ).fetchone()
+    if row is None:
+        raise DocumentNotFound(lkey)
+    if row["source_path"] is not None:
+        raise ArchiveConflict(lkey)
+
+    doc_id = row["id"]
+    if row["status"] != "archived":
+        return ArchiveResult(
+            document_id=doc_id,
+            logical_key=lkey,
+            status=row["status"],
+            changed=False,
+            reason=None,
+            superseded_by=None,
+            note=None,
+            archived_at=None,
+        )
+
+    conn.execute(
+        "UPDATE documents SET status='active', archive_reason=NULL, superseded_by=NULL, "
+        "archive_note=NULL, archived_at=NULL, updated_at=? WHERE id=?",
+        (now, doc_id),
+    )
+    conn.execute(
+        "INSERT INTO events (document_id, event_type, payload_json, created_at, actor) "
+        "VALUES (?, 'document_unarchived', ?, ?, ?)",
+        (
+            doc_id,
+            json.dumps({"type": doc_type, "feature": feature, "actor": actor}),
+            now,
+            ACTOR_AGENT,
+        ),
+    )
+    return ArchiveResult(
+        document_id=doc_id,
+        logical_key=lkey,
+        status="active",
+        changed=True,
+        reason=None,
+        superseded_by=None,
+        note=None,
+        archived_at=None,
+    )

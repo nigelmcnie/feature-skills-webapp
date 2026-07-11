@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -134,31 +135,48 @@ async def list_features_handler(request: Request) -> JSONResponse:
     )
 
 
+_DOCUMENT_LIST_STATUSES = ("active", "archived", "all")
+
+
+def _document_json(r: sqlite3.Row) -> dict[str, object]:
+    doc: dict[str, object] = {
+        "doc_type": r["type"],
+        "instance": r["instance"],
+        "logical_key": r["logical_key"],
+        "version": r["version"],
+        "document_id": r["id"],
+        "url": f"/doc/{r['id']}",
+        "status": r["status"],
+    }
+    if r["status"] == "archived":
+        doc["reason"] = r["archive_reason"]
+        doc["superseded_by"] = r["superseded_by"]
+        doc["note"] = r["archive_note"]
+        doc["archived_at"] = r["archived_at"]
+    return doc
+
+
 async def list_documents_handler(request: Request) -> JSONResponse:
     if request.app.state.db_path is None:
         return JSONResponse({"error": "db not configured"}, status_code=503)
     project = request.path_params["project"]
     slug = request.path_params["feature"]
+    status = request.query_params.get("status") or "active"
+    if status not in _DOCUMENT_LIST_STATUSES:
+        return JSONResponse(
+            {"error": f"'status' must be one of {list(_DOCUMENT_LIST_STATUSES)}"},
+            status_code=400,
+        )
     with request_conn(request.app) as conn:
         feat = get_feature(conn, project, slug)
         if feat is None:
             return JSONResponse({"error": "feature not found"}, status_code=404)
-        docs = list_feature_documents(conn, feat["id"])
+        docs = list_feature_documents(conn, feat["id"], status=status)
     return JSONResponse(
         {
             "project": project,
             "feature": slug,
-            "documents": [
-                {
-                    "doc_type": r["type"],
-                    "instance": r["instance"],
-                    "logical_key": r["logical_key"],
-                    "version": r["version"],
-                    "document_id": r["id"],
-                    "url": f"/doc/{r['id']}",
-                }
-                for r in docs
-            ],
+            "documents": [_document_json(r) for r in docs],
         }
     )
 

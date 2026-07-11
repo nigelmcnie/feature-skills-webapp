@@ -27,6 +27,7 @@ from feature_skills_webapp.web.routes import (
     index,
 )
 from feature_skills_webapp.web.submit import (
+    archive_document_handler,
     get_document,
     get_document_comments,
     get_document_synthesis,
@@ -34,6 +35,7 @@ from feature_skills_webapp.web.submit import (
     get_manifest,
     post_document_comments_integrate,
     put_document,
+    unarchive_document_handler,
 )
 from feature_skills_webapp.web.synthesis import post_synthesis_response
 from feature_skills_webapp.web.tracker import (
@@ -108,6 +110,16 @@ def create_app(db_path: Path | None) -> Starlette:
             Route(
                 "/api/documents/{project}/{feature}/{doc_type}/{instance:int}",
                 get_document,
+            ),
+            Route(
+                "/api/documents/{project}/{feature}/{doc_type}/{instance:int}/archive",
+                archive_document_handler,
+                methods=["POST"],
+            ),
+            Route(
+                "/api/documents/{project}/{feature}/{doc_type}/{instance:int}/unarchive",
+                unarchive_document_handler,
+                methods=["POST"],
             ),
             Route(
                 "/api/documents/{project}/{feature}/{doc_type}/{instance:int}/comments",
