@@ -40,10 +40,10 @@ def test_connect_foreign_keys(tmp_path: Path) -> None:
     conn.close()
 
 
-def test_migrate_fresh_returns_version_9(tmp_path: Path) -> None:
+def test_migrate_fresh_returns_version_10(tmp_path: Path) -> None:
     conn = connect(tmp_path / "test.db")
     version = migrate(conn)
-    assert version == 9
+    assert version == 10
     conn.close()
 
 
@@ -55,7 +55,7 @@ def test_migrate_idempotent(tmp_path: Path) -> None:
 
     conn = connect(db)
     version = migrate(conn)
-    assert version == 9
+    assert version == 10
     conn.close()
 
 
@@ -63,7 +63,7 @@ def test_schema_version_after_migrate(tmp_path: Path) -> None:
     conn = connect(tmp_path / "test.db")
     migrate(conn)
     v = current_version(conn)
-    assert v == 9
+    assert v == 10
     conn.close()
 
 
@@ -236,8 +236,8 @@ def test_migrate_v1_to_v2_upgrade_path(tmp_path: Path) -> None:
     assert "project_id" not in cols_v1
 
     # Run the real migration set: upgrades 1 -> latest in place.
-    assert migrate(conn) == 9
-    assert current_version(conn) == 9
+    assert migrate(conn) == 10
+    assert current_version(conn) == 10
     cols_v2 = {r["name"] for r in conn.execute("PRAGMA table_info(documents)").fetchall()}
     assert "status" in cols_v2
     assert "project_id" in cols_v2
@@ -247,7 +247,7 @@ def test_migrate_v1_to_v2_upgrade_path(tmp_path: Path) -> None:
 def test_migration_0008_adds_actor_with_agent_default(tmp_path: Path) -> None:
     """Fresh migrate() reaches the latest version; events.actor exists and new rows default to 'agent'."""
     conn = connect(tmp_path / "test.db")
-    assert migrate(conn) == 9
+    assert migrate(conn) == 10
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(events)").fetchall()}
     assert "actor" in cols
     # An insert that omits actor takes the column default.
@@ -283,13 +283,40 @@ def test_migration_0008_backfills_existing_comment_submitted_to_user(tmp_path: P
     )
 
     # Now apply the real set through the latest version in place.
-    assert migrate(conn) == 9
+    assert migrate(conn) == 10
     by_type = {
         r["event_type"]: r["actor"]
         for r in conn.execute("SELECT event_type, actor FROM events").fetchall()
     }
     assert by_type["comment_submitted"] == "user"
     assert by_type["comment_integrated"] == "agent"
+    conn.close()
+
+
+def test_migration_0010_adds_archival_columns_nullable(tmp_path: Path) -> None:
+    """Fresh migrate() reaches the latest version; the four archival columns exist and
+    default to NULL."""
+    conn = connect(tmp_path / "test.db")
+    assert migrate(conn) == 10
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(documents)").fetchall()}
+    assert {"archive_reason", "superseded_by", "archive_note", "archived_at"} <= cols
+
+    ts = "2026-01-01T00:00:00+00:00"
+    with transaction(conn):
+        conn.execute("INSERT INTO projects (name, created_at) VALUES ('p1', ?)", (ts,))
+        proj_id = conn.execute("SELECT id FROM projects WHERE name='p1'").fetchone()["id"]
+        conn.execute(
+            "INSERT INTO documents (project_id, type, created_at, updated_at) "
+            "VALUES (?, 'context', ?, ?)",
+            (proj_id, ts, ts),
+        )
+    row = conn.execute(
+        "SELECT archive_reason, superseded_by, archive_note, archived_at FROM documents"
+    ).fetchone()
+    assert row["archive_reason"] is None
+    assert row["superseded_by"] is None
+    assert row["archive_note"] is None
+    assert row["archived_at"] is None
     conn.close()
 
 
@@ -389,7 +416,7 @@ def test_migration_0006_backfills_acked_version_from_version_at_last_read(
         )
 
     # Apply the remaining migrations by running the full migrate.
-    assert migrate(conn) == 9
+    assert migrate(conn) == 10
 
     row = conn.execute(
         "SELECT acked_version FROM read_state WHERE document_id = ?", (doc_id,)

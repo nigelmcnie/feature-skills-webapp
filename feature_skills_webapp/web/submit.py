@@ -14,9 +14,14 @@ from feature_skills_webapp.config import wait_timeout
 from feature_skills_webapp.storage.db import now_iso, transaction
 from feature_skills_webapp.storage.doc_content import manifest_for
 from feature_skills_webapp.storage.documents import (
+    ArchiveConflict,
+    ArchiveResult,
+    DocumentNotFound,
     SubmitError,
+    archive_document,
     build_content,
     submit_document,
+    unarchive_document,
     validate_writable,
 )
 from feature_skills_webapp.storage.events import ACTOR_AGENT
@@ -155,6 +160,124 @@ async def put_document(request: Request) -> JSONResponse:
 
 
 # ---------------------------------------------------------------------------
+# Archive / unarchive: API-authored documents only
+# ---------------------------------------------------------------------------
+
+_ARCHIVE_CONFLICT_MSG = "document is file-sourced and not archivable via the API"
+
+
+def _archive_result_json(result: ArchiveResult) -> dict[str, object]:
+    return {
+        "logical_key": result.logical_key,
+        "document_id": result.document_id,
+        "status": result.status,
+        "changed": result.changed,
+        "reason": result.reason,
+        "superseded_by": result.superseded_by,
+        "note": result.note,
+        "archived_at": result.archived_at,
+    }
+
+
+async def archive_document_handler(request: Request) -> JSONResponse:
+    if request.app.state.db_path is None:
+        return JSONResponse({"error": "db not configured"}, status_code=503)
+
+    project, feat, doc_type, instance = _path_params(request)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid JSON"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "body must be a JSON object"}, status_code=400)
+
+    reason_raw = body.get("reason")
+    if reason_raw is not None and not isinstance(reason_raw, str):
+        return JSONResponse({"error": "'reason' must be a string"}, status_code=400)
+    superseded_by_raw = body.get("superseded_by")
+    if superseded_by_raw is not None and not isinstance(superseded_by_raw, str):
+        return JSONResponse({"error": "'superseded_by' must be a string"}, status_code=400)
+    note_raw = body.get("note")
+    if note_raw is not None and not isinstance(note_raw, str):
+        return JSONResponse({"error": "'note' must be a string"}, status_code=400)
+    actor_raw = body.get("actor")
+    if actor_raw is not None and not isinstance(actor_raw, str):
+        return JSONResponse({"error": "'actor' must be a string"}, status_code=400)
+    actor: str = actor_raw or "agent"
+
+    try:
+        with request_conn(request.app) as conn, transaction(conn):
+            result = archive_document(
+                conn,
+                project=project,
+                feature=feat,
+                doc_type=doc_type,
+                instance=instance,
+                reason=reason_raw,
+                superseded_by=superseded_by_raw,
+                note=note_raw,
+                actor=actor,
+                now=now_iso(),
+            )
+    except DocumentNotFound:
+        return JSONResponse({"error": "document not found"}, status_code=404)
+    except ArchiveConflict:
+        return JSONResponse({"error": _ARCHIVE_CONFLICT_MSG}, status_code=409)
+    except SubmitError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+
+    if result.changed:
+        request.app.state.broadcaster.broadcast()
+
+    return JSONResponse(_archive_result_json(result))
+
+
+async def unarchive_document_handler(request: Request) -> JSONResponse:
+    if request.app.state.db_path is None:
+        return JSONResponse({"error": "db not configured"}, status_code=503)
+
+    project, feat, doc_type, instance = _path_params(request)
+
+    raw = await request.body()
+    body: dict[str, object] = {}
+    if raw:
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            return JSONResponse({"error": "invalid JSON"}, status_code=400)
+        if not isinstance(parsed, dict):
+            return JSONResponse({"error": "body must be a JSON object"}, status_code=400)
+        body = parsed
+
+    actor_raw = body.get("actor")
+    if actor_raw is not None and not isinstance(actor_raw, str):
+        return JSONResponse({"error": "'actor' must be a string"}, status_code=400)
+    actor: str = actor_raw or "agent"
+
+    try:
+        with request_conn(request.app) as conn, transaction(conn):
+            result = unarchive_document(
+                conn,
+                project=project,
+                feature=feat,
+                doc_type=doc_type,
+                instance=instance,
+                actor=actor,
+                now=now_iso(),
+            )
+    except DocumentNotFound:
+        return JSONResponse({"error": "document not found"}, status_code=404)
+    except ArchiveConflict:
+        return JSONResponse({"error": _ARCHIVE_CONFLICT_MSG}, status_code=409)
+
+    if result.changed:
+        request.app.state.broadcaster.broadcast()
+
+    return JSONResponse(_archive_result_json(result))
+
+
+# ---------------------------------------------------------------------------
 # Phase 2: read round-trips
 # ---------------------------------------------------------------------------
 
@@ -167,7 +290,11 @@ async def get_document(request: Request) -> JSONResponse:
     lkey = logical_key(project, feat, doc_type, instance)
 
     with request_conn(request.app) as conn:
-        row = conn.execute("SELECT id FROM documents WHERE logical_key=?", (lkey,)).fetchone()
+        row = conn.execute(
+            "SELECT id, status, archive_reason, superseded_by, archive_note, archived_at "
+            "FROM documents WHERE logical_key=?",
+            (lkey,),
+        ).fetchone()
         if row is None:
             return JSONResponse({"error": "document not found"}, status_code=404)
         doc_id = row["id"]
@@ -181,18 +308,23 @@ async def get_document(request: Request) -> JSONResponse:
     shape = manifest_for(doc_type).shape if cur is None else cur.shape
     sections = [] if cur is None else [{"key": s.key, "body": s.body} for s in cur.sections]
     extra_css = "" if cur is None else cur.extra_css
-    return JSONResponse(
-        {
-            "logical_key": lkey,
-            "document_id": doc_id,
-            "doc_type": doc_type,
-            "shape": shape,
-            "sections": sections,
-            "extra_css": extra_css,
-            "version_num": ver_row["ver"],
-            "url": (f"/doc/{doc_id}?view=diff" if ver_row["ver"] > 1 else f"/doc/{doc_id}"),
-        }
-    )
+    payload: dict[str, object] = {
+        "logical_key": lkey,
+        "document_id": doc_id,
+        "doc_type": doc_type,
+        "shape": shape,
+        "sections": sections,
+        "extra_css": extra_css,
+        "version_num": ver_row["ver"],
+        "url": (f"/doc/{doc_id}?view=diff" if ver_row["ver"] > 1 else f"/doc/{doc_id}"),
+        "status": row["status"],
+    }
+    if row["status"] == "archived":
+        payload["reason"] = row["archive_reason"]
+        payload["superseded_by"] = row["superseded_by"]
+        payload["note"] = row["archive_note"]
+        payload["archived_at"] = row["archived_at"]
+    return JSONResponse(payload)
 
 
 _NOTICES = [

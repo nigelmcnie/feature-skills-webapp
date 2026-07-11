@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import cast
+from unittest.mock import MagicMock
 
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
@@ -651,3 +652,246 @@ def test_get_manifest_includes_notices() -> None:
     assert "notices" in data
     assert isinstance(data["notices"], list)
     assert len(data["notices"]) > 0
+
+
+# ---------------------------------------------------------------------------
+# archive / unarchive handlers
+# ---------------------------------------------------------------------------
+
+_ARCHIVE_URL = "/api/documents/proj/feat-a/requirements/1/archive"
+_UNARCHIVE_URL = "/api/documents/proj/feat-a/requirements/1/unarchive"
+
+
+def _seed_document(client: TestClient) -> None:
+    _create_feature_a(client)
+    resp = client.put(_PUT_URL, json=_VALID_BODY)
+    assert resp.status_code == 200
+
+
+def _seed_file_sourced_document(db: Path) -> None:
+    conn = connect(db)
+    now = "2024-01-01T00:00:00+00:00"
+    conn.execute("INSERT INTO projects (name, created_at) VALUES ('proj', ?)", (now,))
+    pid = conn.execute("SELECT id FROM projects WHERE name='proj'").fetchone()["id"]
+    conn.execute(
+        "INSERT INTO features (project_id, slug, status, created_at, updated_at) "
+        "VALUES (?, 'feat-a', 'available', ?, ?)",
+        (pid, now, now),
+    )
+    fid = conn.execute(
+        "SELECT id FROM features WHERE project_id=? AND slug='feat-a'", (pid,)
+    ).fetchone()["id"]
+    conn.execute(
+        "INSERT INTO documents "
+        "(project_id, feature_id, type, instance, status, source_path, logical_key, "
+        "created_at, updated_at) "
+        "VALUES (?, ?, 'requirements', 1, 'active', '/some/path.html', "
+        "'proj/feat-a/requirements/1', ?, ?)",
+        (pid, fid, now, now),
+    )
+    conn.commit()
+    conn.close()
+
+
+def test_archive_503_no_db() -> None:
+    client = TestClient(create_app(db_path=None))
+    resp = client.post(_ARCHIVE_URL, json={"reason": "obsolete"})
+    assert resp.status_code == 503
+
+
+def test_unarchive_503_no_db() -> None:
+    client = TestClient(create_app(db_path=None))
+    resp = client.post(_UNARCHIVE_URL)
+    assert resp.status_code == 503
+
+
+def test_archive_200_obsolete_without_pointer(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _seed_document(client)
+        resp = client.post(_ARCHIVE_URL, json={"reason": "obsolete", "note": "no longer needed"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "archived"
+    assert data["changed"] is True
+    assert data["reason"] == "obsolete"
+    assert data["superseded_by"] is None
+    assert data["note"] == "no longer needed"
+    assert data["archived_at"] is not None
+    assert data["logical_key"] == "proj/feat-a/requirements/1"
+    assert "document_id" in data
+
+
+def test_archive_200_superseded_with_pointer(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _seed_document(client)
+        resp = client.post(
+            _ARCHIVE_URL,
+            json={"reason": "superseded", "superseded_by": "proj/feat-a/vision/1"},
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["reason"] == "superseded"
+    assert data["superseded_by"] == "proj/feat-a/vision/1"
+
+
+def test_archive_200_duplicate_with_pointer(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _seed_document(client)
+        resp = client.post(
+            _ARCHIVE_URL,
+            json={"reason": "duplicate", "superseded_by": "proj/feat-a/vision/1"},
+        )
+    assert resp.status_code == 200
+    assert resp.json()["reason"] == "duplicate"
+
+
+def test_archive_400_missing_reason(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _seed_document(client)
+        resp = client.post(_ARCHIVE_URL, json={})
+    assert resp.status_code == 400
+
+
+def test_archive_400_unknown_reason(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _seed_document(client)
+        resp = client.post(_ARCHIVE_URL, json={"reason": "nonsense"})
+    assert resp.status_code == 400
+
+
+def test_archive_400_superseded_missing_pointer(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _seed_document(client)
+        resp = client.post(_ARCHIVE_URL, json={"reason": "superseded"})
+    assert resp.status_code == 400
+
+
+def test_archive_400_self_referential_pointer(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _seed_document(client)
+        resp = client.post(
+            _ARCHIVE_URL,
+            json={"reason": "superseded", "superseded_by": "proj/feat-a/requirements/1"},
+        )
+    assert resp.status_code == 400
+
+
+def test_archive_404_document_not_found(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post(_ARCHIVE_URL, json={"reason": "obsolete"})
+    assert resp.status_code == 404
+
+
+def test_archive_409_file_sourced(temp_db: Path) -> None:
+    _seed_file_sourced_document(temp_db)
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post(_ARCHIVE_URL, json={"reason": "obsolete"})
+    assert resp.status_code == 409
+
+
+def test_archive_broadcasts_on_change(temp_db: Path) -> None:
+    app = create_app(db_path=temp_db)
+    with TestClient(app) as client:
+        _seed_document(client)
+        app.state.broadcaster = MagicMock()
+        resp = client.post(_ARCHIVE_URL, json={"reason": "obsolete"})
+    assert resp.status_code == 200
+    app.state.broadcaster.broadcast.assert_called_once()
+
+
+def test_archive_no_broadcast_on_noop(temp_db: Path) -> None:
+    app = create_app(db_path=temp_db)
+    with TestClient(app) as client:
+        _seed_document(client)
+        client.post(_ARCHIVE_URL, json={"reason": "obsolete"})
+        app.state.broadcaster = MagicMock()
+        resp = client.post(_ARCHIVE_URL, json={"reason": "duplicate", "superseded_by": "x"})
+    assert resp.status_code == 200
+    assert resp.json()["changed"] is False
+    app.state.broadcaster.broadcast.assert_not_called()
+
+
+def test_unarchive_200_round_trip(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _seed_document(client)
+        client.post(_ARCHIVE_URL, json={"reason": "obsolete"})
+        resp = client.post(_UNARCHIVE_URL)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "active"
+    assert data["changed"] is True
+    assert data["reason"] is None
+    assert data["superseded_by"] is None
+    assert data["note"] is None
+    assert data["archived_at"] is None
+
+
+def test_unarchive_200_noop_when_already_active(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _seed_document(client)
+        resp = client.post(_UNARCHIVE_URL)
+    assert resp.status_code == 200
+    assert resp.json()["changed"] is False
+
+
+def test_unarchive_404_document_not_found(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post(_UNARCHIVE_URL)
+    assert resp.status_code == 404
+
+
+def test_unarchive_409_file_sourced(temp_db: Path) -> None:
+    _seed_file_sourced_document(temp_db)
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post(_UNARCHIVE_URL)
+    assert resp.status_code == 409
+
+
+def test_unarchive_broadcasts_on_change(temp_db: Path) -> None:
+    app = create_app(db_path=temp_db)
+    with TestClient(app) as client:
+        _seed_document(client)
+        client.post(_ARCHIVE_URL, json={"reason": "obsolete"})
+        app.state.broadcaster = MagicMock()
+        resp = client.post(_UNARCHIVE_URL)
+    assert resp.status_code == 200
+    app.state.broadcaster.broadcast.assert_called_once()
+
+
+def test_unarchive_no_broadcast_on_noop(temp_db: Path) -> None:
+    app = create_app(db_path=temp_db)
+    with TestClient(app) as client:
+        _seed_document(client)
+        app.state.broadcaster = MagicMock()
+        resp = client.post(_UNARCHIVE_URL)
+    assert resp.status_code == 200
+    assert resp.json()["changed"] is False
+    app.state.broadcaster.broadcast.assert_not_called()
+
+
+def test_get_document_returns_archival_fields_when_archived(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _seed_document(client)
+        client.post(
+            _ARCHIVE_URL,
+            json={"reason": "superseded", "superseded_by": "x", "note": "n"},
+        )
+        resp = client.get(_GET_URL)
+    data = resp.json()
+    assert data["status"] == "archived"
+    assert data["reason"] == "superseded"
+    assert data["superseded_by"] == "x"
+    assert data["note"] == "n"
+    assert data["archived_at"] is not None
+
+
+def test_get_document_omits_archival_fields_when_active(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _seed_document(client)
+        resp = client.get(_GET_URL)
+    data = resp.json()
+    assert data["status"] == "active"
+    assert "reason" not in data
+    assert "superseded_by" not in data
+    assert "note" not in data
+    assert "archived_at" not in data

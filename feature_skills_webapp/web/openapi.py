@@ -8,6 +8,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from feature_skills_webapp.config import public_base_url
+from feature_skills_webapp.storage.documents import DOC_ARCHIVE_REASONS
 from feature_skills_webapp.storage.tracker import ARCHIVE_REASONS
 
 OPENAPI_VERSION = "3.1.0"
@@ -116,6 +117,15 @@ _FEATURE_PATH_PARAM_OVERRIDE = {
     "in": "path",
     "description": _FEATURE_SENTINEL_NOTE,
 }
+_DOC_LIST_STATUS_PARAM = {
+    "name": "status",
+    "in": "query",
+    "required": False,
+    "description": (
+        "Filter by document archival status: 'active' (default), 'archived', or 'all'."
+    ),
+    "schema": {"type": "string", "enum": ["active", "archived", "all"]},
+}
 
 # Curated per-operation metadata, keyed by (HTTP method, Starlette path_format).
 # Phase 1 requires only "summary"; phase 2 adds parameters/requestBody/responses.
@@ -178,9 +188,114 @@ API_METADATA: dict[tuple[str, str], dict[str, Any]] = {
                     "extra_css": "",
                     "version_num": 1,
                     "url": "/doc/1",
+                    "status": "active",
                 },
             ),
             "404": _error("Document not found", "document not found"),
+            "503": _DB_NOT_CONFIGURED,
+        },
+    },
+    ("POST", "/api/documents/{project}/{feature}/{doc_type}/{instance}/archive"): {
+        "summary": "Archive an API-authored document",
+        "parameters": [_FEATURE_PATH_PARAM_OVERRIDE],
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "reason": {
+                                "type": "string",
+                                "enum": sorted(DOC_ARCHIVE_REASONS),
+                                "description": (
+                                    "'superseded' and 'duplicate' require 'superseded_by'; "
+                                    "'obsolete' may stand alone."
+                                ),
+                            },
+                            "superseded_by": {
+                                "type": "string",
+                                "description": (
+                                    "Free text — a document logical key, an MR, or a "
+                                    "decision reference. No resolution required."
+                                ),
+                            },
+                            "note": {"type": "string"},
+                            "actor": {"type": "string", "description": "Defaults to 'agent'."},
+                        },
+                        "required": ["reason"],
+                    },
+                    "example": {
+                        "reason": "superseded",
+                        "superseded_by": "proj/feat/vision/1",
+                        "note": "content moved to the vision doc",
+                        "actor": "agent",
+                    },
+                }
+            },
+        },
+        "responses": {
+            "200": _json_response(
+                "Archived (or already archived)",
+                {
+                    "logical_key": "my-proj/my-feat/requirements/1",
+                    "document_id": 1,
+                    "status": "archived",
+                    "changed": True,
+                    "reason": "superseded",
+                    "superseded_by": "proj/feat/vision/1",
+                    "note": "content moved to the vision doc",
+                    "archived_at": "2026-07-12T00:00:00Z",
+                },
+            ),
+            "400": _error(
+                "Missing/unknown reason, missing required superseded_by, or self-referential "
+                "pointer",
+                "'reason' must be one of ['duplicate', 'obsolete', 'superseded']",
+            ),
+            "404": _error("Document not found", "document not found"),
+            "409": _error(
+                "Document is file-sourced and not archivable via the API",
+                "document is file-sourced and not archivable via the API",
+            ),
+            "503": _DB_NOT_CONFIGURED,
+        },
+    },
+    ("POST", "/api/documents/{project}/{feature}/{doc_type}/{instance}/unarchive"): {
+        "summary": "Unarchive a previously archived API-authored document",
+        "parameters": [_FEATURE_PATH_PARAM_OVERRIDE],
+        "requestBody": {
+            "required": False,
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "actor": {"type": "string", "description": "Defaults to 'agent'."}
+                        },
+                    }
+                }
+            },
+        },
+        "responses": {
+            "200": _json_response(
+                "Unarchived (or already active)",
+                {
+                    "logical_key": "my-proj/my-feat/requirements/1",
+                    "document_id": 1,
+                    "status": "active",
+                    "changed": True,
+                    "reason": None,
+                    "superseded_by": None,
+                    "note": None,
+                    "archived_at": None,
+                },
+            ),
+            "404": _error("Document not found", "document not found"),
+            "409": _error(
+                "Document is file-sourced and not archivable via the API",
+                "document is file-sourced and not archivable via the API",
+            ),
             "503": _DB_NOT_CONFIGURED,
         },
     },
@@ -372,9 +487,13 @@ API_METADATA: dict[tuple[str, str], dict[str, Any]] = {
     },
     ("GET", "/api/projects/{project}/features/{feature}/documents"): {
         "summary": "List a feature's documents",
+        "parameters": [_DOC_LIST_STATUS_PARAM],
         "responses": {
             "200": _json_response(
                 "Feature's documents", {"project": "my-proj", "feature": "my-feat", "documents": []}
+            ),
+            "400": _error(
+                "Invalid 'status' value", "'status' must be one of ['active', 'archived', 'all']"
             ),
             "404": _error("Feature not found", "feature not found"),
             "503": _DB_NOT_CONFIGURED,

@@ -277,6 +277,46 @@ def test_list_feature_documents_ordered_by_type_then_instance(tmp_path: Path) ->
     assert types_instances == [("context", 1), ("requirements", 1), ("requirements", 2)]
 
 
+def test_list_feature_documents_status_archived_returns_only_archived_with_fields(
+    tmp_path: Path,
+) -> None:
+    conn = _conn(tmp_path)
+    pid = _seed_project(conn, "proj")
+    fid = _seed_feature(conn, pid, "feat")
+    _seed_doc(
+        conn, pid, fid, "requirements", 1, status="active", logical_key="proj/feat/requirements/1"
+    )
+    archived_id = _seed_doc(
+        conn, pid, fid, "context", 1, status="archived", logical_key="proj/feat/context/1"
+    )
+    conn.execute(
+        "UPDATE documents SET archive_reason='obsolete', archive_note='n', "
+        "archived_at='2024-01-02T00:00:00+00:00' WHERE id=?",
+        (archived_id,),
+    )
+
+    rows = list_feature_documents(conn, fid, status="archived")
+    assert len(rows) == 1
+    assert rows[0]["id"] == archived_id
+    assert rows[0]["archive_reason"] == "obsolete"
+    assert rows[0]["archive_note"] == "n"
+    assert rows[0]["archived_at"] == "2024-01-02T00:00:00+00:00"
+
+
+def test_list_feature_documents_status_all_returns_every_status(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    pid = _seed_project(conn, "proj")
+    fid = _seed_feature(conn, pid, "feat")
+    _seed_doc(
+        conn, pid, fid, "requirements", 1, status="active", logical_key="proj/feat/requirements/1"
+    )
+    _seed_doc(conn, pid, fid, "context", 1, status="archived", logical_key="proj/feat/context/1")
+    _seed_doc(conn, pid, fid, "plan", 1, status="missing", logical_key="proj/feat/plan/1")
+
+    rows = list_feature_documents(conn, fid, status="all")
+    assert len(rows) == 3
+
+
 # ---------------------------------------------------------------------------
 # Migration: backfill NULL status
 # ---------------------------------------------------------------------------
@@ -310,7 +350,7 @@ def test_migration_backfills_null_status(tmp_path: Path) -> None:
     assert row["status"] is None
 
     # Full migrate() applies 0005 (backfill) and every later migration in place.
-    assert migrate(conn) == 9
+    assert migrate(conn) == 10
     row = conn.execute(
         "SELECT status FROM features WHERE slug='feat' AND project_id=?", (pid,)
     ).fetchone()
@@ -1197,7 +1237,7 @@ def test_migration_0007_adds_suggested_order(tmp_path: Path) -> None:
     """Fresh migrate() reaches the latest version and the projects table has suggested_order."""
     conn = connect(tmp_path / "test.db")
     version = migrate(conn)
-    assert version == 9
+    assert version == 10
     # Column must exist and default to NULL.
     row = conn.execute("PRAGMA table_info(projects)").fetchall()
     col_names = [r["name"] for r in row]

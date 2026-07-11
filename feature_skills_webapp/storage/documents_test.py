@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -10,10 +11,14 @@ import pytest
 from feature_skills_webapp.storage.db import connect, migrate, transaction
 from feature_skills_webapp.storage.documents import (
     MAX_BODY_BYTES,
+    ArchiveConflict,
+    DocumentNotFound,
     SubmitError,
     SubmitResult,
+    archive_document,
     build_content,
     submit_document,
+    unarchive_document,
     validate_writable,
 )
 from feature_skills_webapp.storage.tracker import FeatureNotFound
@@ -667,3 +672,262 @@ def test_no_extra_css_used_event_on_identical_reput(tmp_path: Path) -> None:
     result2 = _submit(conn, "table{color:red}", now="2024-01-02T00:00:00+00:00")
     assert result2.changed is False
     assert len(_events(conn, result.document_id, "extra_css_used")) == 1  # only the insert
+
+
+# ---------------------------------------------------------------------------
+# archive_document / unarchive_document
+# ---------------------------------------------------------------------------
+
+
+def _archive(
+    conn: sqlite3.Connection,
+    *,
+    reason=None,
+    superseded_by=None,
+    note=None,
+    actor="agent",
+    now="2024-01-02T00:00:00+00:00",
+    project="proj",
+    feature="feat-a",
+    doc_type="requirements",
+    instance=1,
+):
+    with transaction(conn):
+        return archive_document(
+            conn,
+            project=project,
+            feature=feature,
+            doc_type=doc_type,
+            instance=instance,
+            reason=reason,
+            superseded_by=superseded_by,
+            note=note,
+            actor=actor,
+            now=now,
+        )
+
+
+def _unarchive(
+    conn: sqlite3.Connection,
+    *,
+    actor="agent",
+    now="2024-01-03T00:00:00+00:00",
+    project="proj",
+    feature="feat-a",
+    doc_type="requirements",
+    instance=1,
+):
+    with transaction(conn):
+        return unarchive_document(
+            conn,
+            project=project,
+            feature=feature,
+            doc_type=doc_type,
+            instance=instance,
+            actor=actor,
+            now=now,
+        )
+
+
+@pytest.mark.parametrize(
+    "reason,superseded_by",
+    [
+        ("superseded", "proj/feat-a/vision/1"),
+        ("duplicate", "proj/feat-a/vision/1"),
+        ("obsolete", None),
+    ],
+)
+def test_archive_happy_path_each_reason(tmp_path: Path, reason: str, superseded_by: str | None):
+    conn = temp_conn(tmp_path)
+    make_submit(conn)
+    result = _archive(conn, reason=reason, superseded_by=superseded_by, note="a note")
+
+    assert result.status == "archived"
+    assert result.changed is True
+    assert result.reason == reason
+    assert result.superseded_by == superseded_by
+    assert result.note == "a note"
+    assert result.archived_at == "2024-01-02T00:00:00+00:00"
+
+    row = conn.execute(
+        "SELECT status, archive_reason, superseded_by, archive_note, archived_at "
+        "FROM documents WHERE id=?",
+        (result.document_id,),
+    ).fetchone()
+    assert row["status"] == "archived"
+    assert row["archive_reason"] == reason
+    assert row["superseded_by"] == superseded_by
+    assert row["archive_note"] == "a note"
+    assert row["archived_at"] == "2024-01-02T00:00:00+00:00"
+
+
+def test_archive_superseded_without_pointer_rejected(tmp_path: Path):
+    conn = temp_conn(tmp_path)
+    make_submit(conn)
+    with pytest.raises(SubmitError, match="superseded_by"):
+        _archive(conn, reason="superseded", superseded_by=None)
+
+
+def test_archive_duplicate_without_pointer_rejected(tmp_path: Path):
+    conn = temp_conn(tmp_path)
+    make_submit(conn)
+    with pytest.raises(SubmitError, match="superseded_by"):
+        _archive(conn, reason="duplicate", superseded_by=None)
+
+
+def test_archive_unknown_reason_rejected(tmp_path: Path):
+    conn = temp_conn(tmp_path)
+    make_submit(conn)
+    with pytest.raises(SubmitError, match="reason"):
+        _archive(conn, reason="nonsense")
+
+
+def test_archive_missing_reason_rejected(tmp_path: Path):
+    conn = temp_conn(tmp_path)
+    make_submit(conn)
+    with pytest.raises(SubmitError, match="reason"):
+        _archive(conn, reason=None)
+
+
+def test_archive_self_referential_pointer_rejected(tmp_path: Path):
+    conn = temp_conn(tmp_path)
+    make_submit(conn)
+    with pytest.raises(SubmitError, match="superseded_by"):
+        _archive(conn, reason="superseded", superseded_by="proj/feat-a/requirements/1")
+
+
+def test_archive_file_sourced_document_rejected(tmp_path: Path):
+    docs_root = tmp_path / "docs"
+    feat_dir = docs_root / "proj1" / "feat-x"
+    feat_dir.mkdir(parents=True)
+    (feat_dir / "requirements.html").write_text(_REQUIREMENTS_HTML)
+
+    conn = temp_conn(tmp_path)
+    walk(conn, docs_root, reconcile=False)
+
+    with pytest.raises(ArchiveConflict):
+        _archive(
+            conn,
+            reason="obsolete",
+            project="proj1",
+            feature="feat-x",
+            doc_type="requirements",
+            instance=1,
+        )
+
+
+def test_unarchive_file_sourced_document_rejected(tmp_path: Path):
+    docs_root = tmp_path / "docs"
+    feat_dir = docs_root / "proj1" / "feat-x"
+    feat_dir.mkdir(parents=True)
+    (feat_dir / "requirements.html").write_text(_REQUIREMENTS_HTML)
+
+    conn = temp_conn(tmp_path)
+    walk(conn, docs_root, reconcile=False)
+
+    with pytest.raises(ArchiveConflict):
+        _unarchive(conn, project="proj1", feature="feat-x", doc_type="requirements", instance=1)
+
+
+def test_archive_missing_document_raises_404_error(tmp_path: Path):
+    conn = temp_conn(tmp_path)
+    with pytest.raises(DocumentNotFound):
+        _archive(conn, reason="obsolete")
+
+
+def test_unarchive_missing_document_raises_404_error(tmp_path: Path):
+    conn = temp_conn(tmp_path)
+    with pytest.raises(DocumentNotFound):
+        _unarchive(conn)
+
+
+def test_archive_idempotent_rearchive_is_noop(tmp_path: Path):
+    conn = temp_conn(tmp_path)
+    make_submit(conn)
+    first = _archive(conn, reason="obsolete", note="first note", now="2024-01-02T00:00:00+00:00")
+    second = _archive(
+        conn,
+        reason="superseded",
+        superseded_by="x",
+        note="second note",
+        now="2024-01-03T00:00:00+00:00",
+    )
+
+    assert second.changed is False
+    assert second.reason == first.reason == "obsolete"
+    assert second.note == first.note == "first note"
+    assert second.archived_at == first.archived_at == "2024-01-02T00:00:00+00:00"
+
+
+def test_unarchive_round_trip_clears_all_four_columns(tmp_path: Path):
+    conn = temp_conn(tmp_path)
+    result = make_submit(conn)
+    _archive(conn, reason="superseded", superseded_by="x", note="n")
+
+    unarchived = _unarchive(conn)
+    assert unarchived.status == "active"
+    assert unarchived.changed is True
+    assert unarchived.reason is None
+    assert unarchived.superseded_by is None
+    assert unarchived.note is None
+    assert unarchived.archived_at is None
+
+    row = conn.execute(
+        "SELECT status, archive_reason, superseded_by, archive_note, archived_at "
+        "FROM documents WHERE id=?",
+        (result.document_id,),
+    ).fetchone()
+    assert row["status"] == "active"
+    assert row["archive_reason"] is None
+    assert row["superseded_by"] is None
+    assert row["archive_note"] is None
+    assert row["archived_at"] is None
+
+
+def test_unarchive_of_active_document_is_noop(tmp_path: Path):
+    conn = temp_conn(tmp_path)
+    make_submit(conn)
+    result = _unarchive(conn)
+    assert result.changed is False
+    assert result.status == "active"
+
+
+def test_archive_writes_document_archived_event_with_actor_agent_and_payload(tmp_path: Path):
+    conn = temp_conn(tmp_path)
+    submitted = make_submit(conn)
+    _archive(
+        conn,
+        reason="superseded",
+        superseded_by="x",
+        actor="requesting-agent",
+        now="2024-01-02T00:00:00+00:00",
+    )
+
+    row = conn.execute(
+        "SELECT event_type, actor, payload_json FROM events "
+        "WHERE document_id=? AND event_type='document_archived'",
+        (submitted.document_id,),
+    ).fetchone()
+    assert row is not None
+    assert row["actor"] == "agent"
+    payload = json.loads(row["payload_json"])
+    assert payload["reason"] == "superseded"
+    assert payload["superseded_by"] == "x"
+    assert payload["actor"] == "requesting-agent"
+
+
+def test_unarchive_writes_document_unarchived_event_with_actor_agent(tmp_path: Path):
+    conn = temp_conn(tmp_path)
+    submitted = make_submit(conn)
+    _archive(conn, reason="obsolete")
+    _unarchive(conn, actor="requesting-agent")
+
+    row = conn.execute(
+        "SELECT event_type, actor, payload_json FROM events "
+        "WHERE document_id=? AND event_type='document_unarchived'",
+        (submitted.document_id,),
+    ).fetchone()
+    assert row is not None
+    assert row["actor"] == "agent"
+    payload = json.loads(row["payload_json"])
+    assert payload["actor"] == "requesting-agent"

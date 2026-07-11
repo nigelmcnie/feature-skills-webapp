@@ -136,6 +136,8 @@ def test_multi_method_path_merges_into_one_path_item() -> None:
 _HIGH_VALUE_OPS_WITH_REQUEST_BODIES = {
     ("PUT", "/api/documents/{project}/{feature}/{doc_type}/{instance}"),
     ("POST", "/api/documents/{project}/{feature}/{doc_type}/{instance}/comments/integrate"),
+    ("POST", "/api/documents/{project}/{feature}/{doc_type}/{instance}/archive"),
+    ("POST", "/api/documents/{project}/{feature}/{doc_type}/{instance}/unarchive"),
     ("PUT", "/api/projects/{project}/suggested-order"),
     ("POST", "/api/projects/{project}/features/{feature}"),
     ("POST", "/api/projects/{project}/features/{feature}/claim"),
@@ -177,6 +179,30 @@ def test_features_listing_has_q_and_status_query_params() -> None:
     op = spec["paths"]["/api/projects/{project}/features"]["get"]
     names = {p["name"] for p in op["parameters"]}
     assert {"q", "status"} <= names
+
+
+def test_documents_listing_has_status_query_param() -> None:
+    spec = _spec()
+    op = spec["paths"]["/api/projects/{project}/features/{feature}/documents"]["get"]
+    names = {p["name"] for p in op["parameters"]}
+    assert "status" in names
+
+
+def test_archive_operation_has_reason_enum_and_error_responses() -> None:
+    spec = _spec()
+    op = spec["paths"]["/api/documents/{project}/{feature}/{doc_type}/{instance}/archive"]["post"]
+    schema = op["requestBody"]["content"]["application/json"]["schema"]
+    assert set(schema["properties"]["reason"]["enum"]) == {"superseded", "duplicate", "obsolete"}
+    assert schema["required"] == ["reason"]
+    for code in ("400", "404", "409"):
+        assert code in op["responses"]
+
+
+def test_unarchive_operation_has_error_responses() -> None:
+    spec = _spec()
+    op = spec["paths"]["/api/documents/{project}/{feature}/{doc_type}/{instance}/unarchive"]["post"]
+    for code in ("404", "409"):
+        assert code in op["responses"]
 
 
 def test_feature_sentinel_documented_on_every_document_path() -> None:
