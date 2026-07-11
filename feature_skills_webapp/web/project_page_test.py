@@ -299,12 +299,12 @@ def test_project_page_parked_feature_absent_from_available(temp_db: Path, tmp_pa
 # ---- Archived section ----
 
 
-def test_project_page_archived_section_present_with_dropped_feature(
+def test_project_page_archived_section_present_with_archived_feature(
     temp_db: Path, tmp_path: Path
 ) -> None:
     docs_root = make_docs_root_multi(tmp_path)
     with TestClient(create_app(db_path=temp_db)) as client:
-        # Set up feat-active (in_progress) and feat-done (done); drop feat-available
+        # Set up feat-active (in_progress) and feat-done (done); archive feat-available
         client.post("/api/projects/proj1")
         client.post("/api/projects/proj1/features/feat-active", json={"notes": ""})
         client.post("/api/projects/proj1/features/feat-active/claim", json={"owner": "Alice"})
@@ -312,15 +312,17 @@ def test_project_page_archived_section_present_with_dropped_feature(
         client.post("/api/projects/proj1/features/feat-done", json={"notes": ""})
         client.post("/api/projects/proj1/features/feat-done/claim", json={"owner": "Bob"})
         client.post("/api/projects/proj1/features/feat-done/ship", json={"outcome": "Shipped."})
-        client.post("/api/projects/proj1/features/feat-available/drop")
+        client.post(
+            "/api/projects/proj1/features/feat-available/archive", json={"reason": "obsolete"}
+        )
         _walk_docs(temp_db, docs_root)
         resp = client.get("/project/proj1")
     assert resp.status_code == 200
     html = resp.text
-    # Archived section is present and contains the dropped slug
+    # Archived section is present and contains the archived slug
     assert "Archived" in html
     assert "feat-available" in html
-    # Dropped slug appears after the Archived heading, not in the live groups
+    # Archived slug appears after the Archived heading, not in the live groups
     assert html.index("Archived") < html.index("feat-available")
     # Available section is absent (no available features remain)
     assert ">Available<" not in html

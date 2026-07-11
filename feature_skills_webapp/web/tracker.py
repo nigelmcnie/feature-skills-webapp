@@ -9,15 +9,18 @@ from starlette.responses import JSONResponse
 
 from feature_skills_webapp.storage.db import now_iso, transaction
 from feature_skills_webapp.storage.tracker import (
+    ARCHIVE_REASONS,
     FeatureExists,
     FeatureNotFound,
+    InvalidArchiveReason,
     InvalidTransition,
+    MissingSupersededBy,
     ProjectExists,
     ProjectNotFound,
+    archive_feature,
     claim_feature,
     create_feature,
     create_project,
-    drop_feature,
     get_feature,
     get_project,
     get_project_row,
@@ -28,6 +31,7 @@ from feature_skills_webapp.storage.tracker import (
     release_feature,
     set_project_suggested_order,
     ship_feature,
+    unarchive_feature,
     update_feature_note,
 )
 from feature_skills_webapp.web.db_dep import request_conn
@@ -126,6 +130,10 @@ async def list_features_handler(request: Request) -> JSONResponse:
                     "owner": r["owner"],
                     "notes": r["notes"],
                     "created_at": r["created_at"],
+                    "reason": r["archive_reason"],
+                    "superseded_by": r["superseded_by"],
+                    "note": r["archive_note"],
+                    "archived_at": r["archived_at"],
                 }
                 for r in feats
             ],
@@ -217,6 +225,10 @@ async def get_feature_handler(request: Request) -> JSONResponse:
             "status": feat["status"],
             "owner": feat["owner"],
             "notes": feat["notes"],
+            "reason": feat["archive_reason"],
+            "superseded_by": feat["superseded_by"],
+            "note": feat["archive_note"],
+            "archived_at": feat["archived_at"],
         }
     )
 
@@ -377,11 +389,70 @@ async def note_handler(request: Request) -> JSONResponse:
     )
 
 
-async def drop_handler(request: Request) -> JSONResponse:
+async def archive_handler(request: Request) -> JSONResponse:
     if request.app.state.db_path is None:
         return JSONResponse({"error": "db not configured"}, status_code=503)
     project = request.path_params["project"]
     slug = request.path_params["feature"]
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid JSON"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "body must be a JSON object"}, status_code=400)
+    reason = body.get("reason")
+    if not isinstance(reason, str) or reason not in ARCHIVE_REASONS:
+        return JSONResponse(
+            {"error": f"'reason' must be one of {ARCHIVE_REASONS}"}, status_code=400
+        )
+    superseded_by = body.get("superseded_by")
+    if superseded_by is not None and not isinstance(superseded_by, str):
+        return JSONResponse({"error": "'superseded_by' must be a string"}, status_code=400)
+    note = body.get("note")
+    if note is not None and not isinstance(note, str):
+        return JSONResponse({"error": "'note' must be a string"}, status_code=400)
+    actor = body.get("actor")
+    if actor is not None and not isinstance(actor, str):
+        return JSONResponse({"error": "'actor' must be a string"}, status_code=400)
+
+    try:
+        with request_conn(request.app) as conn, transaction(conn):
+            result = archive_feature(
+                conn,
+                project=project,
+                slug=slug,
+                reason=reason,
+                superseded_by=superseded_by,
+                note=note,
+                actor=actor or "agent",
+                now=now_iso(),
+            )
+    except (InvalidArchiveReason, MissingSupersededBy) as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    except FeatureNotFound:
+        return JSONResponse({"error": "feature not found"}, status_code=404)
+    except InvalidTransition as exc:
+        return JSONResponse({"error": str(exc)}, status_code=409)
+
+    if result.changed:
+        request.app.state.broadcaster.broadcast()
+    response = {
+        "project": result.project,
+        "slug": result.slug,
+        "status": result.status,
+        "changed": result.changed,
+    }
+    if result.warning is not None:
+        response["warning"] = result.warning
+    return JSONResponse(response)
+
+
+async def unarchive_handler(request: Request) -> JSONResponse:
+    if request.app.state.db_path is None:
+        return JSONResponse({"error": "db not configured"}, status_code=503)
+    project = request.path_params["project"]
+    slug = request.path_params["feature"]
+    actor = "agent"
     raw = await request.body()
     if raw:
         try:
@@ -390,10 +461,15 @@ async def drop_handler(request: Request) -> JSONResponse:
             return JSONResponse({"error": "invalid JSON"}, status_code=400)
         if not isinstance(body, dict):
             return JSONResponse({"error": "body must be a JSON object"}, status_code=400)
+        actor_raw = body.get("actor")
+        if actor_raw is not None:
+            if not isinstance(actor_raw, str):
+                return JSONResponse({"error": "'actor' must be a string"}, status_code=400)
+            actor = actor_raw
 
     try:
         with request_conn(request.app) as conn, transaction(conn):
-            result = drop_feature(conn, project=project, slug=slug, now=now_iso())
+            result = unarchive_feature(conn, project=project, slug=slug, actor=actor, now=now_iso())
     except FeatureNotFound:
         return JSONResponse({"error": "feature not found"}, status_code=404)
     except InvalidTransition as exc:
