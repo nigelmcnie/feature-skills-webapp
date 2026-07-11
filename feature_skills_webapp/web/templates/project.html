@@ -79,6 +79,15 @@
   .feat-group.done-group { opacity: 0.65; }
   .feat-group.done-group h2 { color: var(--text-faint); }
 
+  /* Archived metadata: reason / superseded-by / note under the row */
+  .feat-archive-meta {
+    display: flex; gap: 8px; flex-wrap: wrap;
+    padding: 0 14px 8px; margin-top: -6px;
+    font-size: 0.78rem; color: var(--text-faint);
+  }
+  .feat-archive-meta a { color: var(--accent); }
+  .feat-reason { text-transform: uppercase; letter-spacing: 0.05em; }
+
   /* Process findings panel */
   .findings-panel { margin-top: 40px; padding-top: 24px; border-top: 1px solid var(--border); }
   .findings-panel h2 {
@@ -207,16 +216,29 @@
     <summary><h2 style="display:inline">Archived</h2></summary>
     <ul class="feat-list">
       {% for feat in archived %}
-      <li><a class="feat-row" href="/project/{{ project | urlencode }}/feature/{{ feat.slug | urlencode }}"
-             aria-label="{{ feat.slug }}">
-        <span class="feat-slug">{{ feat.slug }}</span>
-        {% if feat.owner %}<span class="feat-owner">{{ feat.owner }}</span>{% endif %}
-      </a></li>
+      <li>
+        <a class="feat-row" href="/project/{{ project | urlencode }}/feature/{{ feat.slug | urlencode }}"
+           aria-label="{{ feat.slug }}">
+          <span class="feat-slug">{{ feat.slug }}</span>
+          {% if feat.owner %}<span class="feat-owner">{{ feat.owner }}</span>{% endif %}
+        </a>
+        {% if feat.reason or feat.superseded_by or feat.note %}
+        <div class="feat-archive-meta">
+          {% if feat.reason %}<span class="feat-reason">{{ feat.reason }}</span>{% endif %}
+          {% if feat.superseded_by_slug %}<a href="/project/{{ project | urlencode }}/feature/{{ feat.superseded_by_slug | urlencode }}">{{ feat.superseded_by }}</a>
+          {% elif feat.superseded_by %}<span>{{ feat.superseded_by }}</span>{% endif %}
+          {% if feat.note %}<span class="feat-note">{{ feat.note }}</span>{% endif %}
+        </div>
+        {% endif %}
+      </li>
       {% endfor %}
     </ul>
   </details>
   {% endif %}
 
+  {# Deliberately omits `archived`: a project whose only features are archived
+     still shows "No features yet." above the Archived section. Out of scope
+     for this phase -- see feature-archive-semantics Phase 2. #}
   {% if not in_progress and not available and not parked and not done %}
   <p style="color: var(--text-faint); font-size: 0.9rem;">No features yet.</p>
   {% endif %}
