@@ -140,7 +140,7 @@ _HIGH_VALUE_OPS_WITH_REQUEST_BODIES = {
     ("POST", "/api/projects/{project}/features/{feature}"),
     ("POST", "/api/projects/{project}/features/{feature}/claim"),
     ("POST", "/api/projects/{project}/features/{feature}/ship"),
-    ("POST", "/api/projects/{project}/features/{feature}/drop"),
+    ("POST", "/api/projects/{project}/features/{feature}/archive"),
     ("POST", "/api/projects/{project}/features/{feature}/note"),
 }
 

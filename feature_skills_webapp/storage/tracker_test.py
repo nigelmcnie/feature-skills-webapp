@@ -12,10 +12,12 @@ from feature_skills_webapp.storage.db import MIGRATIONS_DIR, connect, migrate, t
 from feature_skills_webapp.storage.tracker import (
     FeatureExists,
     FeatureNotFound,
+    InvalidArchiveReason,
     InvalidTransition,
+    MissingSupersededBy,
+    archive_feature,
     claim_feature,
     create_feature,
-    drop_feature,
     get_feature,
     get_project,
     list_feature_documents,
@@ -25,6 +27,7 @@ from feature_skills_webapp.storage.tracker import (
     park_feature,
     release_feature,
     ship_feature,
+    unarchive_feature,
     update_feature_note,
 )
 
@@ -307,7 +310,7 @@ def test_migration_backfills_null_status(tmp_path: Path) -> None:
     assert row["status"] is None
 
     # Full migrate() applies 0005 (backfill) and every later migration in place.
-    assert migrate(conn) == 8
+    assert migrate(conn) == 9
     row = conn.execute(
         "SELECT status FROM features WHERE slug='feat' AND project_id=?", (pid,)
     ).fetchone()
@@ -830,38 +833,66 @@ def test_normalise_reports_collision_without_mutating(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# drop_feature
+# archive_feature / unarchive_feature
 # ---------------------------------------------------------------------------
 
 
-def test_drop_available_transitions_to_archived(tmp_path: Path) -> None:
+def _archive(
+    conn: sqlite3.Connection,
+    *,
+    project: str = "proj",
+    slug: str = "feat",
+    reason: str = "obsolete",
+    superseded_by: str | None = None,
+    note: str | None = None,
+    actor: str = "agent",
+    now: str = "2024-01-01T00:00:00+00:00",
+):
+    return archive_feature(
+        conn,
+        project=project,
+        slug=slug,
+        reason=reason,
+        superseded_by=superseded_by,
+        note=note,
+        actor=actor,
+        now=now,
+    )
+
+
+def test_archive_available_transitions_to_archived(tmp_path: Path) -> None:
     conn = _conn(tmp_path)
-    now = "2024-01-01T00:00:00+00:00"
     pid = _seed_project(conn, "proj")
     _seed_feature(conn, pid, "feat", status="available")
     with transaction(conn):
-        result = drop_feature(conn, project="proj", slug="feat", now=now)
+        result = _archive(conn, reason="subsumed", superseded_by="other-feat", actor="user")
     assert result.status == "archived"
     assert result.changed is True
     feat = get_feature(conn, "proj", "feat")
     assert feat is not None
     assert feat["status"] == "archived"
+    assert feat["archive_reason"] == "subsumed"
+    assert feat["superseded_by"] == "other-feat"
     event = conn.execute(
-        "SELECT payload_json FROM events WHERE event_type='feature_dropped'"
+        "SELECT payload_json, actor FROM events WHERE event_type='feature_archived'"
     ).fetchone()
     assert event is not None
+    assert event["actor"] == "user"
     payload = json.loads(event["payload_json"])
-    assert payload["project"] == "proj"
-    assert payload["slug"] == "feat"
+    assert payload == {
+        "project": "proj",
+        "slug": "feat",
+        "reason": "subsumed",
+        "superseded_by": "other-feat",
+    }
 
 
-def test_drop_in_progress_transitions_to_archived_and_retains_owner(tmp_path: Path) -> None:
+def test_archive_in_progress_transitions_to_archived_and_retains_owner(tmp_path: Path) -> None:
     conn = _conn(tmp_path)
-    now = "2024-01-01T00:00:00+00:00"
     pid = _seed_project(conn, "proj")
     _seed_feature(conn, pid, "feat", status="in_progress", owner="Alice")
     with transaction(conn):
-        result = drop_feature(conn, project="proj", slug="feat", now=now)
+        result = _archive(conn)
     assert result.status == "archived"
     assert result.changed is True
     feat = get_feature(conn, "proj", "feat")
@@ -869,19 +900,98 @@ def test_drop_in_progress_transitions_to_archived_and_retains_owner(tmp_path: Pa
     assert feat["status"] == "archived"
     assert feat["owner"] == "Alice"  # owner retained
     event = conn.execute(
-        "SELECT event_type FROM events WHERE event_type='feature_dropped'"
+        "SELECT event_type FROM events WHERE event_type='feature_archived'"
     ).fetchone()
     assert event is not None
 
 
-def test_drop_done_raises_invalid_transition_no_event(tmp_path: Path) -> None:
+@pytest.mark.parametrize("reason", ["subsumed", "superseded", "duplicate"])
+def test_archive_reason_requiring_pointer_without_one_raises(tmp_path: Path, reason: str) -> None:
     conn = _conn(tmp_path)
-    now = "2024-01-01T00:00:00+00:00"
+    pid = _seed_project(conn, "proj")
+    _seed_feature(conn, pid, "feat", status="available")
+    with pytest.raises(MissingSupersededBy), transaction(conn):
+        _archive(conn, reason=reason, superseded_by=None)
+
+
+def test_archive_obsolete_without_pointer_ok(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    pid = _seed_project(conn, "proj")
+    _seed_feature(conn, pid, "feat", status="available")
+    with transaction(conn):
+        result = _archive(conn, reason="obsolete", superseded_by=None)
+    assert result.changed is True
+    feat = get_feature(conn, "proj", "feat")
+    assert feat is not None
+    assert feat["superseded_by"] is None
+
+
+def test_archive_unknown_reason_raises_invalid_archive_reason(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    pid = _seed_project(conn, "proj")
+    _seed_feature(conn, pid, "feat", status="available")
+    with pytest.raises(InvalidArchiveReason), transaction(conn):
+        _archive(conn, reason="not-a-real-reason")
+
+
+def test_archive_superseded_by_resolving_slug_has_no_warning(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    pid = _seed_project(conn, "proj")
+    _seed_feature(conn, pid, "feat", status="available")
+    _seed_feature(conn, pid, "other-feat", status="available")
+    with transaction(conn):
+        result = _archive(conn, reason="subsumed", superseded_by="other-feat")
+    assert result.warning is None
+
+
+def test_archive_superseded_by_unresolved_slug_shaped_warns(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    pid = _seed_project(conn, "proj")
+    _seed_feature(conn, pid, "feat", status="available")
+    with transaction(conn):
+        result = _archive(conn, reason="subsumed", superseded_by="no-such-feature")
+    assert result.warning is not None
+    assert "no-such-feature" in result.warning
+
+
+def test_archive_superseded_by_non_slug_ref_no_warning(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    pid = _seed_project(conn, "proj")
+    _seed_feature(conn, pid, "feat", status="available")
+    with transaction(conn):
+        result = _archive(conn, reason="subsumed", superseded_by="!123")
+    assert result.warning is None
+    feat = get_feature(conn, "proj", "feat")
+    assert feat is not None
+    assert feat["superseded_by"] == "!123"  # stored verbatim
+
+
+def test_archive_already_archived_is_noop_metadata_unchanged(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    pid = _seed_project(conn, "proj")
+    _seed_feature(conn, pid, "feat", status="available")
+    with transaction(conn):
+        _archive(conn, reason="obsolete", note="first note")
+    before = conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
+    with transaction(conn):
+        result = _archive(conn, reason="subsumed", superseded_by="other-feat", note="second note")
+    after = conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
+    assert result.changed is False
+    assert result.status == "archived"
+    assert after == before  # no event emitted
+    feat = get_feature(conn, "proj", "feat")
+    assert feat is not None
+    assert feat["archive_reason"] == "obsolete"  # unchanged, not "subsumed"
+    assert feat["archive_note"] == "first note"
+
+
+def test_archive_done_raises_invalid_transition_no_event(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
     pid = _seed_project(conn, "proj")
     _seed_feature(conn, pid, "feat", status="done")
     before = conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
     with pytest.raises(InvalidTransition), transaction(conn):
-        drop_feature(conn, project="proj", slug="feat", now=now)
+        _archive(conn)
     after = conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
     assert after == before  # no event emitted
     feat = get_feature(conn, "proj", "feat")
@@ -889,26 +999,73 @@ def test_drop_done_raises_invalid_transition_no_event(tmp_path: Path) -> None:
     assert feat["status"] == "done"  # status unchanged
 
 
-def test_drop_already_archived_is_noop(tmp_path: Path) -> None:
+def test_archive_missing_feature_raises_feature_not_found(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    _seed_project(conn, "proj")
+    with pytest.raises(FeatureNotFound), transaction(conn):
+        _archive(conn, slug="no-such")
+
+
+def test_unarchive_archived_transitions_to_available_clears_metadata_and_owner(
+    tmp_path: Path,
+) -> None:
     conn = _conn(tmp_path)
     now = "2024-01-01T00:00:00+00:00"
     pid = _seed_project(conn, "proj")
-    _seed_feature(conn, pid, "feat", status="archived")
+    _seed_feature(conn, pid, "feat", status="in_progress", owner="Alice")
+    with transaction(conn):
+        _archive(conn, reason="subsumed", superseded_by="other-feat", note="a note")
+    with transaction(conn):
+        result = unarchive_feature(conn, project="proj", slug="feat", actor="user", now=now)
+    assert result.status == "available"
+    assert result.changed is True
+    feat = get_feature(conn, "proj", "feat")
+    assert feat is not None
+    assert feat["status"] == "available"
+    assert feat["owner"] is None
+    assert feat["archive_reason"] is None
+    assert feat["superseded_by"] is None
+    assert feat["archive_note"] is None
+    assert feat["archived_at"] is None
+    event = conn.execute(
+        "SELECT actor FROM events WHERE event_type='feature_unarchived'"
+    ).fetchone()
+    assert event is not None
+    assert event["actor"] == "user"
+
+
+def test_unarchive_available_is_noop(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    now = "2024-01-01T00:00:00+00:00"
+    pid = _seed_project(conn, "proj")
+    _seed_feature(conn, pid, "feat", status="available")
     before = conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
     with transaction(conn):
-        result = drop_feature(conn, project="proj", slug="feat", now=now)
+        result = unarchive_feature(conn, project="proj", slug="feat", actor="agent", now=now)
     after = conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
     assert result.changed is False
-    assert result.status == "archived"
-    assert after == before  # no event emitted
+    assert result.status == "available"
+    assert after == before
 
 
-def test_drop_missing_feature_raises_feature_not_found(tmp_path: Path) -> None:
+@pytest.mark.parametrize("status", ["in_progress", "parked", "done"])
+def test_unarchive_non_archived_non_available_raises_invalid_transition(
+    tmp_path: Path, status: str
+) -> None:
+    conn = _conn(tmp_path)
+    now = "2024-01-01T00:00:00+00:00"
+    pid = _seed_project(conn, "proj")
+    _seed_feature(conn, pid, "feat", status=status)
+    with pytest.raises(InvalidTransition), transaction(conn):
+        unarchive_feature(conn, project="proj", slug="feat", actor="agent", now=now)
+
+
+def test_unarchive_missing_feature_raises_feature_not_found(tmp_path: Path) -> None:
     conn = _conn(tmp_path)
     now = "2024-01-01T00:00:00+00:00"
     _seed_project(conn, "proj")
     with pytest.raises(FeatureNotFound), transaction(conn):
-        drop_feature(conn, project="proj", slug="no-such", now=now)
+        unarchive_feature(conn, project="proj", slug="no-such", actor="agent", now=now)
 
 
 # ---------------------------------------------------------------------------
@@ -1040,7 +1197,7 @@ def test_migration_0007_adds_suggested_order(tmp_path: Path) -> None:
     """Fresh migrate() reaches the latest version and the projects table has suggested_order."""
     conn = connect(tmp_path / "test.db")
     version = migrate(conn)
-    assert version == 8
+    assert version == 9
     # Column must exist and default to NULL.
     row = conn.execute("PRAGMA table_info(projects)").fetchall()
     col_names = [r["name"] for r in row]

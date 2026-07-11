@@ -8,6 +8,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from feature_skills_webapp.config import public_base_url
+from feature_skills_webapp.storage.tracker import ARCHIVE_REASONS
 
 OPENAPI_VERSION = "3.1.0"
 
@@ -428,14 +429,55 @@ API_METADATA: dict[tuple[str, str], dict[str, Any]] = {
             include_400=True,
         ),
     },
-    ("POST", "/api/projects/{project}/features/{feature}/drop"): {
-        "summary": "Drop a feature",
+    ("POST", "/api/projects/{project}/features/{feature}/archive"): {
+        "summary": "Archive a feature",
         "requestBody": {
-            "required": False,
-            "content": {"application/json": {"schema": {"type": "object"}}},
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "reason": {
+                                "type": "string",
+                                "enum": list(ARCHIVE_REASONS),
+                                "description": (
+                                    "'subsumed', 'superseded', and 'duplicate' require "
+                                    "'superseded_by'; 'obsolete' may stand alone."
+                                ),
+                            },
+                            "superseded_by": {"type": ["string", "null"]},
+                            "note": {"type": ["string", "null"]},
+                            "actor": {"type": "string", "description": "Defaults to 'agent'."},
+                        },
+                        "required": ["reason"],
+                    }
+                }
+            },
         },
         "responses": _lifecycle_responses(
-            _changed_body_example(status="dropped"), conflict_message="invalid transition"
+            _changed_body_example(status="archived"),
+            conflict_message="invalid transition",
+            include_400=True,
+        ),
+    },
+    ("POST", "/api/projects/{project}/features/{feature}/unarchive"): {
+        "summary": "Unarchive a feature, returning it to available",
+        "requestBody": {
+            "required": False,
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "actor": {"type": "string", "description": "Defaults to 'agent'."}
+                        },
+                    }
+                }
+            },
+        },
+        "responses": _lifecycle_responses(
+            _changed_body_example(status="available"), conflict_message="invalid transition"
         ),
     },
     ("POST", "/api/projects/{project}/features/{feature}/note"): {

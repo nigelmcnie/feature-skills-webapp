@@ -553,100 +553,230 @@ def test_park_no_broadcast_on_noop(temp_db: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# drop handler
+# archive handler
 # ---------------------------------------------------------------------------
 
 
-def test_drop_503_no_db() -> None:
+def test_archive_503_no_db() -> None:
     client = TestClient(create_app(db_path=None))
-    resp = client.post("/api/projects/proj/features/feat/drop")
+    resp = client.post("/api/projects/proj/features/feat/archive", json={"reason": "obsolete"})
     assert resp.status_code == 503
 
 
-def test_drop_200_transitions_to_archived(temp_db: Path) -> None:
+def test_archive_200_transitions_to_archived(temp_db: Path) -> None:
     _seed_bare_feature(temp_db, "feat", status="available")
     with TestClient(create_app(db_path=temp_db)) as client:
-        resp = client.post("/api/projects/proj/features/feat/drop")
+        resp = client.post("/api/projects/proj/features/feat/archive", json={"reason": "obsolete"})
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "archived"
     assert data["changed"] is True
+    assert "warning" not in data
 
 
-def test_drop_200_empty_body_tolerated(temp_db: Path) -> None:
+def test_archive_200_warning_present_when_superseded_by_unresolved(temp_db: Path) -> None:
     _seed_bare_feature(temp_db, "feat", status="available")
     with TestClient(create_app(db_path=temp_db)) as client:
-        resp = client.post("/api/projects/proj/features/feat/drop", content=b"")
+        resp = client.post(
+            "/api/projects/proj/features/feat/archive",
+            json={"reason": "subsumed", "superseded_by": "no-such-feature"},
+        )
     assert resp.status_code == 200
-    assert resp.json()["status"] == "archived"
+    data = resp.json()
+    assert "no-such-feature" in data["warning"]
 
 
-def test_drop_200_json_object_body_tolerated(temp_db: Path) -> None:
-    _seed_bare_feature(temp_db, "feat", status="available")
-    with TestClient(create_app(db_path=temp_db)) as client:
-        resp = client.post("/api/projects/proj/features/feat/drop", json={})
-    assert resp.status_code == 200
-    assert resp.json()["status"] == "archived"
-
-
-def test_drop_200_noop_when_already_archived(temp_db: Path) -> None:
+def test_archive_200_noop_when_already_archived(temp_db: Path) -> None:
     _seed_bare_feature(temp_db, "feat", status="archived")
     with TestClient(create_app(db_path=temp_db)) as client:
-        resp = client.post("/api/projects/proj/features/feat/drop")
+        resp = client.post("/api/projects/proj/features/feat/archive", json={"reason": "obsolete"})
     assert resp.status_code == 200
     assert resp.json()["changed"] is False
 
 
-def test_drop_404_missing_feature(temp_db: Path) -> None:
-    with TestClient(create_app(db_path=temp_db)) as client:
-        resp = client.post("/api/projects/proj/features/no-such/drop")
-    assert resp.status_code == 404
-
-
-def test_drop_409_invalid_transition_from_done(temp_db: Path) -> None:
-    _seed_bare_feature(temp_db, "feat", status="done")
-    with TestClient(create_app(db_path=temp_db)) as client:
-        resp = client.post("/api/projects/proj/features/feat/drop")
-    assert resp.status_code == 409
-
-
-def test_drop_400_non_object_body(temp_db: Path) -> None:
+def test_archive_400_missing_reason(temp_db: Path) -> None:
     _seed_bare_feature(temp_db, "feat", status="available")
     with TestClient(create_app(db_path=temp_db)) as client:
-        resp = client.post("/api/projects/proj/features/feat/drop", json=[])
+        resp = client.post("/api/projects/proj/features/feat/archive", json={})
     assert resp.status_code == 400
 
 
-def test_drop_400_invalid_json_body(temp_db: Path) -> None:
+def test_archive_400_unknown_reason(temp_db: Path) -> None:
     _seed_bare_feature(temp_db, "feat", status="available")
     with TestClient(create_app(db_path=temp_db)) as client:
         resp = client.post(
-            "/api/projects/proj/features/feat/drop",
-            content=b"not-json",
-            headers={"Content-Type": "application/json"},
+            "/api/projects/proj/features/feat/archive", json={"reason": "not-a-reason"}
         )
     assert resp.status_code == 400
 
 
-def test_drop_broadcasts_on_change(temp_db: Path) -> None:
+def test_archive_400_missing_pointer_for_reason_requiring_one(temp_db: Path) -> None:
+    _seed_bare_feature(temp_db, "feat", status="available")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post("/api/projects/proj/features/feat/archive", json={"reason": "duplicate"})
+    assert resp.status_code == 400
+
+
+def test_archive_400_non_object_body(temp_db: Path) -> None:
+    _seed_bare_feature(temp_db, "feat", status="available")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post("/api/projects/proj/features/feat/archive", json=[])
+    assert resp.status_code == 400
+
+
+def test_archive_400_non_string_superseded_by(temp_db: Path) -> None:
+    _seed_bare_feature(temp_db, "feat", status="available")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post(
+            "/api/projects/proj/features/feat/archive",
+            json={"reason": "duplicate", "superseded_by": 123},
+        )
+    assert resp.status_code == 400
+
+
+def test_archive_404_missing_feature(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post(
+            "/api/projects/proj/features/no-such/archive", json={"reason": "obsolete"}
+        )
+    assert resp.status_code == 404
+
+
+def test_archive_409_invalid_transition_from_done(temp_db: Path) -> None:
+    _seed_bare_feature(temp_db, "feat", status="done")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post("/api/projects/proj/features/feat/archive", json={"reason": "obsolete"})
+    assert resp.status_code == 409
+
+
+def test_archive_broadcasts_on_change(temp_db: Path) -> None:
     _seed_bare_feature(temp_db, "feat", status="available")
     app = create_app(db_path=temp_db)
     with TestClient(app) as client:
         app.state.broadcaster = MagicMock()
-        resp = client.post("/api/projects/proj/features/feat/drop")
+        resp = client.post("/api/projects/proj/features/feat/archive", json={"reason": "obsolete"})
     assert resp.status_code == 200
     app.state.broadcaster.broadcast.assert_called_once()
 
 
-def test_drop_no_broadcast_on_noop(temp_db: Path) -> None:
+def test_archive_no_broadcast_on_noop(temp_db: Path) -> None:
     _seed_bare_feature(temp_db, "feat", status="archived")
     app = create_app(db_path=temp_db)
     with TestClient(app) as client:
         app.state.broadcaster = MagicMock()
-        resp = client.post("/api/projects/proj/features/feat/drop")
+        resp = client.post("/api/projects/proj/features/feat/archive", json={"reason": "obsolete"})
     assert resp.status_code == 200
     assert resp.json()["changed"] is False
     app.state.broadcaster.broadcast.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# unarchive handler
+# ---------------------------------------------------------------------------
+
+
+def test_unarchive_503_no_db() -> None:
+    client = TestClient(create_app(db_path=None))
+    resp = client.post("/api/projects/proj/features/feat/unarchive")
+    assert resp.status_code == 503
+
+
+def test_unarchive_200_transitions_to_available(temp_db: Path) -> None:
+    _seed_bare_feature(temp_db, "feat", status="available")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        client.post("/api/projects/proj/features/feat/archive", json={"reason": "obsolete"})
+        resp = client.post("/api/projects/proj/features/feat/unarchive")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "available"
+    assert data["changed"] is True
+
+
+def test_unarchive_200_empty_body_tolerated(temp_db: Path) -> None:
+    _seed_bare_feature(temp_db, "feat", status="archived")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post("/api/projects/proj/features/feat/unarchive", content=b"")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "available"
+
+
+def test_unarchive_200_noop_when_already_available(temp_db: Path) -> None:
+    _seed_bare_feature(temp_db, "feat", status="available")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post("/api/projects/proj/features/feat/unarchive")
+    assert resp.status_code == 200
+    assert resp.json()["changed"] is False
+
+
+def test_unarchive_404_missing_feature(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post("/api/projects/proj/features/no-such/unarchive")
+    assert resp.status_code == 404
+
+
+def test_unarchive_409_invalid_transition_from_done(temp_db: Path) -> None:
+    _seed_bare_feature(temp_db, "feat", status="done")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post("/api/projects/proj/features/feat/unarchive")
+    assert resp.status_code == 409
+
+
+def test_unarchive_400_non_object_body(temp_db: Path) -> None:
+    _seed_bare_feature(temp_db, "feat", status="archived")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post("/api/projects/proj/features/feat/unarchive", json=[])
+    assert resp.status_code == 400
+
+
+def test_unarchive_broadcasts_on_change(temp_db: Path) -> None:
+    _seed_bare_feature(temp_db, "feat", status="archived")
+    app = create_app(db_path=temp_db)
+    with TestClient(app) as client:
+        app.state.broadcaster = MagicMock()
+        resp = client.post("/api/projects/proj/features/feat/unarchive")
+    assert resp.status_code == 200
+    app.state.broadcaster.broadcast.assert_called_once()
+
+
+def test_unarchive_no_broadcast_on_noop(temp_db: Path) -> None:
+    _seed_bare_feature(temp_db, "feat", status="available")
+    app = create_app(db_path=temp_db)
+    with TestClient(app) as client:
+        app.state.broadcaster = MagicMock()
+        resp = client.post("/api/projects/proj/features/feat/unarchive")
+    assert resp.status_code == 200
+    assert resp.json()["changed"] is False
+    app.state.broadcaster.broadcast.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# archival fields on listing + single-feature JSON
+# ---------------------------------------------------------------------------
+
+
+def test_list_features_archival_fields_populated_when_archived(temp_db: Path) -> None:
+    _seed_bare_feature(temp_db, "feat", status="available")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        client.post(
+            "/api/projects/proj/features/feat/archive",
+            json={"reason": "duplicate", "superseded_by": "other-feat", "note": "see other-feat"},
+        )
+        resp = client.get("/api/projects/proj/features")
+    feat = next(f for f in resp.json()["features"] if f["slug"] == "feat")
+    assert feat["reason"] == "duplicate"
+    assert feat["superseded_by"] == "other-feat"
+    assert feat["note"] == "see other-feat"
+    assert feat["archived_at"] is not None
+
+
+def test_get_feature_archival_fields_populated_when_archived(temp_db: Path) -> None:
+    _seed_bare_feature(temp_db, "feat", status="available")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        client.post("/api/projects/proj/features/feat/archive", json={"reason": "obsolete"})
+        resp = client.get("/api/projects/proj/features/feat")
+    data = resp.json()
+    assert data["reason"] == "obsolete"
+    assert data["archived_at"] is not None
 
 
 # ---------------------------------------------------------------------------
@@ -883,6 +1013,11 @@ def test_get_feature_returns_fields(temp_db: Path) -> None:
     assert data["status"] == "available"
     assert data["notes"] == "hello"
     assert "owner" in data
+    # Archival fields are NULL while the feature is active.
+    assert data["reason"] is None
+    assert data["superseded_by"] is None
+    assert data["note"] is None
+    assert data["archived_at"] is None
 
 
 def test_get_feature_404_unknown_feature(temp_db: Path) -> None:
