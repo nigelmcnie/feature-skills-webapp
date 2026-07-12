@@ -776,6 +776,22 @@ def test_archive_400_self_referential_pointer(temp_db: Path) -> None:
     assert resp.status_code == 400
 
 
+def test_archive_400_non_object_body(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _seed_document(client)
+        resp = client.post(_ARCHIVE_URL, json=["not", "an", "object"])
+    assert resp.status_code == 400
+    assert resp.json()["error"] == "body must be a JSON object"
+
+
+def test_archive_400_malformed_json(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        _seed_document(client)
+        resp = client.post(_ARCHIVE_URL, content=b"{not valid json")
+    assert resp.status_code == 400
+    assert resp.json()["error"] == "invalid JSON"
+
+
 def test_archive_404_document_not_found(temp_db: Path) -> None:
     with TestClient(create_app(db_path=temp_db)) as client:
         resp = client.post(_ARCHIVE_URL, json={"reason": "obsolete"})
@@ -838,6 +854,20 @@ def test_unarchive_404_document_not_found(temp_db: Path) -> None:
     with TestClient(create_app(db_path=temp_db)) as client:
         resp = client.post(_UNARCHIVE_URL)
     assert resp.status_code == 404
+
+
+def test_unarchive_400_non_object_body(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post(_UNARCHIVE_URL, json=["not", "an", "object"])
+    assert resp.status_code == 400
+    assert resp.json()["error"] == "body must be a JSON object"
+
+
+def test_unarchive_400_malformed_json(temp_db: Path) -> None:
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post(_UNARCHIVE_URL, content=b"{not valid json")
+    assert resp.status_code == 400
+    assert resp.json()["error"] == "invalid JSON"
 
 
 def test_unarchive_409_file_sourced(temp_db: Path) -> None:
