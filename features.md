@@ -1,6 +1,7 @@
 ## Available
 | Feature | Notes |
 |---|---|
+| [openapi-spec-from-types](docs/features/openapi-spec-from-types/context.md) | Generate the OpenAPI spec from the endpoints typing information so the spec and handlers share one source of truth and drift is structurally impossible (retro follow-up to the hand-authored sections array/object drift). |
 | [retro-finding-settled-status](docs/features/retro-finding-settled-status/context.md) | A 'settled / accepted by-design' status for retro findings the retro-start GET still returns (so retros recognise a theme as settled) but marks not-actionable — so a consciously-accepted special case (e.g. recurring cross-repo-phases) stops being re-minted every retro. Surfaced in the api-coherence orchestrator retro. |
 | retro-recurrence-trend | Split from retro-findings-capture: surface a finding's recurrence depth ("raised in N retros") as an explicit trend and feed it back into the /feature-retro prompt to nudge persistent findings toward becoming tracked features. Design once retro-findings-capture has run in anger. |
 | [surfacing-feedback-signal](docs/features/surfacing-feedback-signal/context.md) |  |
