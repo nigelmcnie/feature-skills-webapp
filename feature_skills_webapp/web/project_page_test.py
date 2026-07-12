@@ -403,14 +403,19 @@ def test_project_page_archived_features_ordered_newest_first(temp_db: Path, tmp_
     now = "2024-01-01T00:00:00+00:00"
     conn.execute("INSERT INTO projects (name, created_at) VALUES ('proj1', ?)", (now,))
     pid = conn.execute("SELECT id FROM projects WHERE name='proj1'").fetchone()["id"]
+    # Slugs are chosen so alphabetical order (aaa-older < zzz-newer) is the
+    # OPPOSITE of the desired newest-first (archived_at desc) order. The
+    # listing query orders by (status, slug), so without the archived_at sort
+    # in project_page the page would render aaa-older first and this test would
+    # fail — it pins the sort rather than coinciding with the default ordering.
     conn.execute(
         "INSERT INTO features (project_id, slug, status, archived_at, created_at, updated_at) "
-        "VALUES (?, 'older', 'archived', '2024-01-01T00:00:00+00:00', ?, ?)",
+        "VALUES (?, 'aaa-older', 'archived', '2024-01-01T00:00:00+00:00', ?, ?)",
         (pid, now, now),
     )
     conn.execute(
         "INSERT INTO features (project_id, slug, status, archived_at, created_at, updated_at) "
-        "VALUES (?, 'newer', 'archived', '2024-06-01T00:00:00+00:00', ?, ?)",
+        "VALUES (?, 'zzz-newer', 'archived', '2024-06-01T00:00:00+00:00', ?, ?)",
         (pid, now, now),
     )
     conn.commit()
@@ -420,4 +425,4 @@ def test_project_page_archived_features_ordered_newest_first(temp_db: Path, tmp_
         resp = client.get("/project/proj1")
     assert resp.status_code == 200
     html = resp.text
-    assert html.index("newer") < html.index("older")
+    assert html.index("zzz-newer") < html.index("aaa-older")

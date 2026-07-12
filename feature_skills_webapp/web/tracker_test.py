@@ -628,6 +628,26 @@ def test_archive_200_transitions_to_archived(temp_db: Path) -> None:
     assert "warning" not in data
 
 
+def test_archive_200_threads_actor_from_body_into_event(temp_db: Path) -> None:
+    # archive/unarchive are the first verbs to thread an explicit actor into
+    # their events; pin that end-to-end over HTTP. Without the handler passing
+    # the body's actor through, the event row would fall back to 'agent'.
+    _seed_bare_feature(temp_db, "feat", status="available")
+    with TestClient(create_app(db_path=temp_db)) as client:
+        resp = client.post(
+            "/api/projects/proj/features/feat/archive",
+            json={"reason": "obsolete", "actor": "user"},
+        )
+    assert resp.status_code == 200
+    conn = connect(temp_db)
+    row = conn.execute(
+        "SELECT actor FROM events WHERE event_type='feature_archived' ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    conn.close()
+    assert row is not None
+    assert row["actor"] == "user"
+
+
 def test_archive_200_warning_present_when_superseded_by_unresolved(temp_db: Path) -> None:
     _seed_bare_feature(temp_db, "feat", status="available")
     with TestClient(create_app(db_path=temp_db)) as client:
