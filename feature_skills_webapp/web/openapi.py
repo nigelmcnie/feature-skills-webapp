@@ -31,8 +31,10 @@ COMPONENTS: dict[str, Any] = {
 _ERROR_SCHEMA_REF = {"$ref": "#/components/schemas/Error"}
 
 _MANIFEST_POINTER = (
-    "Section shapes are doc-type specific — fetch GET /api/manifests/{doc_type} "
-    "for the authoritative list of section keys before writing."
+    'An object mapping each section key to its HTML string ({"<key>": "<html>"}) — '
+    "note this differs from the array shape sections are read back as. Section keys are "
+    "doc-type specific: fetch GET /api/manifests/{doc_type} for the authoritative list "
+    "before writing."
 )
 
 _FEATURE_SENTINEL_NOTE = (
@@ -142,9 +144,9 @@ API_METADATA: dict[tuple[str, str], dict[str, Any]] = {
                         "properties": {
                             "actor": {"type": "string", "description": "Defaults to 'agent'."},
                             "sections": {
-                                "type": "array",
+                                "type": "object",
                                 "description": _MANIFEST_POINTER,
-                                "items": {"type": "object"},
+                                "additionalProperties": {"type": "string"},
                             },
                             "body": {
                                 "type": "string",
