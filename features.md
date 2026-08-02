@@ -1,6 +1,7 @@
 ## Available
 | Feature | Notes |
 |---|---|
+| [checklist-state](docs/features/checklist-state/context.md) | First-class plan-checklist tick state: server-side per-item state + small tick endpoint, merged into the rendered checklist so full-section PUTs cannot clobber ticks. Motivated by an orchestrator/implementer write race on waddles. |
 | [openapi-spec-from-types](docs/features/openapi-spec-from-types/context.md) | Generate the OpenAPI spec from the endpoints typing information so the spec and handlers share one source of truth and drift is structurally impossible (retro follow-up to the hand-authored sections array/object drift). |
 | [retro-finding-settled-status](docs/features/retro-finding-settled-status/context.md) | A 'settled / accepted by-design' status for retro findings the retro-start GET still returns (so retros recognise a theme as settled) but marks not-actionable — so a consciously-accepted special case (e.g. recurring cross-repo-phases) stops being re-minted every retro. Surfaced in the api-coherence orchestrator retro. |
 | retro-recurrence-trend | Split from retro-findings-capture: surface a finding's recurrence depth ("raised in N retros") as an explicit trend and feed it back into the /feature-retro prompt to nudge persistent findings toward becoming tracked features. Design once retro-findings-capture has run in anger. |
@@ -55,14 +56,3 @@ Topological build order per the design doc (§6).
 | [versioned-content-store](docs/features/versioned-content-store/context.md) | Shipped. F1 of the structured-content arc: document content now lives in the DB as versioned, structured sections via a re-runnable importer. The walker (walker.py) parses context/requirements/plan into ordered sections (feedback & the tracker ride as opaque whole-bodies) using a new pure doc_content.py (manifest-driven, convert_charrefs=False for faithful bodies), and records a content snapshot in a new document_versions table — cutting a version only on real content change, so no-op re-saves stop surfacing in the inbox. Documents gained a path-independent logical_key (migration 0003 + an idempotent startup backfill that dedupes collisions, repointing read-state/synthesis-responses/comments onto the survivor) decoupling identity from source_path for the future agent-submission API; archival became a status change on one row. content_html was deliberately left NULL so rendering stays disk-based — the version accessor is the seam F2 will consume. Three phase PRs (#26–28) + one direct-to-main, test-only review round; 372 tests, ruff/ty clean. |
 | [webapp-skeleton](docs/features/webapp-skeleton/context.md) | Shipped. Supervised Starlette server on 127.0.0.1:8800 with a Jinja placeholder page and a DB-backed /healthz readiness check; migrated SQLite carrying the full §4 schema (per-request connections, WAL, events SET-NULL audit semantics, FK indexes); systemd user unit with a working crash-loop cap; kea-style test harness (xdist + pytest-socket, per-worker DB). Three phase PRs + one review-fix round; 27 tests, ruff/ty clean. |
 | [writable-doc-types](docs/features/writable-doc-types/requirements.md) | Shipped. Widened the agent-submission write boundary from a 4-type allowlist to a reserved-name denylist (any feature-scoped type except features/review; -feedback preserved), made bespoke docs first-class in the reviewing UI (inline comments on any non-feedback doc, default doc badge, feature-page listing, sticky comments-rail), and migrated the ai-eng-planning north-star docs to their natural vision/system-map types. 3 phases, 2 code MRs (#80, #81), 885 tests green. |
-
-## Archived
-| Feature | Reason | Superseded by | Note |
-|---|---|---|---|
-| phase2-e2e-verify |  |  |  |
-| phase2-e2e-verify-missing |  |  |  |
-| tracker-suggested-order |  |  |  |
-| verify-note-tmp |  |  |  |
-| verify-note-tmp2 |  |  |  |
-| vtest |  |  |  |
-| zz-drop-review-3283249 |  |  |  |
